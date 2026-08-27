@@ -1,0 +1,96 @@
+services:
+  # Postgres DB for Backend (real persistence)
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: adaptiveai
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Intent & Context Engine (Kakul) - port 8001 - REAL LLM via NIM
+  intent-engine:
+    build: ./intent-engine
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./intent-engine/.env
+    environment:
+      - PORT=8001
+      - HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Task Agents + RAG (Kartik) - port 8002 - REAL FAISS + NIM
+  agents:
+    build: ./agents
+    ports:
+      - "8002:8002"
+    env_file:
+      - ./agents/.env
+    environment:
+      - PORT=8002
+      - HOST=0.0.0.0
+    volumes:
+      - ./agents/data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # Backend (Ishan) - Main API with orchestration, DB, Policy Engine - port 8000 - REAL DB + orchestration
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      intent-engine:
+        condition: service_healthy
+      agents:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+    environment:
+      - INTENT_SERVICE_URL=http://intent-engine:8001
+      - AGENT_SERVICE_URL=http://agents:8002
+      - SUPABASE_DB_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/adaptiveai
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # Frontend (Ishika) - React + Vite - port 5173 - REAL API (no mocks)
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+      - VITE_USE_MOCK=false
+      - VITE_NIM_API_KEY=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
+    command: npm run dev -- --host 0.0.0.0 --port 5173
+
+volumes:
+  postgres_data:

@@ -1,0 +1,186 @@
+/* Accessibility-specific styles */
+
+/* High contrast overrides */
+.high-contrast .chat-interface,
+.high-contrast .app-header,
+.high-contrast .chat-main,
+.high-contrast .chat-footer {
+  border-color: var(--color-border) !important;
+}
+
+.high-contrast .message-bubble.user {
+  background-color: var(--color-primary-light);
+  border: 1px solid var(--color-primary);
+}
+
+.high-contrast .message-bubble.assistant {
+  background-color: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+}
+
+.high-contrast .text-input {
+  border-color: var(--color-border) !important;
+  background-color: var(--color-bg-secondary) !important;
+}
+
+.high-contrast .text-input:focus {
+  border-color: var(--color-border-focus) !important;
+  box-shadow: 0 0 0 3px var(--color-primary-light) !important;
+}
+
+.high-contrast .send-button,
+.high-contrast .mic-button,
+.high-contrast .header-button,
+.high-contrast .toolbar-button {
+  border-color: var(--color-border) !important;
+}
+
+.high-contrast .upload-dropzone {
+  border-color: var(--color-border) !important;
+}
+
+.high-contrast .upload-dropzone.drag-active {
+  border-color: var(--color-primary) !important;
+  background-color: var(--color-primary-light) !important;
+}
+
+.high-contrast .status-indicator.listening .status-icon {
+  background-color: var(--color-error-light);
+  color: var(--color-error);
+}
+
+.high-contrast .status-indicator.thinking .spinner {
+  border-color: var(--color-primary) transparent var(--color-primary) transparent;
+}
+
+.high-contrast .agent-badge,
+.high-contrast .confidence-badge,
+.high-contrast .voice-badge {
+  background-color: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+/* Reduced motion */
+.reduce-motion .pulse-ring,
+.reduce-motion .spinner,
+.reduce-motion .loading-text::after,
+.reduce-motion .mic-button.recording .mic-icon svg {
+  animation: none !important;
+}
+
+.reduce-motion .message-bubble {
+  transition: none !important;
+}
+
+.reduce-motion .text-input {
+  transition: none !important;
+}
+
+/* Font size scaling */
+:root {
+  font-size: var(--font-size-base);
+}
+
+html {
+  font-size: var(--font-size-base);
+}
+
+/* Ensure all text scales with root font size */
+.app {
+  font-size: 1rem;
+}
+
+/* High contrast focus for keyboard navigation */
+.high-contrast *:focus-visible {
+  outline: 3px solid var(--color-border-focus) !important;
+  outline-offset: 2px !important;
+}
+
+/* Forced colors mode (Windows High Contrast) */
+@media (forced-colors: active) {
+  :root {
+    --color-bg: Canvas;
+    --color-bg-secondary: Canvas;
+    --color-text: CanvasText;
+    --color-text-secondary: CanvasText;
+    --color-primary: Highlight;
+    --color-border: ButtonBorder;
+  }
+  
+  .message-bubble.user {
+    background-color: Highlight;
+    color: HighlightText;
+    border: 1px solid Highlight;
+  }
+  
+  .message-bubble.assistant {
+    background-color: Canvas;
+    color: CanvasText;
+    border: 1px solid ButtonBorder;
+  }
+  
+  .text-input {
+    background-color: Canvas;
+    color: CanvasText;
+    border: 1px solid ButtonBorder;
+  }
+  
+  .send-button,
+  .mic-button,
+  .header-button,
+  .toolbar-button {
+    background-color: Canvas;
+    color: CanvasText;
+    border: 1px solid ButtonBorder;
+  }
+  
+  .send-button:hover,
+  .mic-button:hover,
+  .header-button:hover,
+  .toolbar-button:hover {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+  
+  .agent-badge,
+  .confidence-badge,
+  .voice-badge {
+    background-color: Canvas;
+    color: CanvasText;
+    border: 1px solid ButtonBorder;
+  }
+  
+  .spinner {
+    border-color: Highlight transparent Highlight transparent;
+  }
+  
+  .status-indicator.listening .status-icon {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+}
+
+/* Print styles */
+@media print {
+  .app-header,
+  .chat-footer,
+  .status-indicator,
+  .accessibility-toolbar {
+    display: none !important;
+  }
+  
+  .chat-main {
+    height: auto !important;
+  }
+  
+  .messages-container {
+    overflow: visible !important;
+    height: auto !important;
+  }
+  
+  .message-bubble {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

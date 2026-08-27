@@ -1,0 +1,1201 @@
+{
+  "timestamp": "2026-08-26T10:34:14.053623",
+  "llm_provider": "mock",
+  "llm_model": "mock-model",
+  "total_tests": 42,
+  "passed_tests": 3,
+  "results": {
+    "form_agent": [
+      {
+        "query": "What is the permanent address field asking for?",
+        "entity": "Permanent Address field",
+        "answer": "Permanent Address is your official residential address as listed on government-issued ID proof (Aadhaar, Voter ID, Passport). It is NOT your current temporary address or hostel address. Used for official correspondence and verification.",
+        "sources_used": [
+          "form_permanent_address",
+          "form_aadhar_number",
+          "form_pan_number"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "official",
+          "ID proof",
+          "government",
+          "address",
+          "correspondence"
+        ],
+        "found_keywords": [
+          "official",
+          "ID proof",
+          "government",
+          "address",
+          "correspondence"
+        ],
+        "missing_keywords": [],
+        "passed": true
+      },
+      {
+        "query": "What should I enter in the Aadhaar number field?",
+        "entity": "Aadhaar Number field",
+        "answer": "Permanent Address is your official residential address as listed on government-issued ID proof (Aadhaar, Voter ID, Passport). It is NOT your current temporary address or hostel address. Used for official correspondence and verification.",
+        "sources_used": [
+          "form_aadhar_number",
+          "form_permanent_address",
+          "form_bank_account"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "12-digit",
+          "UIDAI",
+          "identity",
+          "verification"
+        ],
+        "found_keywords": [
+          "verification"
+        ],
+        "missing_keywords": [
+          "12-digit",
+          "UIDAI",
+          "identity"
+        ],
+        "passed": false
+      },
+      {
+        "query": "Explain the PAN number format",
+        "entity": "PAN Number field",
+        "answer": "Aadhaar Number is a 12-digit unique identification number issued by UIDAI. Enter all 12 digits without spaces or dashes. This is used for identity verification and linking government services.",
+        "sources_used": [
+          "form_pan_number",
+          "form_aadhar_number",
+          "form_disability_certificate"
+        ],
+        "suggested_action": "show_example",
+        "expected_keywords": [
+          "10-character",
+          "alphanumeric",
+          "Income Tax",
+          "ABCDE1234F"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "10-character",
+          "alphanumeric",
+          "Income Tax",
+          "ABCDE1234F"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What date format should I use for date of birth?",
+        "entity": "Date of Birth field",
+        "answer": "Date of Birth should be entered in DD/MM/YYYY format (day/month/year). Example: 15/08/1995. This must match your birth certificate and other official documents.",
+        "sources_used": [
+          "form_date_of_birth",
+          "form_guardian_name",
+          "form_bank_account"
+        ],
+        "suggested_action": "show_example",
+        "expected_keywords": [
+          "DD/MM/YYYY",
+          "format",
+          "birth certificate"
+        ],
+        "found_keywords": [
+          "DD/MM/YYYY",
+          "format",
+          "birth certificate"
+        ],
+        "missing_keywords": [],
+        "passed": true
+      },
+      {
+        "query": "Whose name goes in the guardian name field?",
+        "entity": "Guardian Name field",
+        "answer": "Permanent Address is your official residential address as listed on government-issued ID proof (Aadhaar, Voter ID, Passport). It is NOT your current temporary address or hostel address. Used for official correspondence and verification.",
+        "sources_used": [
+          "form_guardian_name",
+          "form_bank_account",
+          "form_permanent_address"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "parent",
+          "legal guardian",
+          "father",
+          "mother"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "parent",
+          "legal guardian",
+          "father",
+          "mother"
+        ],
+        "passed": false
+      },
+      {
+        "query": "How do I calculate annual income for this form?",
+        "entity": "Annual Income field",
+        "answer": "PAN Number is a 10-character alphanumeric code (format: ABCDE1234F) issued by Income Tax Department. First 5 characters are letters, next 4 are numbers, last is a letter. Required for financial transactions and tax filing.",
+        "sources_used": [
+          "form_annual_income",
+          "faq_keyboard_only_forms",
+          "form_pan_number"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "total yearly",
+          "all sources",
+          "salary",
+          "scholarship eligibility"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "total yearly",
+          "all sources",
+          "salary",
+          "scholarship eligibility"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What caste category options are available?",
+        "entity": "Caste Category field",
+        "answer": "Annual Income is your total yearly income from all sources (salary, business, investments, etc.) in Indian Rupees. Used for scholarship eligibility and fee concessions.",
+        "sources_used": [
+          "form_caste_category",
+          "form_annual_income",
+          "faq_heading_structure"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "General",
+          "OBC",
+          "SC",
+          "ST",
+          "EWS",
+          "caste certificate"
+        ],
+        "found_keywords": [
+          "SC",
+          "ST"
+        ],
+        "missing_keywords": [
+          "General",
+          "OBC",
+          "EWS",
+          "caste certificate"
+        ],
+        "passed": false
+      },
+      {
+        "query": "Where do I find my disability certificate number?",
+        "entity": "Disability Certificate field",
+        "answer": "Date of Birth should be entered in DD/MM/YYYY format (day/month/year). Example: 15/08/1995. This must match your birth certificate and other official documents.",
+        "sources_used": [
+          "form_disability_certificate",
+          "form_bank_account",
+          "form_date_of_birth"
+        ],
+        "suggested_action": "highlight_field",
+        "expected_keywords": [
+          "medical board",
+          "government",
+          "certificate number",
+          "state"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "medical board",
+          "government",
+          "certificate number",
+          "state"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What bank details are needed?",
+        "entity": "Bank Account field",
+        "answer": "Permanent Address is your official residential address as listed on government-issued ID proof (Aadhaar, Voter ID, Passport). It is NOT your current temporary address or hostel address. Used for official correspondence and verification.",
+        "sources_used": [
+          "form_bank_account",
+          "form_permanent_address",
+          "form_date_of_birth"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "account number",
+          "IFSC",
+          "bank name",
+          "direct benefit transfer"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "account number",
+          "IFSC",
+          "bank name",
+          "direct benefit transfer"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What does the declaration mean?",
+        "entity": "Declaration field",
+        "answer": "Permanent Address is your official residential address as listed on government-issued ID proof (Aadhaar, Voter ID, Passport). It is NOT your current temporary address or hostel address. Used for official correspondence and verification.",
+        "sources_used": [
+          "form_declaration",
+          "form_permanent_address",
+          "faq_focus_indicators"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "legal statement",
+          "true and accurate",
+          "penalty",
+          "false declaration"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "legal statement",
+          "true and accurate",
+          "penalty",
+          "false declaration"
+        ],
+        "passed": false
+      }
+    ],
+    "document_agent": [
+      {
+        "query": "Summarize this document",
+        "entity": "Full document",
+        "answer": "This university admission brochure contains information about courses offered (B.Tech, M.Tech, MBA), eligibility criteria (12th pass with 60% for B.Tech), application deadlines (July 31), fee structure (Rs 1,50,000 per year for B.Tech), and contact details.",
+        "sources_used": [
+          "faq_heading_structure",
+          "faq_alt_text_purpose",
+          "faq_focus_indicators"
+        ],
+        "suggested_action": "summarize_document",
+        "expected_keywords": [
+          "admission",
+          "B.Tech",
+          "M.Tech",
+          "MBA",
+          "eligibility",
+          "deadline",
+          "fee"
+        ],
+        "found_keywords": [
+          "admission",
+          "B.Tech",
+          "M.Tech",
+          "MBA",
+          "eligibility",
+          "deadline",
+          "fee"
+        ],
+        "missing_keywords": [],
+        "passed": true
+      },
+      {
+        "query": "What is the application deadline?",
+        "entity": "Deadline",
+        "answer": "PAN Number is a 10-character alphanumeric code (format: ABCDE1234F) issued by Income Tax Department. First 5 characters are letters, next 4 are numbers, last is a letter. Required for financial transactions and tax filing.",
+        "sources_used": [
+          "form_date_of_birth",
+          "form_pan_number",
+          "form_caste_category"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "July 31",
+          "deadline",
+          "August 15",
+          "late"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "July 31",
+          "deadline",
+          "August 15",
+          "late"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What are the eligibility criteria for B.Tech?",
+        "entity": "B.Tech Eligibility",
+        "answer": "Date of Birth should be entered in DD/MM/YYYY format (day/month/year). Example: 15/08/1995. This must match your birth certificate and other official documents.",
+        "sources_used": [
+          "form_annual_income",
+          "form_caste_category",
+          "form_date_of_birth"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "12th pass",
+          "60%",
+          "Physics",
+          "Chemistry",
+          "Mathematics",
+          "JEE Main"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "12th pass",
+          "60%",
+          "Physics",
+          "Chemistry",
+          "Mathematics",
+          "JEE Main"
+        ],
+        "passed": false
+      },
+      {
+        "query": "How much is the fee for MBA program?",
+        "entity": "MBA Fee",
+        "answer": "PAN Number is a 10-character alphanumeric code (format: ABCDE1234F) issued by Income Tax Department. First 5 characters are letters, next 4 are numbers, last is a letter. Required for financial transactions and tax filing.",
+        "sources_used": [
+          "form_annual_income",
+          "form_bank_account",
+          "form_pan_number"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "2,00,000",
+          "per year",
+          "2 years",
+          "hostel",
+          "scholarships"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "2,00,000",
+          "per year",
+          "2 years",
+          "hostel",
+          "scholarships"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What documents are required for application?",
+        "entity": "Required Documents",
+        "answer": "Date of Birth should be entered in DD/MM/YYYY format (day/month/year). Example: 15/08/1995. This must match your birth certificate and other official documents.",
+        "sources_used": [
+          "form_declaration",
+          "form_date_of_birth",
+          "form_caste_category"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "10th marksheet",
+          "12th marksheet",
+          "JEE scorecard",
+          "category certificate",
+          "ID proof"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "10th marksheet",
+          "12th marksheet",
+          "JEE scorecard",
+          "category certificate",
+          "ID proof"
+        ],
+        "passed": false
+      },
+      {
+        "query": "Is there hostel facility mentioned?",
+        "entity": "Hostel",
+        "answer": "Permanent Address is your official residential address as listed on government-issued ID proof (Aadhaar, Voter ID, Passport). It is NOT your current temporary address or hostel address. Used for official correspondence and verification.",
+        "sources_used": [
+          "form_permanent_address",
+          "form_bank_account",
+          "form_annual_income"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "hostel",
+          "campus",
+          "boys",
+          "girls",
+          "80,000",
+          "merit basis"
+        ],
+        "found_keywords": [
+          "hostel"
+        ],
+        "missing_keywords": [
+          "campus",
+          "boys",
+          "girls",
+          "80,000",
+          "merit basis"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What is the contact email for admissions?",
+        "entity": "Contact Information",
+        "answer": "Permanent Address is your official residential address as listed on government-issued ID proof (Aadhaar, Voter ID, Passport). It is NOT your current temporary address or hostel address. Used for official correspondence and verification.",
+        "sources_used": [
+          "form_bank_account",
+          "form_permanent_address",
+          "form_pan_number"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "admissions@university.edu",
+          "011-23456789",
+          "office hours",
+          "Noida"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "admissions@university.edu",
+          "011-23456789",
+          "office hours",
+          "Noida"
+        ],
+        "passed": false
+      },
+      {
+        "query": "Are there any scholarships mentioned?",
+        "entity": "Scholarships",
+        "answer": "Guardian Name is the full legal name of your parent or legal guardian. If father is guardian, enter father's full name. If mother, enter mother's name.",
+        "sources_used": [
+          "form_bank_account",
+          "form_annual_income",
+          "form_caste_category"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "merit",
+          "50%",
+          "fee waiver",
+          "sports",
+          "EWS",
+          "income certificate"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "merit",
+          "50%",
+          "fee waiver",
+          "sports",
+          "EWS",
+          "income certificate"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What courses are offered in this document?",
+        "entity": "Courses Offered",
+        "answer": "Caste Category: Select General, OBC (Other Backward Classes), SC (Scheduled Caste), ST (Scheduled Tribe), or EWS (Economically Weaker Section) as per your caste certificate. Determines reservation benefits.",
+        "sources_used": [
+          "faq_heading_structure",
+          "form_caste_category",
+          "faq_screen_reader_navigation"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "B.Tech",
+          "M.Tech",
+          "MBA",
+          "PhD",
+          "CSE",
+          "ECE",
+          "AI",
+          "Data Science"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "B.Tech",
+          "M.Tech",
+          "MBA",
+          "PhD",
+          "CSE",
+          "ECE",
+          "AI",
+          "Data Science"
+        ],
+        "passed": false
+      },
+      {
+        "query": "Where is the university located?",
+        "entity": "Location",
+        "answer": "Permanent Address is your official residential address as listed on government-issued ID proof (Aadhaar, Voter ID, Passport). It is NOT your current temporary address or hostel address. Used for official correspondence and verification.",
+        "sources_used": [
+          "form_permanent_address",
+          "faq_landmark_regions",
+          "form_bank_account"
+        ],
+        "suggested_action": "highlight_section",
+        "expected_keywords": [
+          "Sector 62",
+          "Noida",
+          "Uttar Pradesh",
+          "Metro Station",
+          "Delhi Airport"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "Sector 62",
+          "Noida",
+          "Uttar Pradesh",
+          "Metro Station",
+          "Delhi Airport"
+        ],
+        "passed": false
+      }
+    ],
+    "web_agent": [
+      {
+        "query": "What does the submit button do?",
+        "entity": "Submit Button",
+        "answer": "Declaration is a legal statement confirming all information provided is true and accurate. By signing, you declare under penalty of law that details are correct. False declaration can lead to rejection and legal action.",
+        "sources_used": [
+          "faq_keyboard_only_forms",
+          "form_declaration",
+          "faq_skip_links"
+        ],
+        "suggested_action": "highlight_button",
+        "expected_keywords": [
+          "submit",
+          "form",
+          "application",
+          "sends data",
+          "completes"
+        ],
+        "found_keywords": [
+          "form"
+        ],
+        "missing_keywords": [
+          "submit",
+          "application",
+          "sends data",
+          "completes"
+        ],
+        "passed": false
+      },
+      {
+        "query": "How do I navigate the main menu?",
+        "entity": "Main Navigation Menu",
+        "answer": "For admission queries: email admissions@university.edu, phone 011-23456789. Office hours: Mon-Fri 9AM-5PM. Address: University Campus, Sector 62, Noida.",
+        "sources_used": [
+          "faq_screen_reader_navigation",
+          "faq_skip_links",
+          "faq_heading_structure"
+        ],
+        "suggested_action": "navigate_to",
+        "expected_keywords": [
+          "Tab",
+          "arrow keys",
+          "Enter",
+          "dropdown",
+          "Home",
+          "Courses",
+          "Admissions"
+        ],
+        "found_keywords": [
+          "Admissions"
+        ],
+        "missing_keywords": [
+          "Tab",
+          "arrow keys",
+          "Enter",
+          "dropdown",
+          "Home",
+          "Courses"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What is this checkbox for?",
+        "entity": "Terms Checkbox",
+        "answer": "PAN Number is a 10-character alphanumeric code (format: ABCDE1234F) issued by Income Tax Department. First 5 characters are letters, next 4 are numbers, last is a letter. Required for financial transactions and tax filing.",
+        "sources_used": [
+          "faq_keyboard_only_forms",
+          "form_pan_number",
+          "faq_focus_indicators"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "agree",
+          "Terms and Conditions",
+          "required",
+          "checkbox",
+          "Space",
+          "Enter"
+        ],
+        "found_keywords": [
+          "required"
+        ],
+        "missing_keywords": [
+          "agree",
+          "Terms and Conditions",
+          "checkbox",
+          "Space",
+          "Enter"
+        ],
+        "passed": false
+      },
+      {
+        "query": "How do I use the date picker?",
+        "entity": "Date Picker",
+        "answer": "PAN Number is a 10-character alphanumeric code (format: ABCDE1234F) issued by Income Tax Department. First 5 characters are letters, next 4 are numbers, last is a letter. Required for financial transactions and tax filing.",
+        "sources_used": [
+          "form_date_of_birth",
+          "faq_keyboard_only_forms",
+          "form_pan_number"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "calendar",
+          "date picker",
+          "arrow keys",
+          "Enter",
+          "Tab",
+          "format"
+        ],
+        "found_keywords": [
+          "format"
+        ],
+        "missing_keywords": [
+          "calendar",
+          "date picker",
+          "arrow keys",
+          "Enter",
+          "Tab"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What does the search box do?",
+        "entity": "Search Box",
+        "answer": "Use Tab to navigate menu items (Home, Courses, Admissions, About Us, Contact), Enter to activate, arrow keys for dropdowns under Courses.",
+        "sources_used": [
+          "faq_skip_links",
+          "faq_keyboard_only_forms",
+          "faq_focus_indicators"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "search",
+          "courses",
+          "type",
+          "Enter",
+          "results",
+          "filter"
+        ],
+        "found_keywords": [
+          "courses",
+          "Enter"
+        ],
+        "missing_keywords": [
+          "search",
+          "type",
+          "results",
+          "filter"
+        ],
+        "passed": false
+      },
+      {
+        "query": "Explain the dropdown for course selection",
+        "entity": "Course Dropdown",
+        "answer": "Use Tab to navigate menu items (Home, Courses, Admissions, About Us, Contact), Enter to activate, arrow keys for dropdowns under Courses.",
+        "sources_used": [
+          "faq_skip_links",
+          "faq_keyboard_only_forms",
+          "faq_heading_structure"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "dropdown",
+          "arrow keys",
+          "Enter",
+          "options",
+          "B.Tech",
+          "M.Tech",
+          "MBA"
+        ],
+        "found_keywords": [
+          "dropdown",
+          "arrow keys",
+          "Enter"
+        ],
+        "missing_keywords": [
+          "options",
+          "B.Tech",
+          "M.Tech",
+          "MBA"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What happens when I click the login link?",
+        "entity": "Login Link",
+        "answer": "Permanent Address is your official residential address as listed on government-issued ID proof (Aadhaar, Voter ID, Passport). It is NOT your current temporary address or hostel address. Used for official correspondence and verification.",
+        "sources_used": [
+          "faq_skip_links",
+          "form_permanent_address",
+          "faq_keyboard_only_forms"
+        ],
+        "suggested_action": "highlight_button",
+        "expected_keywords": [
+          "login",
+          "redirect",
+          "credentials",
+          "dashboard",
+          "account"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "login",
+          "redirect",
+          "credentials",
+          "dashboard",
+          "account"
+        ],
+        "passed": false
+      },
+      {
+        "query": "How do I fill the address autocomplete?",
+        "entity": "Address Autocomplete",
+        "answer": "Permanent Address is your official residential address as listed on government-issued ID proof (Aadhaar, Voter ID, Passport). It is NOT your current temporary address or hostel address. Used for official correspondence and verification.",
+        "sources_used": [
+          "form_permanent_address",
+          "faq_form_validation_errors",
+          "faq_screen_reader_navigation"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "autocomplete",
+          "type",
+          "suggestions",
+          "arrow keys",
+          "select",
+          "Google Places"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "autocomplete",
+          "type",
+          "suggestions",
+          "arrow keys",
+          "select",
+          "Google Places"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What is the purpose of the captcha?",
+        "entity": "Captcha",
+        "answer": "Aadhaar Number is a 12-digit unique identification number issued by UIDAI. Enter all 12 digits without spaces or dashes. This is used for identity verification and linking government services.",
+        "sources_used": [
+          "faq_alt_text_purpose",
+          "faq_high_contrast_mode",
+          "form_aadhar_number"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "robot",
+          "verify",
+          "human",
+          "automated",
+          "security",
+          "checkbox"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "robot",
+          "verify",
+          "human",
+          "automated",
+          "security",
+          "checkbox"
+        ],
+        "passed": false
+      },
+      {
+        "query": "How do I access the help section?",
+        "entity": "Help Link",
+        "answer": "For admission queries: email admissions@university.edu, phone 011-23456789. Office hours: Mon-Fri 9AM-5PM. Address: University Campus, Sector 62, Noida.",
+        "sources_used": [
+          "faq_screen_reader_navigation",
+          "faq_keyboard_only_forms",
+          "faq_heading_structure"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "Help",
+          "footer",
+          "link",
+          "support",
+          "FAQ",
+          "contact"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "Help",
+          "footer",
+          "link",
+          "support",
+          "FAQ",
+          "contact"
+        ],
+        "passed": false
+      }
+    ],
+    "education_agent": [
+      {
+        "query": "Explain photosynthesis in simple terms",
+        "entity": "Photosynthesis",
+        "answer": "Declaration is a legal statement confirming all information provided is true and accurate. By signing, you declare under penalty of law that details are correct. False declaration can lead to rejection and legal action.",
+        "sources_used": [
+          "faq_alt_text_purpose",
+          "faq_heading_structure",
+          "form_declaration"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "plants",
+          "sunlight",
+          "carbon dioxide",
+          "oxygen",
+          "glucose",
+          "energy"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "plants",
+          "sunlight",
+          "carbon dioxide",
+          "oxygen",
+          "glucose",
+          "energy"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What is Newton's first law of motion?",
+        "entity": "Newton's First Law",
+        "answer": "Use Tab to navigate menu items (Home, Courses, Admissions, About Us, Contact), Enter to activate, arrow keys for dropdowns under Courses.",
+        "sources_used": [
+          "faq_skip_links",
+          "faq_screen_reader_navigation",
+          "faq_heading_structure"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "inertia",
+          "rest",
+          "motion",
+          "external force",
+          "object",
+          "continues"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "inertia",
+          "rest",
+          "motion",
+          "external force",
+          "object",
+          "continues"
+        ],
+        "passed": false
+      },
+      {
+        "query": "Simplify quantum mechanics for me",
+        "entity": "Quantum Mechanics",
+        "answer": "Use Tab to navigate menu items (Home, Courses, Admissions, About Us, Contact), Enter to activate, arrow keys for dropdowns under Courses.",
+        "sources_used": [
+          "faq_keyboard_only_forms",
+          "faq_skip_links",
+          "faq_focus_indicators"
+        ],
+        "suggested_action": "simplify_further",
+        "expected_keywords": [
+          "particles",
+          "waves",
+          "probability",
+          "uncertainty",
+          "observation",
+          "simplified"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "particles",
+          "waves",
+          "probability",
+          "uncertainty",
+          "observation",
+          "simplified"
+        ],
+        "passed": false
+      },
+      {
+        "query": "How does photosynthesis work step by step?",
+        "entity": "Photosynthesis Process",
+        "answer": "Use Tab to navigate menu items (Home, Courses, Admissions, About Us, Contact), Enter to activate, arrow keys for dropdowns under Courses.",
+        "sources_used": [
+          "faq_heading_structure",
+          "faq_skip_links",
+          "faq_screen_reader_navigation"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "light-dependent",
+          "Calvin cycle",
+          "chlorophyll",
+          "water",
+          "oxygen",
+          "glucose"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "light-dependent",
+          "Calvin cycle",
+          "chlorophyll",
+          "water",
+          "oxygen",
+          "glucose"
+        ],
+        "passed": false
+      },
+      {
+        "query": "Give me an example of Newton's third law",
+        "entity": "Newton's Third Law Example",
+        "answer": "Use Tab to navigate menu items (Home, Courses, Admissions, About Us, Contact), Enter to activate, arrow keys for dropdowns under Courses.",
+        "sources_used": [
+          "faq_skip_links",
+          "faq_keyboard_only_forms",
+          "faq_heading_structure"
+        ],
+        "suggested_action": "give_example",
+        "expected_keywords": [
+          "action",
+          "reaction",
+          "equal",
+          "opposite",
+          "rocket",
+          "swimming",
+          "walking"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "action",
+          "reaction",
+          "equal",
+          "opposite",
+          "rocket",
+          "swimming",
+          "walking"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What is the difference between mitosis and meiosis?",
+        "entity": "Mitosis vs Meiosis",
+        "answer": "PAN Number is a 10-character alphanumeric code (format: ABCDE1234F) issued by Income Tax Department. First 5 characters are letters, next 4 are numbers, last is a letter. Required for financial transactions and tax filing.",
+        "sources_used": [
+          "form_guardian_name",
+          "faq_heading_structure",
+          "form_pan_number"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "mitosis",
+          "meiosis",
+          "identical",
+          "gametes",
+          "chromosomes",
+          "division"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "mitosis",
+          "meiosis",
+          "identical",
+          "gametes",
+          "chromosomes",
+          "division"
+        ],
+        "passed": false
+      },
+      {
+        "query": "Explain gravity simply",
+        "entity": "Gravity",
+        "answer": "Use Tab to navigate menu items (Home, Courses, Admissions, About Us, Contact), Enter to activate, arrow keys for dropdowns under Courses.",
+        "sources_used": [
+          "faq_skip_links",
+          "faq_screen_reader_navigation",
+          "faq_alt_text_purpose"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "force",
+          "attracts",
+          "mass",
+          "Earth",
+          "fall",
+          "Newton",
+          "apple"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "force",
+          "attracts",
+          "mass",
+          "Earth",
+          "fall",
+          "Newton",
+          "apple"
+        ],
+        "passed": false
+      },
+      {
+        "query": "How do vaccines work?",
+        "entity": "Vaccines",
+        "answer": "Use Tab to navigate menu items (Home, Courses, Admissions, About Us, Contact), Enter to activate, arrow keys for dropdowns under Courses.",
+        "sources_used": [
+          "faq_keyboard_only_forms",
+          "faq_heading_structure",
+          "faq_skip_links"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "immune system",
+          "antibodies",
+          "pathogen",
+          "memory",
+          "protection",
+          "weakened"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "immune system",
+          "antibodies",
+          "pathogen",
+          "memory",
+          "protection",
+          "weakened"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What is climate change?",
+        "entity": "Climate Change",
+        "answer": "Permanent Address is your official residential address as listed on government-issued ID proof (Aadhaar, Voter ID, Passport). It is NOT your current temporary address or hostel address. Used for official correspondence and verification.",
+        "sources_used": [
+          "form_annual_income",
+          "form_permanent_address",
+          "faq_high_contrast_mode"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "temperature",
+          "greenhouse gases",
+          "carbon dioxide",
+          "global warming",
+          "human activity"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "temperature",
+          "greenhouse gases",
+          "carbon dioxide",
+          "global warming",
+          "human activity"
+        ],
+        "passed": false
+      },
+      {
+        "query": "Explain how a battery works",
+        "entity": "Battery",
+        "answer": "Use Tab to navigate menu items (Home, Courses, Admissions, About Us, Contact), Enter to activate, arrow keys for dropdowns under Courses.",
+        "sources_used": [
+          "faq_keyboard_only_forms",
+          "faq_skip_links",
+          "faq_alt_text_purpose"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "chemical energy",
+          "electrical energy",
+          "electrons",
+          "anode",
+          "cathode",
+          "circuit"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "chemical energy",
+          "electrical energy",
+          "electrons",
+          "anode",
+          "cathode",
+          "circuit"
+        ],
+        "passed": false
+      }
+    ],
+    "general_agent": [
+      {
+        "query": "Hello, how can you help me?",
+        "entity": "General Greeting",
+        "answer": "Guardian Name is the full legal name of your parent or legal guardian. If father is guardian, enter father's full name. If mother, enter mother's name.",
+        "sources_used": [
+          "faq_heading_structure",
+          "form_bank_account",
+          "faq_form_validation_errors"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "help",
+          "assist",
+          "question",
+          "accessibility"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "help",
+          "assist",
+          "question",
+          "accessibility"
+        ],
+        "passed": false
+      },
+      {
+        "query": "What can you do?",
+        "entity": "Capabilities",
+        "answer": "Use Tab to navigate menu items (Home, Courses, Admissions, About Us, Contact), Enter to activate, arrow keys for dropdowns under Courses.",
+        "sources_used": [
+          "faq_skip_links",
+          "faq_keyboard_only_forms",
+          "faq_high_contrast_mode"
+        ],
+        "suggested_action": "none",
+        "expected_keywords": [
+          "form",
+          "document",
+          "web",
+          "education",
+          "explain",
+          "navigate"
+        ],
+        "found_keywords": [
+          "navigate"
+        ],
+        "missing_keywords": [
+          "form",
+          "document",
+          "web",
+          "education",
+          "explain"
+        ],
+        "passed": false
+      }
+    ]
+  }
+}

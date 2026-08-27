@@ -1,0 +1,34 @@
+# Secrets - never commit real keys (use .env.example as template)
+.env
+backend/.env
+intent-engine/.env
+agents/.env
+frontend/.env
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/build/
+
+# Data
+agents/data/chroma/
+*.index
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes (persisted via named volume, not bind)
+postgres_data/
