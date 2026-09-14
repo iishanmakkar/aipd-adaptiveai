@@ -116,9 +116,35 @@ free tier costs $0 but caps concurrency as measured above.
 
 ## 8. What is NOT yet done for a real launch
 
-- Human screen-reader (NVDA/VoiceOver) validation — automated ARIA/keyboard
-  contract passes; a person with a reader has not run the flow.
+- Human screen-reader (NVDA/JAWS/VoiceOver) validation — automated ARIA/keyboard
+  contract passes and NVDA 2026.2 is confirmed installable + running on Windows,
+  but verbatim speech capture needs a human ear. Runbook:
+  `docs/screen-reader-test-script.md`.
+- Human-speech STT WER — measured only on synthesized speech. Runbook + tool:
+  `docs/real-speech-stt-runbook.md`, `backend/stt_wer.py`.
 - No HTTPS/auth hardening beyond JWT; no refresh tokens, so rotating
   `JWT_SECRET` logs everyone out (verified 401 on old tokens).
-- No automated backup/restore drill for the Postgres volume.
-- Cloud path above is documented, not executed from here.
+- Cloud path above is documented, not executed from here (no cloud credentials).
+
+Backup/restore is now **done** — see `docs/backup-restore.md` (validated:
+dump → destroy volume → restore → row counts matched exactly).
+
+## 9. Paid-tier capacity test (run when a paid NIM key exists)
+
+The concurrency ceiling in §7 is measured on the **free** tier. With a paid key,
+re-run and record whether it rises:
+
+```bash
+# set the paid key in all three service .env files, then:
+docker compose up -d --build
+cd backend
+python loadtest.py 10 60
+python loadtest.py 20 60
+python loadtest.py 50 60
+```
+
+Watch for: (a) whether 429/502 rates at 50 concurrent drop (free tier shed ~67%
+of requests as 429 at 50); (b) whether p50 latency improves (free tier p50
+64–119s under load); (c) the concurrency at which errors first appear. Until run,
+**10–20 concurrent users is a free-tier number only** — not the system's inherent
+capacity.

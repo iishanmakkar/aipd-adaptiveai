@@ -1,0 +1,102 @@
+# NVDA Screen-Reader Test Script — AdaptiveAI
+
+**Why this file exists.** NVDA 2026.2 was installed and confirmed running on the
+Windows host (processes `nvda`/`nvda_noUIAccess`, audio devices present, welcome
+dialog read). But capturing what NVDA *actually says* requires a human ear in a
+clean session — driving it by blind keystroke automation lands on whatever window
+has focus (an editor, a browser tab) and is disruptive. This script is the
+precise, ten-minute procedure for a person to run that capture, with the expected
+NVDA output at every step so deviations are obvious.
+
+## Setup (once)
+
+1. Start NVDA (system tray NVDA icon, or run NVDA). Confirm it speaks.
+2. Open **Edge or Chrome** (NVDA's browser support is far better than Firefox
+   here) to `http://localhost:5173`.
+3. Make sure the stack is up: `docker compose up -d` (see DEPLOY.md).
+4. NVDA key in this script = **Caps Lock** (confirmed enabled in NVDA's welcome
+   dialog). `NVDA+Space`/`NVDA+N` = Caps Lock + that key.
+
+Read-aloud conventions below are what NVDA *should* say. If it says less,
+mislabels something, or goes silent where text is expected, that is a finding —
+note the step number and what you heard.
+
+## Test 1 — First load and landmarks (no mouse)
+
+| # | Action | Expected NVDA output |
+|---|--------|----------------------|
+| 1.1 | Page loads, focus in the document | "AdaptiveAI, heading level 1" then the tagline |
+| 1.2 | Press `H` (jump to next heading) | "AdaptiveAI, heading level 1" (only one H1 — check it is not skipped) |
+| 1.3 | Press `N` (next landmark) repeatedly | cycles: "banner", "main", "content information" — **all three must be announced** |
+| 1.4 | Press `Tab` from the top | lands on "Open session history button", then "Download conversation transcript button", "Show accessibility settings button", "Start new session button" |
+| 1.5 | Keep `Tab`-ing into the footer | "Upload screenshot button", "Message input edit", "Record voice message button" |
+| 1.6 | On the welcome bubble, press `B` (next region) then arrows | the assistant message is reachable and reads its full text |
+
+**Pass:** every control names itself (no "button" with no label, no raw "edit"
+without a name). **The message input must announce as "Message input" — a
+placeholder alone is NOT an accessible name; if NVDA says just "edit", that is a
+real WCAG 3.3.2 failure to fix.**
+
+## Test 2 — Does a new answer announce itself automatically? (critical)
+
+| # | Action | Expected NVDA output |
+|---|--------|----------------------|
+| 2.1 | Focus the message input, type "What is the Aadhaar number field?", press Enter | "You said: What is the Aadhaar number field?" (user bubble, right-aligned) |
+| 2.2 | Wait for the answer (10–90s) **without touching the keyboard** | NVDA should announce the assistant's reply via the polite live region — you should HEAR the answer appear without navigating to it |
+| 2.3 | Also note | the "Thinking…" status pill should announce as a status ("Thinking"), then the answer |
+
+**This is the single most important check.** If NVDA stays silent after 2.2 and
+you only hear the answer by manually tabbing to it, the live region is not
+working for screen-reader users and the app is not actually usable hands-free —
+that is a blocking finding, not a nitpick.
+
+## Test 3 — Voice recording announcements
+
+| # | Action | Expected NVDA output |
+|---|--------|----------------------|
+| 3.1 | Focus the mic button, press `Space` | "Recording voice message, button, pressed" and the usage hint ("…press Enter or Space to start recording and press it again to stop and send") |
+| 3.2 | Watch the timer | the "0:01 / Release to send" indicator should be announced as it appears (it has `role=status`) |
+| 3.3 | Press `Space` again | recording stops; if STT returns text, the transcript is submitted and Test 2's announcement applies |
+| 3.4 | If transcription fails (no mic / silence) | "Transcription failed. Please try again or type your message." should be announced (it is a polite live region + `role=alert` on the mic error) |
+
+## Test 4 — Preferences actually take effect
+
+| # | Action | Expected |
+|---|--------|----------|
+| 4.1 | `Tab` to "Show accessibility settings", Enter | panel opens; NVDA says "Accessibility settings, region" |
+| 4.2 | `Tab` to "Select font size", use arrow keys | each change announces ("Large 1.25rem") |
+| 4.3 | `Tab` to "Enable high contrast mode", Space | announces "checked"; the whole UI flips to high contrast (verify visually) |
+| 4.4 | `Tab` to "Select answer detail level", choose Concise | announces the selection |
+| 4.5 | Ask a question (Test 2) | the answer should come back noticeably shorter (the policy engine rewrites for "concise") — this proves the preference reached the backend |
+| 4.6 | Press `Escape` | panel closes and focus returns to the toggle button |
+
+## Test 5 — History and account deletion
+
+| # | Action | Expected |
+|---|--------|----------|
+| 5.1 | `Tab` to "Open session history", Enter | "Session history, dialog" with a list of past sessions, each announcing its date and message count; the current one says "Current" |
+| 5.2 | Arrow to a past session, Enter | dialog closes, that session's messages load and are announced |
+| 5.3 | Press `Escape` | history closes |
+| 5.4 | Ask a question, then `Tab` to its "Copy answer to clipboard" button, Enter | announces "Answer copied to clipboard" |
+
+## Test 6 — Error surfaces are announced
+
+| # | Force it | Expected |
+|---|----------|----------|
+| 6.1 | Stop the backend (`docker compose stop backend`), send a message | the assistant bubble should say and **speak** an error ("Sorry, I encountered an error…") — not silent failure |
+| 6.2 | Upload a non-image file via the dropzone | the upload error ("…must be an image…") is announced (`role=alert`) |
+
+## Record results
+
+For each numbered step, log: **Pass / Fail + what NVDA actually said.** Anything
+that is silent, mislabeled, or requires the mouse is a defect. Send the log to be
+triaged — the fixes go in the same place as Rounds 1–4 (README §10 fix log), and
+the automated `frontend/a11y_audit.py` should be extended to cover any new
+finding so it cannot regress.
+
+## What this script checks that the automated audit cannot
+
+`a11y_audit.py` proves the ARIA/keyboard *contract* (roles, names, focus order,
+live-region presence). Only a human with NVDA confirms the *experience*: that
+announcements are actually spoken, in a sensible order, without the user hunting.
+Tests 2 and 3 are where a real problem would most likely hide.

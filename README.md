@@ -191,9 +191,22 @@ Plus `POST /api/session` → `{session_id,created_at}`, `GET /api/history/{id}?p
 
 ## 5. Quick Start
 
+> **First-time setup — a fresh clone has no `.env` (they are gitignored on
+> purpose).** Before either option, create the four env files and put your NVIDIA
+> key in them:
+> ```powershell
+> copy backend\.env.example backend\.env
+> copy intent-engine\.env.example intent-engine\.env
+> copy agents\.env.example agents\.env
+> copy frontend\.env.example frontend\.env
+> # edit each: set NIM_API_KEY; set JWT_SECRET to a random 32+ char value
+> ```
+> Without `NIM_API_KEY` the stack still boots, but every query fails (LLM
+> unreachable) and STT/VLM return 503 — there is no mock fallback to hide it.
+
 ### Option A — Docker (recommended, 100% real)
 ```powershell
-# 1. Clone & cd D:\aipd (this folder)
+# 1. Clone, do the first-time setup above, cd to the repo
 # 2. Ensure Docker Desktop running
 docker compose up --build
 # waits for postgres healthy → intent healthy → agents healthy → backend healthy → frontend healthy
@@ -219,7 +232,13 @@ cd frontend; npm install; npm run dev  # http://localhost:5173 proxy /api→8000
 ```
 
 ### Env Keys
-All `.env` already contain real `NIM_API_KEY=nvapi-2CB3F3Ml2S...` + `meta/llama-3.2-11b-vision-instruct` (vision model works for text + VLM for this account; `nvidia/nemotron` 404 for this key). `SUPABASE_DB_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/adaptiveai` (Docker) or `localhost:5432` (local). `JWT_SECRET` min 32 chars.
+Each `.env` needs a real `NIM_API_KEY` (from build.nvidia.com) and
+`NIM_MODEL=meta/llama-3.2-11b-vision-instruct` (this account's key only serves
+vision models; `nvidia/nemotron` 404s on it). `SUPABASE_DB_URL` is
+`postgresql+asyncpg://postgres:postgres@postgres:5432/adaptiveai` in Docker, or
+`localhost:5432` locally. `JWT_SECRET` must be a random 32+ char string — never
+the example value. The `.env.example` files carry placeholders only; real keys
+live solely in the gitignored `.env` and never in the repo or this README.
 
 ---
 
@@ -281,10 +300,10 @@ Total automated coverage: **190 offline + 15 live-DB + 2 live-LLM**. `backend/te
 
 ## 9. Viva Talking Points (per module)
 
-- **Ishika:** ARIA roles, `AccessibilityToolbar` high-contrast, `useVoiceRecording` (MediaRecorder) → `faster-whisper` → `useTextToSpeech` (`speechSynthesis`), `ScreenshotUpload` → `fileToCompressedBase64` → VLM `image_url` base64, `StatusIndicator` states.
-- **Kakul:** 5 intents→5 agents, `SYSTEM_PROMPT` JSON `response_format`, `keyword_classify` fallback, `_session_memory` last 5 turns resolves “what about this one?”, 20 test cases accuracy.
-- **Kartik:** `VectorStore` FAISS normalize_L2 cosine top-3, 20 seed docs, `BaseAgent.handle` retrieve→prompt→LLM→sources, 40+ test queries grounded.
-- **Ishan:** `POST /api/query` orchestration, `Session/Message/Preference` schema, `PolicyEngine` 3 rules + `llm_rewrite` via NIM, `docker-compose` one-command demo, `X-Request-ID`/`RateLimit` middleware.
+- **Ishika (frontend):** ARIA roles + landmarks, `AccessibilityToolbar` (text size / high contrast / voice speed / answer detail), voice pipeline `useVoiceRecording` (MediaRecorder, hold-to-talk + keyboard toggle) → `faster-whisper` → `useTextToSpeech` with a stop control, `ScreenshotUpload` → VLM `image_url` base64, markdown rendering of answers, RAG **source chips**, session bootstrap that creates the session server-side, history panel, transcript download, copy-to-clipboard. Validated by `a11y_audit.py` + `qa_audit.py` (Playwright).
+- **Kakul (intent engine):** 5 intents → 5 agents, `SYSTEM_PROMPT` JSON `response_format`, **classifier-reported confidence**, `keyword_classify` fallback (28/28 offline, scored by match strength), `_session_memory` last-5-turns resolves "what about this one?" with LRU+TTL bounding, 28 test cases, keyword fallback fires when NIM hangs (bounded client timeout).
+- **Kartik (agents + RAG):** `VectorStore` FAISS normalize_L2 cosine top-k, **29 seed docs covering all 5 domains** (education/document/web added so every agent is grounded), `BaseAgent.handle` retrieve→prompt→LLM→sources with blocking calls **offloaded to threads**, per-agent prompts + suggested actions, 59 offline tests + real-LLM accuracy runner.
+- **Ishan (backend/devops):** `POST /api/query` orchestration, `Session/Message/Preference` schema + `GET/PUT /api/preferences` + `GET /api/sessions` + `DELETE /auth/account`, `PolicyEngine` 3 rules + `llm_rewrite`, `docker-compose` one-command deploy (5 services, healthchecks, restart policy, CPU-torch image), **per-user rate limiting + tight auth-endpoint limit**, JSON logs correlated on `X-Request-ID` across all 3 services, `/api/metrics`, production boot guard, CI workflow, backup/restore runbook.
 
 ---
 
@@ -346,6 +365,25 @@ Every entry below is a real test run against the live stack, not a code review.
 - **Load** (`backend/loadtest.py`, live stack): 10 concurrent → 11×200 / 2×502, p50 80s; 20 → 27×200 / 1×502, p50 64s; 50 → 17×200 / 407×429 / 183×502. **Practical ceiling ≈ 10–20 concurrent users on this NIM tier**; at 50 the limiter sheds load with 429 instead of collapsing.
 - **Shutdown drills**: backend stopped mid-load → 144 clean connection failures, **0 hangs**, recovery healthy; Postgres stopped mid-load → 503s (after R4-2), **0 orphaned transactions**, FAISS index reloads with all **29 vectors**.
 
+### Round 5 — closing the last verification gaps + hardening
+
+| # | Finding | Root cause | Fix | Proof |
+|---|---------|-----------|-----|-------|
+| R5-1 | **Fresh clone could not follow the Quick Start** | `.env` files are gitignored, so a clean clone has none — but Option A never said to create them, so the stack boots with no NIM key and every query fails | Quick Start now opens with a copy-`.env.example`→`.env` step + states the failure mode | `git ls-files \| grep .env` → none tracked |
+| R5-2 | **README printed a real (truncated) NIM key** | "Env Keys" quoted `nvapi-2CB3F3...` | Redacted; keys live only in gitignored `.env` | grep for the key literal in README → 0 |
+| R5-3 | **Dependency CVEs** | `python-multipart 0.0.9` (parses uploads) had 12 advisories; `starlette`/`requests`/`python-dotenv` flagged | Bumped multipart→0.0.32, requests→2.34.2, fastapi→0.116.1 (starlette 0.47.3), dotenv→1.1.1 across all 3 services | `pip-audit` re-run: multipart/requests gone; live query + upload + full battery green |
+| R5-4 | **Auth endpoints farmable / NAT-lockable** | register/login unauthenticated → IP-keyed; one client could exhaust the shared bucket or mint fresh user-buckets via mass register | Separate tight per-IP bucket (10/min) on `/auth/register`+`/auth/login` | `test_auth_endpoints_have_a_tighter_ip_bucket`: 429 after 10, `/health` still 200 |
+| R5-5 | **JWT expiry / production guard only proven in isolation** | — | Verified on the running server | expired token → `/auth/me` 401; `ADAPTIVEAI_PRODUCTION=1 DEBUG=True` → container boot raises "Refusing to start" |
+| R5-6 | **Account deletion cross-user never proven live** | — | Verified | A delete→204, A's token→401, B's `/auth/me`+history→200 (untouched), re-delete with dead token→401 |
+| R5-7 | **No backup/restore drill** | operational gap | pg_dump → `down -v` (volume destroyed) → restore into fresh DB → app reads it | row counts identical before/after (119/287/124); runbook `docs/backup-restore.md` |
+| R5-8 | **Flaky test harness** | stub embedder used Python `hash()` (per-process salted) → retrieval ranking non-deterministic | switch to `zlib.crc32` | agents suite passes identically across repeated runs |
+
+**Round 5 honest gaps (each has a runbook, none faked):** human screen-reader pass
+(NVDA 2026.2 installed + confirmed running, but verbatim speech needs a human ear
+— `docs/screen-reader-test-script.md`); human-speech WER (tool + runbook ready —
+`docs/real-speech-stt-runbook.md`); real cloud deploy + paid-tier capacity (no
+credentials here — `DEPLOY.md` §6/§9).
+
 
 ### Round 3 — found by driving the real UI in a browser (Playwright, headless Chromium + fake microphone, screenshots in every state)
 
@@ -390,14 +428,27 @@ Every entry below is a real test run against the live stack, not a code review.
 | **B2 · Observability** | JSON access logs; **one request's `request_id` appears in all 3 services (1/1/1)**; `GET /api/metrics` returns counts + p50/p95/p99. |
 | **B3 · Data & privacy** | `DELETE /auth/account` → 204 → `psql` shows `0\|0\|0` user/message/preference rows. Voice audio is a temp file deleted after transcription; screenshots are forwarded, not stored. |
 | **B4 · Deployment** | `alembic upgrade head` on a fresh empty DB creates all 4 tables; `restart: unless-stopped` on all services; `DEPLOY.md` documents the VM path + cost. |
+| **B5 · Auth hardening (R5)** | JWT expiry enforced end-to-end on the running server (expired token → `/auth/me` 401); production guard fires at **container boot** (`ADAPTIVEAI_PRODUCTION=1 DEBUG=True` → "Refusing to start"); account deletion is cross-user-safe (A deleted → A's token 401, B untouched); `/auth/register`+`/auth/login` have a tight per-IP bucket. |
+| **B6 · Dependency CVEs (R5)** | `pip-audit`: cleared `python-multipart` (12 advisories, the upload parser) + `requests`; starlette 0.38→0.47 via fastapi bump. Remaining: `python-jose`/`ecdsa` (HS256-only usage → ECDSA advisories don't apply; migration to PyJWT is the real fix — documented debt), starlette 1.x + fastapi 0.141 (a major cascade, not risked on a working stack), dev-only pytest/vite. |
+| **A5 · Backup/restore (R5)** | `pg_dump` → `docker compose down -v` (volume destroyed) → restore into a fresh DB → row counts matched **exactly** (119/287/124) and the app booted and read it. Runbook: `docs/backup-restore.md`. |
 
-### Still NOT verified — do not claim these
+### Still NOT verified — do not claim these (each has a concrete reason + runbook)
 
-- **Human screen-reader pass (NVDA/JAWS/VoiceOver).** The automated audit proves the ARIA/keyboard contract a reader consumes, but no assistive technology has actually been run by a person. NVDA is not installed here and installing AT on the user's machine is their call. **This is the single most important remaining gap for an accessibility tool.**
-- **Genuine human speech** (accents, disfluencies, real background noise). A1 used synthesized speech with known ground truth; human-voice WER is unmeasured.
-- **Cloud execution.** `DEPLOY.md` §6 documents the Linux-VM path but it was not run against a real cloud host from this machine (no cloud credentials in scope).
-- **NIM paid-tier behaviour.** All latency/quota numbers are from the free tier; a paid key changes the concurrency ceiling and is unmeasured.
-- **Postgres backup/restore drill** — never performed.
+- **Human screen-reader pass (NVDA/JAWS/VoiceOver).** NVDA 2026.2 is now
+  installed and confirmed running on the Windows host (processes + audio devices
+  present, welcome dialog read), but capturing what it *actually says* needs a
+  human ear in a clean session — blind keystroke automation lands on whatever
+  window has focus and is disruptive. **This is the most important open item for
+  an accessibility tool.** Run it via `docs/screen-reader-test-script.md`.
+- **Genuine human speech WER.** Only synthesized speech (0–2.8% WER) measured;
+  human accents/noise/disfluency unmeasured. Tool + runbook ready:
+  `docs/real-speech-stt-runbook.md`, `backend/stt_wer.py`.
+- **Real cloud deployment.** `DEPLOY.md` §6 documents the Linux-VM path but it
+  was not executed from this machine (no cloud credentials in scope).
+- **NIM paid-tier capacity.** All latency/concurrency numbers are free-tier;
+  the 10–20 concurrent ceiling is a free-tier number, not the system's inherent
+  limit. Test plan: `DEPLOY.md` §9.
+
 
 
 ---
