@@ -60,3 +60,34 @@ async def login(user_data: UserLogin, db: AsyncSession = Depends(require_db)):
 @router.get("/me")
 async def get_me(current_user: User = Depends(get_current_user)):
     return {"id": str(current_user.id), "email": current_user.email}
+
+
+@router.delete("/account", status_code=204)
+async def delete_account(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(require_db),
+):
+    """Delete the account and every related row: messages, sessions, preferences.
+
+    All FKs are ON DELETE CASCADE, but the deletes run explicitly in child-first
+    order anyway so the outcome does not depend on how the database was created.
+    There is no soft-delete: after 204 the data is gone from Postgres.
+    """
+    from sqlalchemy import delete as sa_delete
+    from app.models.message import Message
+    from app.models.session import Session
+
+    try:
+        await db.execute(
+            sa_delete(Message).where(
+                Message.session_id.in_(select(Session.id).where(Session.user_id == current_user.id))
+            )
+        )
+        await db.execute(sa_delete(Session).where(Session.user_id == current_user.id))
+        await db.execute(sa_delete(Preference).where(Preference.user_id == current_user.id))
+        await db.execute(sa_delete(User).where(User.id == current_user.id))
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=503, detail=f"Database connection failed: {str(e)[:200]}")
+    return None

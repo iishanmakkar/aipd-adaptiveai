@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     intent_service_url: str = "http://localhost:8001"
     agent_service_url: str = "http://localhost:8002"
 
+    # Timeouts for those calls, and for the policy rewrite below. NIM latency on
+    # this account measures 3-15s per completion but spikes well past that, so
+    # each budget is set above the observed worst case. They must also stay
+    # inside the frontend's 180s request budget:
+    #   intent (45) + agent (90) + rewrite (30) = 165s worst case.
+    intent_timeout_seconds: float = 45.0
+    agent_timeout_seconds: float = 90.0
+    rewrite_timeout_seconds: float = 30.0
+
     # Frontend CORS
     frontend_url: str = "http://localhost:3000"
 

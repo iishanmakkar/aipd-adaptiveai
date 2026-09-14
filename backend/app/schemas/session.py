@@ -27,3 +27,14 @@ class HistoryResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class SessionSummary(BaseModel):
+    session_id: str
+    created_at: datetime
+    message_count: int
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionSummary]
+    total: int

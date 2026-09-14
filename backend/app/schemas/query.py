@@ -14,3 +14,6 @@ class QueryResponse(BaseModel):
     agent_used: str
     suggested_action: str | None = None
     confidence: float = Field(ge=0.0, le=1.0)
+    # Knowledge-base documents that grounded this answer (from the RAG layer),
+    # surfaced so the UI can show *why* an answer can be trusted.
+    sources_used: list[str] = []

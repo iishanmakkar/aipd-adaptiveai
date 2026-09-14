@@ -2,10 +2,12 @@
 import asyncio
 import httpx
 import json
+import os
+import secrets
 
 
 async def test_mock_intent():
-    async with httpx.AsyncClient(base_url="http://localhost:8001", timeout=10.0) as client:
+    async with httpx.AsyncClient(base_url="http://localhost:8001", timeout=60.0) as client:
         # Test form_help
         resp = await client.post("/intent/classify", json={
             "session_id": "test-123",
@@ -44,7 +46,7 @@ async def test_mock_intent():
 
 
 async def test_mock_agent():
-    async with httpx.AsyncClient(base_url="http://localhost:8002", timeout=10.0) as client:
+    async with httpx.AsyncClient(base_url="http://localhost:8002", timeout=60.0) as client:
         # Test form_agent
         resp = await client.post("/agent/respond", json={
             "session_id": "test-123",
@@ -92,7 +94,7 @@ async def test_backend():
         # Register
         resp = await client.post("/auth/register", json={
             "email": "test@example.com",
-            "password": "testpass123"
+            "password": os.environ.get("TEST_PASSWORD") or secrets.token_urlsafe(12)
         })
         print("Register:", resp.json())
         token = resp.json()["access_token"]

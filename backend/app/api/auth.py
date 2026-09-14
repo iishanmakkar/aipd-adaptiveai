@@ -2,10 +2,10 @@ from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID, uuid4
 
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,17 +14,33 @@ from app.config import settings
 from app.database import get_db, is_db_available
 from app.models.user import User
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
-oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
+# bcrypt directly rather than passlib: passlib 1.7.4 (unmaintained since 2020)
+# raises against bcrypt >= 4.1, which is what a fresh install resolves to, and
+# that made every register/login 500. Stored hashes are standard $2b$ bcrypt, so
+# this stays compatible with anything already in the database.
+_BCRYPT_MAX_BYTES = 72
+
+
+def _password_bytes(password: str) -> bytes:
+    # bcrypt silently ignores anything past 72 bytes; truncate explicitly so the
+    # limit is visible instead of depending on library behaviour.
+    return password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return bcrypt.checkpw(_password_bytes(plain_password), hashed_password.encode("utf-8"))
+    except ValueError:
+        # Malformed/truncated hash in the DB must read as "not authenticated".
+        return False
 
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(_password_bytes(password), bcrypt.gensalt()).decode("utf-8")
+
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -80,12 +96,12 @@ async def get_current_user_optional(
             return DemoUser()
         # Try to get or create persistent demo user for real DB mode (no fake random id each request)
         try:
-            result = await db.execute(select(User).where(User.email == "demo@adaptiveai.local"))
+            result = await db.execute(select(User).where(User.email == "demo@adaptiveai.io"))
             demo_user = result.scalar_one_or_none()
             if demo_user:
                 return demo_user
             # Create persistent demo user
-            demo_user = User(email="demo@adaptiveai.local", hashed_password=get_password_hash("demo123"))
+            demo_user = User(email="demo@adaptiveai.io", hashed_password=get_password_hash("demo123"))
             db.add(demo_user)
             await db.flush()
             # Ensure preference row exists

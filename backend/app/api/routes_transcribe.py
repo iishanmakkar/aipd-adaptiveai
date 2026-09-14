@@ -41,16 +41,30 @@ async def transcribe_audio(audio: UploadFile = File(...)):
     # Try faster-whisper first (local, no API key needed)
     model = get_whisper_model()
     if model is not None:
-        # Save temp file
-        suffix = ".webm"
-        if audio.filename:
-            suffix = os.path.splitext(audio.filename)[1] or ".webm"
+        # Save temp file. The suffix comes from the client's filename, so pin it
+        # to known audio extensions instead of trusting it.
+        ALLOWED_SUFFIXES = (".webm", ".wav", ".mp3", ".m4a", ".ogg", ".flac")
+        suffix = os.path.splitext(audio.filename or "")[1].lower()
+        if suffix not in ALLOWED_SUFFIXES:
+            suffix = ".webm"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(data)
             tmp_path = tmp.name
         try:
-            segments, info = model.transcribe(tmp_path, beam_size=5)
-            text = " ".join([s.text.strip() for s in segments])
+            # vad_filter strips silence/noise before decoding: without it,
+            # Whisper hallucinates words (observed: pure silence -> "you")
+            # and the endpoint returned a fake transcript with 200.
+            segments, info = model.transcribe(
+                tmp_path, beam_size=5,
+                vad_filter=True,
+                vad_parameters={"min_silence_duration_ms": 500},
+                condition_on_previous_text=False,
+            )
+            kept = [
+                s for s in segments
+                if s.no_speech_prob < 0.6 and s.avg_logprob > -1.0
+            ]
+            text = " ".join(s.text.strip() for s in kept)
             if not text.strip():
                 raise HTTPException(status_code=422, detail="No speech detected in audio")
             return {"transcript": text.strip(), "language": info.language, "duration": info.duration}
@@ -63,7 +77,7 @@ async def transcribe_audio(audio: UploadFile = File(...)):
     # Fallback: Try OpenAI Whisper API via NIM/OpenAI if key is configured
     from app.config import settings
     api_key = settings.nim_api_key or os.getenv("OPENAI_API_KEY")
-    if api_key and api_key != "demo-key":
+    if api_key:
         try:
             from openai import OpenAI
             # Use OpenAI's whisper via NIM base if NIM supports audio, else default openai

@@ -1,4 +1,5 @@
 from openai import AsyncOpenAI
+from uuid import UUID
 from app.config import settings
 from app.models.preference import VerbosityLevel
 from app.models.message import Message
@@ -6,10 +7,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-client = AsyncOpenAI(base_url=settings.nim_base_url, api_key=settings.nim_api_key)
+# Explicit timeout: the openai client's default is 600 minutes, which would let
+# a hung rewrite stall a request the frontend has already given up on. The
+# fallback below returns the unmodified answer, so failing fast is the better
+# trade for an accessibility tool.
+client = AsyncOpenAI(
+    base_url=settings.nim_base_url,
+    api_key=settings.nim_api_key,
+    timeout=settings.rewrite_timeout_seconds,
+    max_retries=1,
+)
 
 
-async def count_clarifying_questions(db: AsyncSession | None, session_id: str, window: int = 5) -> int:
+async def count_clarifying_questions(db: AsyncSession | None, session_id: UUID | str, window: int = 5) -> int:
     """Count user questions in recent history."""
     if db is None:
         return 0
@@ -23,7 +33,7 @@ async def count_clarifying_questions(db: AsyncSession | None, session_id: str, w
     return sum(1 for m in messages if m.content.strip().endswith("?"))
 
 
-async def get_message_count(db: AsyncSession | None, session_id: str) -> int:
+async def get_message_count(db: AsyncSession | None, session_id: UUID | str) -> int:
     """Get total message count for session."""
     if db is None:
         return 0
@@ -39,7 +49,7 @@ async def adjust_response(
     clarifying_count: int,
     session_context: dict,
     db: AsyncSession | None,
-    session_id: str
+    session_id: UUID | str
 ) -> str:
     """
     Apply adaptive accessibility policy to adjust response style.

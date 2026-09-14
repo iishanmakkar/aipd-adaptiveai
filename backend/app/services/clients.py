@@ -4,11 +4,15 @@ from app.schemas.query import QueryRequest
 
 
 class IntentResponse:
-    def __init__(self, intent: str, target_agent: str, extracted_entity: str, reasoning: str):
+    def __init__(self, intent: str, target_agent: str, extracted_entity: str, reasoning: str,
+                 confidence: float = 0.5):
         self.intent = intent
         self.target_agent = target_agent
         self.extracted_entity = extracted_entity
         self.reasoning = reasoning
+        # Classifier-reported certainty (LLM self-assessment or keyword-match
+        # strength). The API used to send a hardcoded 0.85 for every answer.
+        self.confidence = confidence
 
 
 class AgentResponse:
@@ -29,7 +33,7 @@ async def classify_intent(
     headers = {}
     if request_id:
         headers["X-Request-ID"] = request_id
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient(timeout=settings.intent_timeout_seconds) as client:
         response = await client.post(
             f"{settings.intent_service_url}/intent/classify",
             json={
@@ -57,7 +61,7 @@ async def get_agent_response(
     headers = {}
     if request_id:
         headers["X-Request-ID"] = request_id
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=settings.agent_timeout_seconds) as client:
         response = await client.post(
             f"{settings.agent_service_url}/agent/respond",
             json={

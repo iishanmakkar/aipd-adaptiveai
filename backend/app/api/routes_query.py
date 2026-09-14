@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 
 from app.api.auth import get_current_user, get_current_user_optional
+from app.api.deps import describe, parse_session_uuid
 from app.config import settings
 from app.database import get_db, is_db_available
 from app.models.user import User
@@ -34,9 +35,10 @@ async def process_query(
     if not is_db_available():
         raise HTTPException(status_code=503, detail="Database not available - ensure postgres is running (docker compose up postgres)")
     # Verify session belongs to user - REAL ownership check (rejects cross-user)
+    session_uuid = parse_session_uuid(request.session_id)
     try:
         result = await db.execute(
-            select(Session).where(Session.id == UUID(request.session_id), Session.user_id == current_user.id)
+            select(Session).where(Session.id == session_uuid, Session.user_id == current_user.id)
         )
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Database connection failed: {str(e)[:200]}")
@@ -74,7 +76,7 @@ async def process_query(
             request_id=request_id,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Intent service error: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Intent service error: {describe(e)}")
 
     # Step 2: Call appropriate Task Agent - propagate X-Request-ID
     try:
@@ -87,14 +89,14 @@ async def process_query(
             request_id=request_id,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Agent service error: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Agent service error: {describe(e)}")
 
     # Step 3: Apply Policy Engine
     # Get user preferences
     result = await db.execute(select(Preference).where(Preference.user_id == current_user.id))
     prefs = result.scalar_one_or_none()
     
-    clarifying_count = await count_clarifying_questions(db, request.session_id)
+    clarifying_count = await count_clarifying_questions(db, session_uuid)
     
     adjusted_answer = await adjust_response(
         raw_answer=agent_result.answer,
@@ -102,7 +104,7 @@ async def process_query(
         clarifying_count=clarifying_count,
         session_context={"message_count": len(recent_messages)},
         db=db,
-        session_id=request.session_id
+        session_id=session_uuid
     )
 
     # Step 4: Save assistant message
@@ -122,36 +124,39 @@ async def process_query(
     db.add(assistant_msg)
     await db.commit()
 
-    # Calculate confidence (placeholder - real impl would use classifier confidence)
-    confidence = 0.85
-
+    # Confidence is what the intent classifier actually reported for this
+    # classification (LLM self-assessment, or keyword-match strength on
+    # fallback) - previously this was a hardcoded 0.85 for every answer.
     return QueryResponse(
         response_text=adjusted_answer,
         agent_used=intent_result.target_agent,
         suggested_action=agent_result.suggested_action,
-        confidence=confidence
+        confidence=intent_result.confidence,
+        sources_used=agent_result.sources_used,
     )
 
 
 @router.post("/query-demo", response_model=QueryResponse)
-async def process_query_demo(request: QueryRequest):
+async def process_query_demo(http_request: Request, request: QueryRequest):
     """
     REAL endpoint without DB: still calls live Intent & Agents services (no mocks).
     Used for demos when postgres not available; main /api/query is DB-persisted real mode.
     """
+    request_id = getattr(http_request.state, "request_id", None) or http_request.headers.get("X-Request-ID")
     # Demo: create a simple in-memory history (no DB persistence, but services are live)
     history = []  # In production this would come from DB; here we keep it ephemeral
-    
+
     # Step 1: Call Intent & Context Engine
     try:
         intent_result = await classify_intent(
             session_id=request.session_id,
             input_text=request.input_text,
             screen_context=request.screen_context,
-            history=history
+            history=history,
+            request_id=request_id,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Intent service error: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Intent service error: {describe(e)}")
 
     # Step 2: Call appropriate Task Agent
     try:
@@ -160,10 +165,11 @@ async def process_query_demo(request: QueryRequest):
             agent=intent_result.target_agent,
             query=request.input_text,
             entity=intent_result.extracted_entity,
-            extra_context=request.screen_context or ""
+            extra_context=request.screen_context or "",
+            request_id=request_id,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Agent service error: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Agent service error: {describe(e)}")
 
     # Step 3: Apply Policy Engine (simplified - no DB prefs)
     from app.models.preference import VerbosityLevel
@@ -182,12 +188,10 @@ async def process_query_demo(request: QueryRequest):
         session_id=request.session_id
     )
 
-    # Calculate confidence
-    confidence = 0.85
-
     return QueryResponse(
         response_text=adjusted_answer,
         agent_used=intent_result.target_agent,
         suggested_action=agent_result.suggested_action,
-        confidence=confidence
+        confidence=intent_result.confidence,
+        sources_used=agent_result.sources_used,
     )

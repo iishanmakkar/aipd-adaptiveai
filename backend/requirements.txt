@@ -6,10 +6,17 @@ alembic==1.13.2
 pydantic[email]==2.9.2
 pydantic-settings==2.5.2
 python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
+# Direct bcrypt: passlib 1.7.4 is unmaintained and raises against bcrypt >= 4.1,
+# which broke register/login with a 500 (see app/api/auth.py).
+bcrypt==5.0.0
 httpx==0.27.2
 openai==1.54.0
 python-multipart==0.0.9
 python-dotenv==1.0.1
 faster-whisper==1.1.1
 av==13.0.0
+# faster-whisper 1.1.1 does `import requests` in its utils module, but newer
+# huggingface_hub no longer depends on requests - without this pin the import
+# fails, STT silently falls back to NIM (which has no whisper endpoint), and
+# every voice message returns 502.
+requests==2.32.3

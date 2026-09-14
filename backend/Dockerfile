@@ -13,6 +13,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Bake the Whisper weights into the image. Without this the first voice message
+# pays a ~75MB download at request time (and fails entirely while offline).
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8')"
+
 # Copy application code
 COPY ./app ./app
 COPY ./alembic ./alembic
