@@ -1,4 +1,4 @@
-fastapi==0.115.0
+fastapi==0.116.1
 uvicorn[standard]==0.34.0
 sqlalchemy[asyncio]==2.0.36
 asyncpg==0.29.0
@@ -11,12 +11,13 @@ python-jose[cryptography]==3.3.0
 bcrypt==5.0.0
 httpx==0.27.2
 openai==1.54.0
-python-multipart==0.0.9
-python-dotenv==1.0.1
+# 0.0.9 carried a dozen advisories and this parses /api/transcribe uploads - the
+# most exposed dependency we ship.
+python-multipart==0.0.32
+python-dotenv==1.1.1
 faster-whisper==1.1.1
 av==13.0.0
-# faster-whisper 1.1.1 does `import requests` in its utils module, but newer
-# huggingface_hub no longer depends on requests - without this pin the import
-# fails, STT silently falls back to NIM (which has no whisper endpoint), and
-# every voice message returns 502.
-requests==2.32.3
+# faster-whisper 1.1.1 does `import requests`, but newer huggingface_hub no
+# longer depends on requests - without this pin the import fails, STT silently
+# falls back to NIM (which has no whisper endpoint) and every voice message 502s.
+requests==2.34.2

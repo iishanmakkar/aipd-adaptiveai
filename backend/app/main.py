@@ -171,6 +171,23 @@ async def add_middleware_process_time(request: Request, call_next):
     # Rate limiting - real 429 (fixed bug: was Response with dict -> 500)
     client_ip = request.client.host if request.client else "unknown"
     rate_key = _rate_limit_key(request)
+
+    # Second layer for the unauthenticated auth endpoints: they are IP-keyed
+    # (no token yet), so behind NAT one abuser could exhaust the shared bucket
+    # and lock everyone out of logging in - and mint unlimited fresh user
+    # buckets via /auth/register to farm the per-user limit. Account
+    # creation/login is a rare action for real users, so it gets a tight,
+    # separate per-IP budget that does not touch normal traffic.
+    if request.url.path in ("/auth/register", "/auth/login"):
+        auth_key = f"auth:{request.url.path}:{client_ip}"
+        if not check_rate_limit(auth_key, max_requests=10, window_sec=60):
+            _record_metrics(429, (time.time() - start_time) * 1000)
+            return JSONResponse(
+                content={"error": "Too many authentication attempts; try again later."},
+                status_code=429,
+                headers={"X-Rate-Limit-Remaining": "0", "Retry-After": "60"},
+            )
+
     if not check_rate_limit(rate_key, max_requests=200, window_sec=60):
         _record_metrics(429, (time.time() - start_time) * 1000)
         return JSONResponse(

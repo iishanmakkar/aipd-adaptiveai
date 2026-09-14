@@ -91,3 +91,22 @@ def test_delete_account_requires_db(client):
                        headers={"Authorization": "Bearer whatever"})
     # No DB in offline mode: dependency chain must 503, never 500
     assert r.status_code == 503
+
+
+def test_auth_endpoints_have_a_tighter_ip_bucket(client):
+    """register/login are unauthenticated (IP-keyed); they get a separate,
+    tighter budget so one client cannot lock out a shared NAT IP or farm
+    fresh per-user buckets by mass-registering."""
+    import app.main as service
+    service._rate_limit_store.clear()
+    try:
+        codes = []
+        for i in range(15):
+            codes.append(client.post("/auth/register",
+                                     json={"email": f"rl{i}@example.com", "password": "x"}).status_code)
+        assert 429 in codes, "register should hit the tight auth limit before the 200 general limit"
+        # the auth bucket tripped, but the general per-IP bucket must still be
+        # far from exhausted - normal endpoints keep working
+        assert client.get("/health").status_code == 200
+    finally:
+        service._rate_limit_store.clear()
