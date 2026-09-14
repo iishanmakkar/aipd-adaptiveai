@@ -55,18 +55,27 @@ export function MicButton({
   }, [isRecording, onCancelRecording]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (e.key === ' ' || e.key === 'Enter') {
-      e.preventDefault();
-      handleMouseDown();
+    if (e.key !== ' ' && e.key !== 'Enter') return;
+    e.preventDefault();
+    // A keyboard or screen-reader user presses and releases in well under the
+    // 150ms hold threshold, so treating the key as a "hold" meant recording
+    // could never start. From the keyboard the key is a toggle instead: first
+    // press records, second press stops and sends.
+    if (isRecording) {
+      onStopRecording();
+    } else if (!isPressed) {
+      setIsPressed(true);
+      onStartRecording();
     }
-  }, [handleMouseDown]);
+  }, [isRecording, isPressed, onStartRecording, onStopRecording]);
 
   const handleKeyUp = useCallback((e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
-      handleMouseUp();
+      // Visual pressed state only - recording keeps going until the next press.
+      setIsPressed(false);
     }
-  }, [handleMouseUp]);
+  }, []);
 
   // Handle long press for touch devices
   const handleTouchStart = useCallback((e: React.TouchEvent<HTMLButtonElement>) => {
@@ -89,6 +98,10 @@ export function MicButton({
 
   return (
     <div className="mic-button-container">
+      <span id="mic-usage-hint" className="visually-hidden">
+        Hold the mouse button to record and release to send. With a keyboard,
+        press Enter or Space to start recording and press it again to stop and send.
+      </span>
       <button
         ref={buttonRef}
         type="button"
@@ -101,10 +114,10 @@ export function MicButton({
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
         disabled={disabled}
-        aria-label={isRecording ? 'Stop recording (release to send)' : 'Hold to record voice message'}
+        aria-label={isRecording ? 'Stop recording and send' : 'Record voice message'}
         aria-pressed={isRecording}
         aria-disabled={disabled}
-        aria-describedby={error ? 'mic-error' : undefined}
+        aria-describedby={error ? 'mic-usage-hint mic-error' : 'mic-usage-hint'}
       >
         <span className="mic-icon" aria-hidden="true">
           {isRecording ? (

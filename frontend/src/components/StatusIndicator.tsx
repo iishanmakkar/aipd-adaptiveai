@@ -1,9 +1,10 @@
 interface StatusIndicatorProps {
   status: 'idle' | 'listening' | 'thinking' | 'speaking';
   listeningTime?: number;
+  onStopSpeaking?: () => void;
 }
 
-export function StatusIndicator({ status, listeningTime = 0 }: StatusIndicatorProps) {
+export function StatusIndicator({ status, listeningTime = 0, onStopSpeaking }: StatusIndicatorProps) {
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -61,13 +62,26 @@ export function StatusIndicator({ status, listeningTime = 0 }: StatusIndicatorPr
   if (!content) return null;
 
   return (
-    <div 
-      className={`status-indicator ${status}`} 
-      role="status" 
+    <div
+      className={`status-indicator ${status}`}
+      role="status"
       aria-live="polite"
       aria-atomic="true"
     >
       {content}
+      {status === 'speaking' && onStopSpeaking && (
+        <button
+          type="button"
+          className="stop-speaking-button"
+          onClick={onStopSpeaking}
+          aria-label="Stop reading aloud"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <rect x="6" y="6" width="12" height="12" rx="2" />
+          </svg>
+          Stop
+        </button>
+      )}
     </div>
   );
 }

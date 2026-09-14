@@ -1,12 +1,15 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { createAudioBlob } from '../utils/audio';
 
+// Hard cap for one recording, in seconds.
+const MAX_RECORDING_SECONDS = 30;
+
 interface UseVoiceRecordingReturn {
   isRecording: boolean;
   recordingTime: number;
   audioBlob: Blob | null;
   startRecording: () => Promise<void>;
-  stopRecording: () => Blob | null;
+  stopRecording: () => Promise<Blob | null>;
   cancelRecording: () => void;
   error: string | null;
 }
@@ -62,9 +65,6 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
 
       timerRef.current = window.setInterval(() => {
         setRecordingTime((prev) => prev + 1);
-        if (recordingTime >= 30) {
-          stopRecording();
-        }
       }, 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start recording');
@@ -72,17 +72,45 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
     }
   }, []);
 
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
+  /**
+   * Stop recording and resolve with the captured audio.
+   *
+   * This must return a Promise resolved from MediaRecorder's `onstop`: the blob
+   * only exists once that async event fires, so the old signature (returning
+   * the `audioBlob` state synchronously) handed back `null` for the first
+   * recording - and the *previous* recording's blob for any later one - which
+   * made transcription silently impossible.
+   */
+  const stopRecording = useCallback((): Promise<Blob | null> => {
+    return new Promise((resolve) => {
+      const recorder = mediaRecorderRef.current;
+      if (!recorder || !isRecording) {
+        resolve(null);
+        return;
+      }
+      recorder.onstop = () => {
+        const blob = createAudioBlob(chunksRef.current, recorder.mimeType);
+        setAudioBlob(blob);
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        resolve(blob);
+      };
+      recorder.stop();
       setIsRecording(false);
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
+    });
+  }, [isRecording]);
+
+  // Auto-stop at the cap. This must react to state rather than read
+  // `recordingTime` inside the interval callback: that closure captured 0, so
+  // the 30-second limit never fired and recordings ran until manual stop.
+  useEffect(() => {
+    if (isRecording && recordingTime >= MAX_RECORDING_SECONDS) {
+      void stopRecording();
     }
-    return audioBlob;
-  }, [isRecording, audioBlob]);
+  }, [isRecording, recordingTime, stopRecording]);
 
   const cancelRecording = useCallback(() => {
     if (mediaRecorderRef.current && isRecording) {

@@ -8,8 +8,10 @@ export interface QueryRequest {
 export interface QueryResponse {
   response_text: string;
   agent_used: string;
-  suggested_action: string;
+  suggested_action: string | null;
   confidence: number;
+  /** Knowledge-base ids that grounded this answer (RAG sources). */
+  sources_used?: string[];
 }
 
 export interface TranscribeRequest {
@@ -28,10 +30,44 @@ export interface SessionResponse {
   session_id: string;
 }
 
-import type { Message } from './chat';
+export interface SessionSummary {
+  session_id: string;
+  created_at: string;
+  message_count: number;
+}
+
+export interface SessionListResponse {
+  sessions: SessionSummary[];
+  total: number;
+}
+
+export type Verbosity = 'concise' | 'standard' | 'detailed';
+
+export interface PreferenceResponse {
+  verbosity_level: Verbosity;
+  voice_speed: number;
+}
+
+/**
+ * One message row as the backend's GET /api/history actually returns it:
+ * `created_at` is an ISO string on the wire (Message.timestamp is a Date only
+ * after useSession normalizes it - feeding the raw row to the UI crashed
+ * MessageBubble's Date calls).
+ */
+export interface HistoryMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  agent_used?: string | null;
+  created_at: string;
+}
 
 export interface HistoryResponse {
-  messages: Message[];
+  session_id: string;
+  messages: HistoryMessage[];
+  total: number;
+  page: number;
+  page_size: number;
 }
 
 export interface VLMRequest {

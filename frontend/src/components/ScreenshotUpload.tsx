@@ -88,8 +88,9 @@ export function ScreenshotUpload({
   return (
     <div className="screenshot-upload">
       <label
-        className={`upload-dropzone ${dragActive ? 'drag-active' : ''} ${displayImage ? 'has-image' : ''}`}
+        className={`upload-compact ${dragActive ? 'drag-active' : ''} ${displayImage ? 'has-image' : ''}`}
         htmlFor="screenshot-upload"
+        title="Attach a screenshot (drag & drop or click) — JPG, PNG, WebP, GIF, max 10MB"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -102,46 +103,52 @@ export function ScreenshotUpload({
           onChange={handleFileInputChange}
           disabled={disabled || isDescribing}
           className="visually-hidden"
+          aria-label="Upload screenshot"
           aria-describedby="upload-hint"
         />
-        
+
         {!displayImage ? (
           <>
-            <svg className="upload-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <svg className="upload-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <polyline points="17 8 12 3 7 8" />
               <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
-            <span className="upload-text">Upload Screenshot</span>
-            <span id="upload-hint" className="upload-hint">
-              Drag & drop or click to select an image (JPG, PNG, WebP, GIF ≤ 10MB)
-            </span>
+            <span className="visually-hidden">Upload screenshot</span>
           </>
         ) : (
-          <div className="image-preview">
-            <img src={displayImage} alt="Uploaded screenshot preview" />
-            <button
-              type="button"
-              className="remove-image-button"
-              onClick={handleRemove}
-              disabled={isDescribing}
-              aria-label="Remove screenshot"
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-            {isDescribing && (
-              <div className="describing-overlay" aria-live="polite" aria-label="Describing image">
-                <div className="spinner" aria-hidden="true"></div>
-                <span>Describing image…</span>
-              </div>
-            )}
-          </div>
+          <span className="upload-thumb" aria-hidden="true">
+            <img src={displayImage} alt="" />
+          </span>
         )}
       </label>
-      
+
+      {displayImage && (
+        <button
+          type="button"
+          className="remove-image-button"
+          onClick={handleRemove}
+          disabled={isDescribing}
+          aria-label="Remove screenshot"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      )}
+
+      {isDescribing && (
+        <div className="describing-overlay" role="status" aria-live="polite" aria-label="Describing image">
+          <div className="spinner" aria-hidden="true"></div>
+        </div>
+      )}
+
+      <span id="upload-hint" className="visually-hidden">
+        Drag & drop or click to select an image (JPG, PNG, WebP, GIF, max 10MB).
+        The screenshot is described aloud and used as context for your questions.
+      </span>
+
       {error && (
         <div className="upload-error" role="alert" aria-live="assertive">
           {error}

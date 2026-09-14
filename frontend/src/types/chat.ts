@@ -7,6 +7,7 @@ export interface Message {
   agent_used?: string;
   suggested_action?: string;
   confidence?: number;
+  sources?: string[];
   screen_context?: string;
   is_loading?: boolean;
 }

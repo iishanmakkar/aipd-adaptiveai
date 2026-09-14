@@ -1,0 +1,19 @@
+# Dependency + build artifacts: a host node_modules (Windows binaries) copied
+# over the image's Linux install breaks the dev server. Never ship it.
+node_modules
+dist
+build
+
+# Secrets stay out of image layers; compose passes them via env_file
+.env
+.env.local
+*.pem
+*.key
+
+.git
+.gitignore
+npm-debug.log*
+.vscode
+.idea
+Dockerfile
+.dockerignore

@@ -6,6 +6,7 @@ import { MicButton } from './MicButton';
 import { ScreenshotUpload } from './ScreenshotUpload';
 import { StatusIndicator } from './StatusIndicator';
 import { Header } from './Header';
+import { HistoryPanel } from './HistoryPanel';
 import { useAccessibility } from '../hooks/useAccessibility';
 import { useSession } from '../hooks/useSession';
 import { useVoiceRecording } from '../hooks/useVoiceRecording';
@@ -13,11 +14,22 @@ import { useSpeechToText } from '../hooks/useSpeechToText';
 import { useTextToSpeech } from '../hooks/useTextToSpeech';
 import { useVisionModel } from '../hooks/useVisionModel';
 import { useApiQuery } from '../hooks/useApiQuery';
+import { apiService } from '../services/api';
+import type { Verbosity } from '../types/api';
 import type { Message } from '../types/chat';
 
 interface ChatInterfaceProps {
   initialScreenContext?: string;
 }
+
+// One starter per agent domain; clicking submits immediately so a screen-reader
+// user gets an answer in one step instead of dictating into the composer.
+const SUGGESTIONS = [
+  { icon: '📝', text: 'How do I fill the permanent address field?' },
+  { icon: '📄', text: 'Summarize this PDF for me' },
+  { icon: '🧭', text: 'Where is the submit button on this page?' },
+  { icon: '🎓', text: 'Explain photosynthesis in simple terms' },
+];
 
 export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps) {
   // State
@@ -25,6 +37,8 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
   const [screenContext, setScreenContext] = useState(initialScreenContext);
   const [status, setStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
   const [showAccessibility, setShowAccessibility] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [verbosity, setVerbosity] = useState<Verbosity>('standard');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Hooks
@@ -42,7 +56,32 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
     addMessage,
     updateMessage,
     createNewSession,
+    switchSession,
+    sessions,
+    loadSessions,
+    sessionReady,
   } = useSession();
+
+  // Answer-detail preference: local immediately, persisted to the backend when
+  // it is reachable - the policy engine reads this row and rewrites answers,
+  // so the toolbar choice genuinely changes future responses.
+  useEffect(() => {
+    if (!sessionReady) return;
+    apiService.getPreferences()
+      .then((p) => setVerbosity(p.verbosity_level))
+      .catch(() => { /* demo mode: keep the local default */ });
+  }, [sessionReady]);
+
+  const handleVerbosityChange = useCallback((level: Verbosity) => {
+    setVerbosity(level);
+    apiService.updatePreferences({ verbosity_level: level, voice_speed: prefs.voiceSpeed })
+      .catch(() => { /* demo mode: preference stays local-only */ });
+  }, [prefs.voiceSpeed]);
+
+  const handleOpenHistory = useCallback(() => {
+    loadSessions();
+    setShowHistory(true);
+  }, [loadSessions]);
 
   const {
     isRecording,
@@ -82,7 +121,10 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
 
   // Handle voice recording completion - real error TTS (accessibility critical)
   const handleRecordingComplete = useCallback(async () => {
-    const blob = stopRecording();
+    // stopRecording resolves once MediaRecorder has actually assembled the
+    // blob; the old code read the (still null) state synchronously here, so
+    // the first recording was always discarded before transcription.
+    const blob = await stopRecording();
     if (!blob) return;
 
     try {
@@ -103,6 +145,9 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
   const handleSubmit = useCallback(async (text?: string) => {
     const messageText = text || inputValue.trim();
     if (!messageText) return;
+    // The session must exist server-side before the first query; bootstrap
+    // creates it within a moment of load, so just wait it out.
+    if (!sessionReady) return;
 
     // Add user message
     const userMessage: Message = {
@@ -142,8 +187,9 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
         content: response.response_text,
         is_loading: false,
         agent_used: response.agent_used,
-        suggested_action: response.suggested_action,
+        suggested_action: response.suggested_action ?? undefined,
         confidence: response.confidence,
+        sources: response.sources_used,
       });
 
       setStatus('speaking');
@@ -161,6 +207,7 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
     inputValue,
     screenContext,
     sessionId,
+    sessionReady,
     addMessage,
     updateMessage,
     sendQuery,
@@ -192,46 +239,98 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
     setScreenContext('');
   }, []);
 
-  const handleNewSession = useCallback(() => {
+  const handleNewSessionAndRefresh = useCallback(() => {
     createNewSession();
     setScreenContext('');
     setInputValue('');
     stopSpeaking();
+    setShowHistory(false);
   }, [createNewSession, stopSpeaking]);
 
   const handleToggleAccessibility = useCallback(() => {
     setShowAccessibility((prev) => !prev);
   }, []);
 
-  // Welcome message on first load
+  // Escape closes the accessibility panel and returns focus to its toggle,
+  // matching the history panel's keyboard behaviour.
   useEffect(() => {
-    if (history.length === 0) {
-      const welcomeMessage: Message = {
-        id: uuidv4(),
-        role: 'assistant',
-        content: 'Welcome to AdaptiveAI! I can help you with forms, documents, web navigation, and learning. You can type, speak, or upload a screenshot to get started.',
-        timestamp: new Date(),
-        agent_used: 'general_agent',
-      };
-      addMessage(welcomeMessage);
-      speak(welcomeMessage.content);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!showAccessibility) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowAccessibility(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showAccessibility]);
+
+  // Download the whole conversation as a .txt transcript
+  const handleDownloadTranscript = useCallback(() => {
+    const lines = history.map((m) => {
+      const who = m.role === 'user' ? 'You' : m.role === 'assistant' ? 'Assistant' : 'System';
+      const time = m.timestamp.toLocaleString();
+      return `[${time}] ${who}: ${m.content}`;
+    });
+    const blob = new Blob(
+      [`AdaptiveAI conversation — ${new Date().toLocaleString()}\n\n${lines.join('\n\n')}\n`],
+      { type: 'text/plain;charset=utf-8' },
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `adaptiveai-transcript-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [history]);
+
+  // Welcome message, once per session. Gated on the session bootstrap finishing
+  // (restoring history or creating the session server-side) so the greeting can
+  // never race a history load and get wiped, and re-appears for a new session.
+  // The ref also matters for React 18 StrictMode, which mounts every component
+  // twice in dev - the Docker image runs the dev server - and would otherwise
+  // greet users with two identical bubbles.
+  const welcomedSession = useRef<string | null>(null);
+  useEffect(() => {
+    if (!sessionReady || welcomedSession.current === sessionId || history.length > 0) return;
+    welcomedSession.current = sessionId;
+    const welcomeMessage: Message = {
+      id: uuidv4(),
+      role: 'assistant',
+      content: 'Welcome to AdaptiveAI! I can help you with forms, documents, web navigation, and learning. You can type, speak, or upload a screenshot to get started.',
+      timestamp: new Date(),
+      agent_used: 'general_agent',
+    };
+    addMessage(welcomeMessage);
+    speak(welcomeMessage.content);
+  }, [sessionReady, sessionId, history.length, addMessage, speak]);
 
   return (
     <div className="chat-interface" role="application">
       <Header
         sessionId={sessionId}
-        onNewSession={handleNewSession}
+        onNewSession={handleNewSessionAndRefresh}
+        onToggleHistory={handleOpenHistory}
+        onDownloadTranscript={handleDownloadTranscript}
+        canDownload={history.length > 1}
         fontSize={prefs.fontSize}
         contrastMode={prefs.contrastMode}
         voiceSpeed={prefs.voiceSpeed}
+        verbosity={verbosity}
         onFontSizeChange={setFontSize}
         onContrastToggle={toggleContrast}
         onVoiceSpeedChange={setVoiceSpeed}
+        onVerbosityChange={handleVerbosityChange}
         onResetAccessibility={resetToDefaults}
         showAccessibility={showAccessibility}
         onToggleAccessibility={handleToggleAccessibility}
+      />
+
+      <HistoryPanel
+        open={showHistory}
+        onClose={() => setShowHistory(false)}
+        sessions={sessions}
+        currentSessionId={sessionId}
+        loading={false}
+        onSelect={switchSession}
+        onRefresh={loadSessions}
       />
 
       <main className="chat-main" role="main">
@@ -244,10 +343,28 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
           {history.map((message) => (
             <MessageBubble key={message.id} message={message} />
           ))}
+
+          {history.length === 1 && sessionReady && !isQuerying && (
+            <div className="suggestion-chips" role="group" aria-label="Suggested questions">
+              <span className="chips-label">Or start with one of these:</span>
+              {SUGGESTIONS.map(({ icon, text }) => (
+                <button
+                  key={text}
+                  type="button"
+                  className="chip"
+                  onClick={() => handleSubmit(text)}
+                  disabled={isRecording}
+                >
+                  <span aria-hidden="true">{icon}</span> {text}
+                </button>
+              ))}
+            </div>
+          )}
+
           <div ref={messagesEndRef} />
         </div>
 
-        <StatusIndicator status={status} listeningTime={recordingTime} />
+        <StatusIndicator status={status} listeningTime={recordingTime} onStopSpeaking={stopSpeaking} />
       </main>
 
       <footer className="chat-footer" role="contentinfo">
@@ -261,14 +378,16 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
           />
           
           <div className="text-input-wrapper">
-            <TextInput
-              value={inputValue}
-              onChange={setInputValue}
-              onSubmit={handleSubmit}
-              disabled={isQuerying || isRecording}
-              placeholder={isRecording ? 'Recording…' : 'Type your message…'}
-              ariaLabel="Message input"
-            />
+          <TextInput
+            value={inputValue}
+            onChange={setInputValue}
+            onSubmit={handleSubmit}
+            disabled={!sessionReady || isQuerying || isRecording}
+            placeholder={
+              !sessionReady ? 'Connecting…' : isRecording ? 'Recording…' : 'Type your message…'
+            }
+            ariaLabel="Message input"
+          />
           </div>
 
           <MicButton

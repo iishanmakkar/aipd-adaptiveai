@@ -1,14 +1,17 @@
 import { useCallback } from 'react';
 import type { FontSize, ContrastMode } from '../types/accessibility';
+import type { Verbosity } from '../types/api';
 import { FONT_SIZE_MAP } from '../types/accessibility';
 
 interface AccessibilityToolbarProps {
   fontSize: FontSize;
   contrastMode: ContrastMode;
   voiceSpeed: number;
+  verbosity: Verbosity;
   onFontSizeChange: (size: FontSize) => void;
   onContrastToggle: () => void;
   onVoiceSpeedChange: (speed: number) => void;
+  onVerbosityChange: (level: Verbosity) => void;
   onReset: () => void;
 }
 
@@ -19,18 +22,30 @@ const FONT_SIZES: { value: FontSize; label: string }[] = [
   { value: 'xlarge', label: 'X-Large' },
 ];
 
+const VERBOSITY_LEVELS: { value: Verbosity; label: string }[] = [
+  { value: 'concise', label: 'Concise' },
+  { value: 'standard', label: 'Standard' },
+  { value: 'detailed', label: 'Detailed' },
+];
+
 export function AccessibilityToolbar({
   fontSize,
   contrastMode,
   voiceSpeed,
+  verbosity,
   onFontSizeChange,
   onContrastToggle,
   onVoiceSpeedChange,
+  onVerbosityChange,
   onReset,
 }: AccessibilityToolbarProps) {
   const handleFontSizeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
     onFontSizeChange(e.target.value as FontSize);
   }, [onFontSizeChange]);
+
+  const handleVerbosityChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    onVerbosityChange(e.target.value as Verbosity);
+  }, [onVerbosityChange]);
 
   const handleVoiceSpeedChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     onVoiceSpeedChange(parseFloat(e.target.value));
@@ -57,6 +72,20 @@ export function AccessibilityToolbar({
             <option key={value} value={value}>
               {label} ({FONT_SIZE_MAP[value]})
             </option>
+          ))}
+        </select>
+      </fieldset>
+
+      <fieldset className="toolbar-group">
+        <legend>Answer Detail</legend>
+        <select
+          value={verbosity}
+          onChange={handleVerbosityChange}
+          className="toolbar-select"
+          aria-label="Select answer detail level"
+        >
+          {VERBOSITY_LEVELS.map(({ value, label }) => (
+            <option key={value} value={value}>{label}</option>
           ))}
         </select>
       </fieldset>

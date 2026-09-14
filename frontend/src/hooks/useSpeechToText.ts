@@ -1,9 +1,6 @@
 import { useCallback, useState } from 'react';
 import { apiService } from '../services/api';
-import { mockApi } from '../services/mockApi';
 import type { TranscribeResponse } from '../types/api';
-
-const USE_MOCK_API = import.meta.env.VITE_USE_MOCK === 'true';
 
 interface UseSpeechToTextReturn {
   transcribe: (audioBlob: Blob) => Promise<string>;
@@ -20,14 +17,7 @@ export function useSpeechToText(): UseSpeechToTextReturn {
     setError(null);
 
     try {
-      let response: TranscribeResponse;
-      
-      if (USE_MOCK_API) {
-        response = await mockApi.transcribe();
-      } else {
-        response = await apiService.transcribe(audioBlob);
-      }
-      
+      const response: TranscribeResponse = await apiService.transcribe(audioBlob);
       return response.transcript;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Transcription failed';

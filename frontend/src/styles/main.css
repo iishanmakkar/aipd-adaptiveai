@@ -1,3 +1,8 @@
+/* Component + accessibility styles must be imported first: per the CSS spec an
+   @import that follows other rules is ignored, silently dropping both files. */
+@import './components.css';
+@import './accessibility.css';
+
 /* CSS Custom Properties */
 :root {
   --font-size-base: 1rem;
@@ -161,7 +166,3 @@ a:focus-visible {
   background-color: var(--color-primary-light);
   color: var(--color-primary);
 }
-
-/* Import component styles */
-@import './components.css';
-@import './accessibility.css';
