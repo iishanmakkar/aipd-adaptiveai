@@ -109,17 +109,17 @@ async def run_tests():
         agent_total = len(agent_results)
         print(f"  {agent_name}: {agent_passed}/{agent_total} ({agent_passed/agent_total*100:.1f}%)" if agent_total > 0 else f"  {agent_name}: N/A")
     
-    # Save detailed results
-    output_file = f"test_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(output_file, "w") as f:
-        json.dump({
-            "timestamp": datetime.now().isoformat(),
-            "llm_provider": settings.LLM_PROVIDER,
-            "llm_model": settings.LLM_MODEL,
-            "total_tests": total_tests,
-            "passed_tests": passed_tests,
-            "results": results
-        }, f, indent=2)
+    # Save detailed results (fixed literal filename; the run timestamp is stored
+    # inside the document, so no value is interpolated into the path).
+    from pathlib import Path
+    Path("test_results.json").write_text(json.dumps({
+        "timestamp": datetime.now().isoformat(),
+        "llm_provider": settings.LLM_PROVIDER,
+        "llm_model": settings.LLM_MODEL,
+        "total_tests": total_tests,
+        "passed_tests": passed_tests,
+        "results": results
+    }, indent=2), encoding="utf-8")
     
     print(f"\nDetailed results saved to: {output_file}")
     

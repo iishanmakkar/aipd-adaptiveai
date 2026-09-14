@@ -21,13 +21,21 @@ class VectorStore:
 
     def __init__(self):
         if self._index is None:
-            self.persist_dir = Path(settings.CHROMA_PERSIST_DIR)
+            self.persist_dir = Path(settings.CHROMA_PERSIST_DIR).resolve()
             self.persist_dir.mkdir(parents=True, exist_ok=True)
-            
-            self.index_path = self.persist_dir / "faiss.index"
-            self.docs_path = self.persist_dir / "documents.json"
-            self.mapping_path = self.persist_dir / "id_mapping.json"
-            
+
+            # Filenames are fixed constants, but resolve + containment makes the
+            # invariant explicit: nothing can ever escape persist_dir.
+            def _within(name: str) -> Path:
+                p = (self.persist_dir / name).resolve()
+                if not p.is_relative_to(self.persist_dir):
+                    raise ValueError(f"refusing to touch path outside persist dir: {name}")
+                return p
+
+            self.index_path = _within("faiss.index")
+            self.docs_path = _within("documents.json")
+            self.mapping_path = _within("id_mapping.json")
+
             self._embedding_model = EmbeddingModel()
             self._load_or_create()
 
@@ -49,11 +57,12 @@ class VectorStore:
             self._save()
 
     def _save(self):
+        # index_path/docs_path/mapping_path are resolved + containment-checked in
+        # __init__ (they can never leave persist_dir); write_text keeps the write
+        # explicit and single-call.
         faiss.write_index(self._index, str(self.index_path))
-        with open(self.docs_path, 'w') as f:
-            json.dump(self._documents, f)
-        with open(self.mapping_path, 'w') as f:
-            json.dump(self._id_to_idx, f)
+        self.docs_path.write_text(json.dumps(self._documents), encoding="utf-8")
+        self.mapping_path.write_text(json.dumps(self._id_to_idx), encoding="utf-8")
 
     def add_documents(self, documents: list[dict]) -> None:
         if not documents:

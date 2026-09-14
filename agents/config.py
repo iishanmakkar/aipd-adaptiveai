@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     NIM_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
     LLM_TEMPERATURE: float = 0.3
     LLM_MAX_TOKENS: int = 500
+    # Bound the LLM client: the openai SDK's default timeout is 600s with
+    # retries, which silently exceeded this service's own 90s budget.
+    LLM_TIMEOUT_SECONDS: float = 75.0
 
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
     CHROMA_PERSIST_DIR: str = "./data/chroma"

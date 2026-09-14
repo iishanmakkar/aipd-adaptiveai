@@ -1,6 +1,11 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from contextlib import asynccontextmanager
+import json
+import logging
+import time
 from config import settings
 from schemas import AgentRespondRequest, AgentRespondResponse
 from rag.vector_store import VectorStore
@@ -8,6 +13,16 @@ from rag.seed_data import initialize_knowledge_base
 from rag.retriever import Retriever
 from llm.client import LLMClient
 from agents.registry import AgentRegistry, agent_registry
+
+logger = logging.getLogger("adaptiveai.agents")
+
+# uvicorn's root logger defaults to WARNING; these JSON lines must reach stdout
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(_handler)
+logger.setLevel(logging.INFO)
+logger.propagate = False
 
 
 @asynccontextmanager
@@ -54,19 +69,44 @@ async def health_check():
 
 
 @app.post("/agent/respond", response_model=AgentRespondResponse)
-async def agent_respond(request: AgentRespondRequest):
-    agent = agent_registry.get(request.agent)
+async def agent_respond(request: Request):
+    started = time.time()
+    body = await request.json()
+    try:
+        validated = AgentRespondRequest(**body)
+    except ValidationError as e:
+        # Preserve FastAPI's 422 for a malformed body now that the handler
+        # parses manually (to read X-Request-ID); without this it would 500.
+        return JSONResponse(status_code=422, content={"detail": json.loads(e.json())})
+    agent = agent_registry.get(validated.agent)
     if not agent:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown agent: {request.agent}. Available: {agent_registry.get_all_names()}"
+            detail=f"Unknown agent: {validated.agent}. Available: {agent_registry.get_all_names()}"
         )
-    
+
     try:
-        result = await agent.handle(request.query, request.entity, request.extra_context)
-        return AgentRespondResponse(**result)
+        result = await agent.handle(validated.query, validated.entity, validated.extra_context)
     except Exception as e:
+        logger.error(json.dumps({
+            "event": "agent_error",
+            "request_id": request.headers.get("X-Request-ID"),
+            "session_id": validated.session_id,
+            "agent": validated.agent,
+            "error": str(e)[:200],
+            "latency_ms": round((time.time() - started) * 1000, 1),
+        }))
         raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
+
+    logger.info(json.dumps({
+        "event": "agent_respond",
+        "request_id": request.headers.get("X-Request-ID"),
+        "session_id": validated.session_id,
+        "agent": validated.agent,
+        "sources": len(result["sources_used"]),
+        "latency_ms": round((time.time() - started) * 1000, 1),
+    }))
+    return AgentRespondResponse(**result)
 
 
 @app.get("/agents")

@@ -1,0 +1,19 @@
+# Secrets stay out of image layers; compose passes them via env_file
+.env
+.env.local
+*.pem
+*.key
+
+__pycache__
+*.py[cod]
+.pytest_cache
+.venv
+venv
+
+# FAISS persistence is a bind mount at runtime; no need to bake it in
+data
+
+.git
+.gitignore
+Dockerfile
+.dockerignore

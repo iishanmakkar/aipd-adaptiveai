@@ -1,3 +1,4 @@
+import asyncio
 from abc import ABC, abstractmethod
 from typing import List, Dict
 from rag.retriever import Retriever
@@ -21,22 +22,24 @@ class BaseAgent(ABC):
         pass
 
     async def handle(self, query: str, entity: str, extra_context: str) -> dict:
-        # 1. Retrieve relevant documents
-        docs = self.retriever.retrieve(query)
-        
+        # 1. Retrieve relevant documents.
+        #    Embedding inference is CPU-bound sync work; running it on the event
+        #    loop serialises every concurrent request, so offload it to a thread.
+        docs = await asyncio.to_thread(self.retriever.retrieve, query)
+
         # 2. Format sources for prompt
         sources_text = self.retriever.format_sources(docs)
         source_ids = self.retriever.get_source_ids(docs)
-        
+
         # 3. Build prompt
         prompt = self._build_prompt(query, entity, extra_context, sources_text)
-        
-        # 4. Call LLM
+
+        # 4. Call LLM (blocking HTTP client) - same reason as above
         messages = [
             {"role": "system", "content": self.system_prompt_template},
             {"role": "user", "content": prompt}
         ]
-        answer = self.llm.chat(messages)
+        answer = await asyncio.to_thread(self.llm.chat, messages)
         
         # 5. Determine suggested action
         suggested_action = self._get_suggested_action(query, entity)

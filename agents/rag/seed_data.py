@@ -102,6 +102,57 @@ SEED_DOCUMENTS = [
         "text": "Landmark Regions: HTML5 semantic elements that define page areas: <header>, <nav>, <main>, <aside>, <footer>, <section>. Screen readers list landmarks for quick navigation. Use one <main>. Label duplicate landmarks with aria-label (e.g., 'Primary navigation', 'Footer navigation').",
         "metadata": {"category": "accessibility_faq", "topic": "landmark_regions", "tags": ["landmarks", "html5", "semantic", "screen_reader"]}
     },
+
+    # Education concepts (grounding for education_agent)
+    {
+        "id": "edu_photosynthesis",
+        "text": "Photosynthesis: the process plants use to make food from sunlight. Chlorophyll in leaves captures light energy and combines water (from roots) with carbon dioxide (from air) to produce glucose (plant sugar) and release oxygen. Formula: 6CO2 + 6H2O + light → C6H12O6 + 6O2. Happens in chloroplasts; leaves are the main food factories of a plant.",
+        "metadata": {"category": "education_concepts", "topic": "photosynthesis", "tags": ["biology", "plants", "energy"]}
+    },
+    {
+        "id": "edu_machine_learning",
+        "text": "Machine Learning: a branch of artificial intelligence where computers learn patterns from data instead of being explicitly programmed. The model is trained on examples, then predicts on new data. Types: supervised learning (labelled examples, e.g. spam detection), unsupervised learning (finding structure, e.g. clustering), reinforcement learning (trial and error with rewards). Everyday examples: recommendation feeds, voice assistants, fraud detection.",
+        "metadata": {"category": "education_concepts", "topic": "machine_learning", "tags": ["ai", "data", "algorithms"]}
+    },
+    {
+        "id": "edu_water_cycle",
+        "text": "Water Cycle: how water moves around Earth. Evaporation: the sun heats oceans and lakes into vapour. Condensation: vapour cools into clouds. Precipitation: water falls as rain, snow or hail. Collection: water gathers in rivers, lakes, oceans and groundwater, and the cycle repeats. The total water on Earth stays roughly the same; it just keeps changing state and location.",
+        "metadata": {"category": "education_concepts", "topic": "water_cycle", "tags": ["geography", "science", "weather"]}
+    },
+    {
+        "id": "edu_newtons_laws",
+        "text": "Newton's Three Laws of Motion. First law (inertia): an object stays still or keeps moving at constant speed unless a force acts on it. Second law: force equals mass times acceleration (F = ma), so heavier objects need more force to accelerate. Third law: every action has an equal and opposite reaction - when you push a wall, it pushes back on you with the same force.",
+        "metadata": {"category": "education_concepts", "topic": "newtons_laws", "tags": ["physics", "motion", "force"]}
+    },
+
+    # Document handling (grounding for document_agent)
+    {
+        "id": "doc_summarize_long_document",
+        "text": "Summarizing a Document: read the headings and first line of each section first to build an outline. Capture the purpose, the parties or people involved, key obligations or findings, important dates and amounts, and anything with a deadline. Leave out boilerplate and repeated details. A good summary answers: what is this document, who does what, by when, and what happens if something goes wrong.",
+        "metadata": {"category": "document_guides", "topic": "summarizing", "tags": ["summary", "reading", "structure"]}
+    },
+    {
+        "id": "doc_rental_agreement_key_points",
+        "text": "Rental Agreement Key Points: names of tenant and landlord, the property address, monthly rent with due date and late fees, security deposit amount and return conditions, lease start and end dates, notice period for ending the tenancy (commonly 1-3 months), who pays for repairs and utilities, maintenance responsibilities, and termination clauses. Check for lock-in periods and penalty amounts before signing.",
+        "metadata": {"category": "document_guides", "topic": "rental_agreement", "tags": ["contract", "rent", "agreement"]}
+    },
+    {
+        "id": "doc_terms_and_conditions_reading",
+        "text": "Reading Terms and Conditions: focus on the sections about payments and refunds, data collection and sharing, automatic renewals, cancellation rights, liability limits, and dispute resolution or arbitration. Watch for words like 'irrevocable', 'waive', 'sole discretion' and 'in perpetuity' - they remove your rights. If a clause is unclear, ask the provider to explain it in plain language before you agree.",
+        "metadata": {"category": "document_guides", "topic": "terms_and_conditions", "tags": ["contract", "legal", "rights"]}
+    },
+
+    # Web navigation (grounding for web_agent)
+    {
+        "id": "web_find_buttons_and_links",
+        "text": "Finding Buttons and Links: press Tab to move forward through interactive elements and Shift+Tab to go back; the browser announces each button or link name as focus lands on it. The primary submit button is usually at the end of a form. Press Enter on a focused link or Space on a focused button to activate it. A list of all links is available in the screen reader's links quick-nav (e.g. NVDA: Insert+F7).",
+        "metadata": {"category": "web_navigation", "topic": "finding_controls", "tags": ["buttons", "links", "keyboard", "tab"]}
+    },
+    {
+        "id": "web_page_navigation_flow",
+        "text": "Navigating a Website: use the main landmark (many screen readers jump there with a shortcut) to skip repeated headers. Headings navigation (H key in most screen readers) moves between page sections. The search box, contact links and login controls are usually in the header or footer. To go back, use Alt+Left arrow; to return home, look for the site logo link at the top left.",
+        "metadata": {"category": "web_navigation", "topic": "site_navigation", "tags": ["navigate", "landmarks", "headings", "browser"]}
+    },
 ]
 
 

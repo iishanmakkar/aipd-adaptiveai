@@ -19,7 +19,8 @@ class LLMClient:
             if not api_key:
                 raise ValueError("NIM_API_KEY not set - set it in agents/.env for real mode")
             from openai import OpenAI
-            self._client = OpenAI(api_key=api_key, base_url=settings.NIM_BASE_URL)
+            self._client = OpenAI(api_key=api_key, base_url=settings.NIM_BASE_URL,
+                                  timeout=settings.LLM_TIMEOUT_SECONDS, max_retries=1)
         elif self.provider == "openai":
             api_key = settings.LLM_API_KEY or os.getenv("OPENAI_API_KEY")
             if not api_key:
