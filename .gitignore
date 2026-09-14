@@ -7,6 +7,9 @@ frontend/.env
 *.key
 *.pem
 
+# Tool artifacts
+.mimosa/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -32,3 +35,6 @@ Thumbs.db
 
 # Docker volumes (persisted via named volume, not bind)
 postgres_data/
+
+# load-test artifacts
+backend/loadtest-*.json

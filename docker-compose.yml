@@ -1,6 +1,7 @@
 services:
   # Postgres DB for Backend (real persistence)
   postgres:
+    restart: unless-stopped
     image: postgres:15-alpine
     environment:
       POSTGRES_USER: postgres
@@ -18,11 +19,13 @@ services:
 
   # Intent & Context Engine (Kakul) - port 8001 - REAL LLM via NIM
   intent-engine:
+    restart: unless-stopped
     build: ./intent-engine
     ports:
       - "8001:8001"
     env_file:
-      - ./intent-engine/.env
+      - path: ./intent-engine/.env
+        required: false
     environment:
       - PORT=8001
       - HOST=0.0.0.0
@@ -34,11 +37,13 @@ services:
 
   # Task Agents + RAG (Kartik) - port 8002 - REAL FAISS + NIM
   agents:
+    restart: unless-stopped
     build: ./agents
     ports:
       - "8002:8002"
     env_file:
-      - ./agents/.env
+      - path: ./agents/.env
+        required: false
     environment:
       - PORT=8002
       - HOST=0.0.0.0
@@ -52,11 +57,13 @@ services:
 
   # Backend (Ishan) - Main API with orchestration, DB, Policy Engine - port 8000 - REAL DB + orchestration
   backend:
+    restart: unless-stopped
     build: ./backend
     ports:
       - "8000:8000"
     env_file:
-      - ./backend/.env
+      - path: ./backend/.env
+        required: false
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,6 +87,7 @@ services:
 
   # Frontend (Ishika) - React + Vite - port 5173 - REAL API (no mocks)
   frontend:
+    restart: unless-stopped
     build: ./frontend
     ports:
       - "5173:5173"
@@ -88,9 +96,18 @@ services:
         condition: service_healthy
     environment:
       - VITE_API_BASE_URL=http://localhost:8000
-      - VITE_USE_MOCK=false
-      - VITE_NIM_API_KEY=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
+      # No NIM key here on purpose: any VITE_* var is baked into the public JS
+      # bundle. Vision requests go through the backend proxy (POST /v1/chat/completions),
+      # which authenticates with NIM_API_KEY from backend/.env server-side.
     command: npm run dev -- --host 0.0.0.0 --port 5173
+    healthcheck:
+      # 127.0.0.1, not localhost: Vite binds 0.0.0.0 (IPv4 only) while
+      # busybox wget resolves "localhost" to ::1 and reports connection refused.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:5173/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
 
 volumes:
   postgres_data:
