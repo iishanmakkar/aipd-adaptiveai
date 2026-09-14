@@ -17,6 +17,10 @@ class Settings(BaseSettings):
 
     # Context memory
     max_history_turns: int = 5
+    # Session store bounds: at most max_sessions live sessions, each dropped
+    # after session_ttl_seconds of inactivity (prevents unbounded growth).
+    max_sessions: int = 1000
+    session_ttl_seconds: int = 3600
 
 
 settings = Settings()

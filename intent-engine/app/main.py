@@ -8,9 +8,24 @@ import json
 
 from app.config import settings
 from app.schemas import ClassifyRequest, ClassifyResponse
-from app.classifier import llm_classify, keyword_classify, get_session_history, add_to_history, clear_session
+from app.classifier import (
+    llm_classify,
+    keyword_classify,
+    get_session_history,
+    add_to_history,
+    clear_session,
+    clear_all_sessions,
+)
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("adaptiveai.intent")
+
+# uvicorn's root logger defaults to WARNING; structured lines must reach stdout
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(_handler)
+logger.setLevel(logging.INFO)
+logger.propagate = False
 
 # Rate limiting store
 _rate_limit_store: dict = {}
@@ -37,7 +52,9 @@ def check_rate_limit(client_ip: str, max_requests: int = 60, window_sec: int = 6
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _rate_limit_store.clear()
+    clear_all_sessions()
     yield
+    clear_all_sessions()
 
 
 app = FastAPI(
@@ -93,7 +110,7 @@ async def add_security_headers(request: Request, call_next):
 
 
 @app.post("/intent/classify", response_model=ClassifyResponse)
-async def classify_intent(request: ClassifyRequest):
+async def classify_intent(http_request: Request, request: ClassifyRequest):
     """
     Classify user input into intent and select target agent.
     
@@ -101,7 +118,12 @@ async def classify_intent(request: ClassifyRequest):
     Falls back to keyword-based classifier if LLM fails.
     Enforces rate limiting and request validation.
     """
-    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0] or request.client.host
+    http_request.state.started_at = time.time()
+    # `request` is the validated body model; headers/client live on the ASGI Request.
+    client_ip = (
+        http_request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or (http_request.client.host if http_request.client else "unknown")
+    )
     
     # Rate limiting
     if not check_rate_limit(client_ip, max_requests=60, window_sec=60):
@@ -123,17 +145,31 @@ async def classify_intent(request: ClassifyRequest):
         result = await llm_classify(request)
     except Exception as e:
         logger.warning(f"LLM classification failed, using fallback: {str(e)[:100]}")
-        result = keyword_classify(request.input_text, request.screen_context or "")
-        result.reasoning = f"LLM failed: {str(e)[:80]}, using keyword fallback"
+        intent, agent, entity, confidence, reasoning = keyword_classify(
+            request.input_text, request.screen_context or "")
+        result = ClassifyResponse(
+            intent=intent,
+            target_agent=agent,
+            extracted_entity=entity,
+            reasoning=f"LLM failed: {str(e)[:80]}, using keyword fallback: {reasoning}",
+            confidence=confidence,
+        )
     
     # Update session memory
     add_to_history(request.session_id, request.input_text, result)
-    
-    logger.info(
-        f"Session {request.session_id}: '{request.input_text[:60]}...' -> "
-        f"{result.intent} ({result.target_agent})"
-    )
-    
+
+    started = getattr(http_request.state, "started_at", None)
+    latency_ms = round((time.time() - started) * 1000, 1) if started else None
+    logger.info(json.dumps({
+        "event": "classify",
+        "request_id": http_request.headers.get("X-Request-ID"),
+        "session_id": request.session_id,
+        "intent": result.intent,
+        "target_agent": result.target_agent,
+        "confidence": result.confidence,
+        "latency_ms": latency_ms,
+    }))
+
     return result
 
 

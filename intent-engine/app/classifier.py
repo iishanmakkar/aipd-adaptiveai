@@ -1,56 +1,99 @@
 import json
+import time
+from collections import OrderedDict
 from typing import Dict, List, Tuple
 from openai import AsyncOpenAI
 
 from app.config import settings
 from app.schemas import ClassifyRequest, ClassifyResponse
 
-# In-memory session context store
-_session_memory: Dict[str, List[str]] = {}
+# Bounded session context store: LRU eviction by last touch, plus per-session TTL.
+# A plain dict grew one entry per session forever (unbounded memory in a
+# long-running service), so sessions are capped and idle ones expire.
+_session_memory: "OrderedDict[str, Tuple[List[str], float]]" = OrderedDict()
+
+
+def _evict_expired() -> None:
+    now = time.time()
+    expired = [
+        sid for sid, (_, touched) in _session_memory.items()
+        if now - touched > settings.session_ttl_seconds
+    ]
+    for sid in expired:
+        _session_memory.pop(sid, None)
 
 
 # Keyword-based fallback classifier
 KEYWORD_RULES = [
     # (keywords, intent, target_agent, entity_hint)
-    # Order matters: more common/intents first per master spec
+    # Priority order for exact score ties: more common intents first.
     (["fill", "form", "field", "input", "submit", "application", "register", "signup", "what is this field", "how to fill", "field asking"],
      "form_help", "form_agent", "form field"),
-    (["document", "pdf", "read", "summarize", "summary", "extract", "contract", "agreement", "terms", "policy", "document content"],
+    # NOTE: deliberately no bare "terms" - it matched "in simple terms" and
+    # hijacked education questions into document_help.
+    (["document", "pdf", "read", "summarize", "summary", "extract", "contract", "agreement", "terms and conditions", "terms of service", "policy", "document content"],
      "document_help", "document_agent", "document content"),
-    (["explain", "learn", "study", "concept", "topic", "course", "lesson", "tutorial", "what is", "define", "meaning", "concept"],
+    (["explain", "teach", "learn", "study", "concept", "topic", "course", "lesson", "tutorial", "what is", "define", "meaning"],
      "education_help", "education_agent", "educational concept"),
     (["navigate", "website", "page", "click", "button", "link", "menu", "navigation", "find", "where is", "how to get to", "go to"],
      "web_navigation_help", "web_agent", "web element"),
 ]
 
 
-def keyword_classify(text: str, screen_context: str = "") -> Tuple[str, str, str, str]:
-    """Simple keyword-based classification fallback."""
+def keyword_classify(text: str, screen_context: str = "") -> Tuple[str, str, str, float, str]:
+    """
+    Keyword-based classification fallback (used when the LLM is unreachable).
+
+    Scores every rule and keeps the best instead of returning the first match:
+    first-match-wins let a single weak form keyword ("submit") outrank three
+    web keywords ("where is" + "button" + "page"). Matches in the user's own
+    input count double compared to matches in the screen context, since the
+    input is what they actually asked.
+
+    Returns (intent, target_agent, entity, confidence, reasoning).
+    """
     text_lower = text.lower()
-    combined = f"{text_lower} {screen_context.lower()}"
-    
+    context_lower = (screen_context or "").lower()
+
+    best_score = 0
+    best_rule = None
     for keywords, intent, agent, entity_hint in KEYWORD_RULES:
-        if any(kw in combined for kw in keywords):
-            # Try to extract more specific entity
-            entity = entity_hint
-            if "aadhar" in combined or "aadhaar" in combined:
-                entity = "Aadhaar number field"
-            elif "dob" in combined or "date of birth" in combined or "birth" in combined:
-                entity = "Date of Birth field"
-            elif "permanent address" in combined or "address" in combined:
-                entity = "Permanent Address field"
-            elif "submit" in combined or "button" in combined:
-                entity = "submit button"
-            elif "photosynthesis" in combined:
-                entity = "photosynthesis"
-            elif "machine learning" in combined or " ml " in combined:
-                entity = "machine learning"
-            
-            reasoning = f"Keyword match for {intent}: detected relevant terms in input"
-            return intent, agent, entity, reasoning
-    
-    # Default fallback
-    return "general_query", "general_agent", "general question", "No specific intent keywords matched, defaulting to general query"
+        score = sum(2 for kw in keywords if kw in text_lower)
+        score += sum(1 for kw in keywords if kw in context_lower)
+        if score > best_score:
+            best_score = score
+            best_rule = (intent, agent, entity_hint)
+
+    combined = f"{text_lower} {context_lower}"
+
+    if best_rule is None:
+        # Nothing matched: this is a low-confidence default, and saying so is
+        # more useful to the caller than pretending certainty.
+        return "general_query", "general_agent", "general question", 0.3, "No specific intent keywords matched, defaulting to general query"
+
+    intent, agent, entity_hint = best_rule
+
+    # Confidence from match strength: each input hit weighs double a context
+    # hit, so a single weak screen-context match cannot look certain.
+    confidence = min(0.9, round(0.4 + 0.1 * best_score, 2))
+
+    # Try to extract a more specific entity
+    entity = entity_hint
+    if "aadhar" in combined or "aadhaar" in combined:
+        entity = "Aadhaar number field"
+    elif "dob" in combined or "date of birth" in combined or "birth" in combined:
+        entity = "Date of Birth field"
+    elif "permanent address" in combined or "address" in combined:
+        entity = "Permanent Address field"
+    elif "submit" in combined or "button" in combined:
+        entity = "submit button"
+    elif "photosynthesis" in combined:
+        entity = "photosynthesis"
+    elif "machine learning" in combined or " ml " in combined:
+        entity = "machine learning"
+
+    reasoning = f"Keyword match for {intent}: detected relevant terms in input"
+    return intent, agent, entity, confidence, reasoning
 
 
 # LLM-based classifier
@@ -71,13 +114,23 @@ Return ONLY valid JSON with these exact fields:
   "intent": "one_of_the_5_intents",
   "target_agent": "corresponding_agent",
   "extracted_entity": "specific thing user is asking about",
-  "reasoning": "brief explanation of why this classification was chosen"
-}"""
+  "reasoning": "brief explanation of why this classification was chosen",
+  "confidence": 0.85
+}
+
+"confidence" is your own certainty that the intent label is right, as a number
+from 0.0 to 1.0. Use values below 0.5 when the input is ambiguous, mixed, or
+could plausibly belong to two intents."""
 
 
 async def llm_classify(request: ClassifyRequest) -> ClassifyResponse:
     """Classify using LLM via NVIDIA NIM (OpenAI-compatible)."""
-    client = AsyncOpenAI(base_url=settings.nim_base_url, api_key=settings.nim_api_key)
+    # Explicit timeout BELOW the backend's 45s intent budget: the openai SDK
+    # defaults to a 600s timeout with retries, so a hung NIM call used to blow
+    # straight through the fallback window and surface as a 502 upstream. With
+    # a bounded client, a NIM hang raises here and the keyword fallback answers.
+    client = AsyncOpenAI(base_url=settings.nim_base_url, api_key=settings.nim_api_key,
+                         timeout=30.0, max_retries=1)
     
     # Build context from history
     history_context = "\n".join(request.history[-settings.max_history_turns:]) if request.history else "No prior conversation."
@@ -101,13 +154,20 @@ Classify this request."""
         )
         
         result = json.loads(response.choices[0].message.content)
-        
+
         # Validate response structure
         required = ["intent", "target_agent", "extracted_entity", "reasoning"]
         if not all(k in result for k in required):
             raise ValueError("Missing required fields in LLM response")
-        
-        return ClassifyResponse(**result)
+
+        # Confidence is self-reported; missing or out-of-range values fall back
+        # to a neutral 0.5 rather than failing the whole classification.
+        try:
+            confidence = min(1.0, max(0.0, float(result.get("confidence", 0.5))))
+        except (TypeError, ValueError):
+            confidence = 0.5
+
+        return ClassifyResponse(**{**result, "confidence": confidence})
         
     except Exception as e:
         # Fallback to keyword classifier
@@ -122,27 +182,51 @@ Classify this request."""
 
 
 def get_session_history(session_id: str) -> List[str]:
-    """Get conversation history for a session."""
-    return _session_memory.get(session_id, [])
+    """Get conversation history for a session, refreshing its LRU/TTL position."""
+    _evict_expired()
+    entry = _session_memory.get(session_id)
+    if entry is None:
+        return []
+    history, _ = entry
+    _session_memory.move_to_end(session_id)
+    _session_memory[session_id] = (history, time.time())
+    return list(history)
 
 
 def add_to_history(session_id: str, user_input: str, classification: ClassifyResponse):
     """Add user input and classification to session history."""
-    if session_id not in _session_memory:
-        _session_memory[session_id] = []
-    
+    _evict_expired()
+    history, _ = _session_memory.get(session_id, ([], 0.0))
+    history = list(history)
+
     # Keep only last N turns (user + system pairs)
-    history = _session_memory[session_id]
     history.append(f"User: {user_input}")
     history.append(f"System: Classified as {classification.intent} ({classification.target_agent}) - {classification.extracted_entity}")
-    
+
     # Trim to max_turns * 2 (user + system pairs)
     max_items = settings.max_history_turns * 2
     if len(history) > max_items:
-        _session_memory[session_id] = history[-max_items:]
+        history = history[-max_items:]
+
+    _session_memory[session_id] = (history, time.time())
+    _session_memory.move_to_end(session_id)
+
+    # Evict least-recently-used sessions once the cap is exceeded
+    while len(_session_memory) > settings.max_sessions:
+        _session_memory.popitem(last=False)
 
 
 def clear_session(session_id: str):
     """Clear session history."""
-    if session_id in _session_memory:
-        del _session_memory[session_id]
+    _session_memory.pop(session_id, None)
+
+
+def active_session_count() -> int:
+    """Number of sessions currently held in memory (used by tests/metrics)."""
+    _evict_expired()
+    return len(_session_memory)
+
+
+def clear_all_sessions() -> None:
+    """Drop every session (service startup/shutdown)."""
+    _session_memory.clear()
