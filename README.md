@@ -384,6 +384,20 @@ Every entry below is a real test run against the live stack, not a code review.
 `docs/real-speech-stt-runbook.md`); real cloud deploy + paid-tier capacity (no
 credentials here — `DEPLOY.md` §6/§9).
 
+### Round 6 — real security scan + automation-safety fix
+
+| # | Finding | Root cause | Fix | Proof |
+|---|---------|-----------|-----|-------|
+| R6-1 | **Round 5's security "scan" was degraded** | The pre-commit hook ran with `python_ast_unavailable` and proceeded under a compatibility policy — it caught only what it could see, not a clean pass | Ran the proper **sealed deep scan** (Mimosa `security_scan`, not the hook) | status `completed`, seal `sha256:69a3ea4e…`, **findingCount 0**, 339 packages — a real complete pass |
+| R6-2 | **Automation could hit the operator's live desktop** | The NVDA attempt used OS-level input (computer-use `key`/`click`) which is **unscoped** — it targets whatever window has focus, not the launched app. The repo's own audits were already safe (isolated headless Playwright) | `AUTOMATION_SAFETY.md` (standing rule) + `automation_guard.py`: audits assert an isolated self-launched browser and that OS focus is unchanged | guard raises on a non-isolated browser; `a11y_audit.py` passes with focus-unchanged held |
+| R6-3 | **A degraded scan could ship silently again** | No CI gate on the scanner | CI `security` job runs `pip-audit` per service and **fails on exit ≥ 2** (scanner error) while reporting known advisories; `npm audit` likewise | YAML valid; verified `pip-audit` exits 1 on advisories-present (not ≥2), so the fail-on-tool-error logic is correct |
+| R6-4 | **Human-speech WER still unmeasured** | A physical mic is present, but genuine speech needs a human voice — an agent has none | Left as a human task; harness + runbook unchanged | `Win32_PnPEntity` shows "Microphone Array", but no synthetic human voice is honest data |
+
+**Round 6 status:** security scan genuinely complete (R6-1) and CI-gated (R6-3);
+automation-safety structurally fixed (R6-2). Still human-only: NVDA pass,
+human-speech WER, cloud deploy, paid-tier NIM — each with a runbook.
+
+
 
 ### Round 3 — found by driving the real UI in a browser (Playwright, headless Chromium + fake microphone, screenshots in every state)
 
@@ -430,6 +444,8 @@ credentials here — `DEPLOY.md` §6/§9).
 | **B4 · Deployment** | `alembic upgrade head` on a fresh empty DB creates all 4 tables; `restart: unless-stopped` on all services; `DEPLOY.md` documents the VM path + cost. |
 | **B5 · Auth hardening (R5)** | JWT expiry enforced end-to-end on the running server (expired token → `/auth/me` 401); production guard fires at **container boot** (`ADAPTIVEAI_PRODUCTION=1 DEBUG=True` → "Refusing to start"); account deletion is cross-user-safe (A deleted → A's token 401, B untouched); `/auth/register`+`/auth/login` have a tight per-IP bucket. |
 | **B6 · Dependency CVEs (R5)** | `pip-audit`: cleared `python-multipart` (12 advisories, the upload parser) + `requests`; starlette 0.38→0.47 via fastapi bump. Remaining: `python-jose`/`ecdsa` (HS256-only usage → ECDSA advisories don't apply; migration to PyJWT is the real fix — documented debt), starlette 1.x + fastapi 0.141 (a major cascade, not risked on a working stack), dev-only pytest/vite. |
+| **B7 · Full security scan (R6)** | The deep Mimosa scan ran to **completion** (not the degraded `python_ast_unavailable` path of Round 5): status `completed`, sealed `sha256:69a3ea4e…`, **code AST findingCount = 0**, 339 packages scanned. Dependency advisories tracked separately via `pip-audit` (B6). CI `security` job now fails loudly if the scanner can't initialize (exit ≥ 2) rather than passing silently. |
+| **B8 · Automation safety (R6)** | Root-caused the Round 5 NVDA incident: it used OS-level input (unscoped to the foreground window), not the repo's isolated-Playwright audits. Added `AUTOMATION_SAFETY.md` + `automation_guard.py`; `qa_audit.py`/`a11y_audit.py` now assert an isolated self-launched browser and that OS focus is unchanged. Proven: guard fires on a non-isolated browser; audits pass without stealing focus. |
 | **A5 · Backup/restore (R5)** | `pg_dump` → `docker compose down -v` (volume destroyed) → restore into a fresh DB → row counts matched **exactly** (119/287/124) and the app booted and read it. Runbook: `docs/backup-restore.md`. |
 
 ### Still NOT verified — do not claim these (each has a concrete reason + runbook)

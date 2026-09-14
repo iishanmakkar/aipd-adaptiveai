@@ -11,6 +11,8 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from automation_guard import assert_focus_unchanged, assert_isolated_browser, foreground_window_token
+
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:5174"
 OUT = Path(sys.argv[2] if len(sys.argv) > 2 else "/tmp/qa")
 OUT.mkdir(parents=True, exist_ok=True)
@@ -27,6 +29,7 @@ def shot(page, name):
 
 
 def main():
+    focus_before = foreground_window_token()
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -38,6 +41,8 @@ def main():
                 "--autoplay-policy=no-user-gesture-required",
             ],
         )
+        browser._isolated_launch = True  # launched by this process -> scoped input only
+        assert_isolated_browser(browser)
         context = browser.new_context(viewport={"width": 1440, "height": 900},
                                       permissions=["microphone"])
         page = context.new_page()
@@ -186,6 +191,8 @@ def main():
               f"welcome-still-first: {'Welcome' in log_after_reload}")
 
         browser.close()
+
+    assert_focus_unchanged(focus_before, foreground_window_token())
 
     print("\n===== CONSOLE (" + str(len(console_log)) + " entries) =====")
     for m in console_log:

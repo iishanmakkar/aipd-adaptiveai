@@ -100,3 +100,48 @@ finding so it cannot regress.
 live-region presence). Only a human with NVDA confirms the *experience*: that
 announcements are actually spoken, in a sensible order, without the user hunting.
 Tests 2 and 3 are where a real problem would most likely hide.
+
+---
+
+## Printable pass/fail checklist
+
+Run with NVDA active, Edge/Chrome on `http://localhost:5173`. Mark each row
+**P** (pass), **F** (fail), or **N/A**, and write what you actually heard in the
+last column. Return this filled table — it is the deliverable, not verbal notes.
+
+| Step | Check | P / F / N/A | What NVDA actually said (note deviations) |
+|------|-------|:-----------:|-------------------------------------------|
+| 1.1 | H1 "AdaptiveAI" announced on load | | |
+| 1.2 | `H` cycles headings, no skip | | |
+| 1.3 | `N` announces banner / main / contentinfo | | |
+| 1.4 | Header buttons all named (history/download/settings/new) | | |
+| 1.5 | Footer: upload / "Message input" / mic named | | |
+| 1.6 | Welcome bubble reachable + full text read | | |
+| **2.1** | User message echoed ("You said: …") | | |
+| **2.2** | **Answer announced WITHOUT navigating to it (live region)** | | |
+| 2.3 | "Thinking…" status announced | | |
+| 3.1 | Mic Space → "pressed" + usage hint | | |
+| 3.2 | Recording timer announced | | |
+| 3.3 | Second Space stops + sends | | |
+| 3.4 | STT failure announced (not silence) | | |
+| 4.1 | Panel opens, region announced | | |
+| 4.2 | Font-size change announces value | | |
+| 4.3 | High-contrast toggle announces "checked" + visual flip | | |
+| 4.4 | Answer-detail select announces | | |
+| 4.5 | Concise preference → next answer shorter (reaches backend) | | |
+| 4.6 | Escape closes panel, focus returns | | |
+| 5.1 | History dialog + per-session date/count | | |
+| 5.2 | Selecting a session loads + announces its messages | | |
+| 5.3 | Escape closes history | | |
+| 5.4 | Copy button announces "copied" | | |
+| 6.1 | Backend down → error spoken (not silence) | | |
+| 6.2 | Non-image upload → error announced | | |
+
+**Overall verdict:** ☐ Usable with a screen reader  ☐ Usable with noted issues
+(list below)  ☐ Blocking issues found
+
+**Blocking issues (fix before shipping):**
+1. ______________________________
+2. ______________________________
+3. ______________________________
+

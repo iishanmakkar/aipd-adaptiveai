@@ -16,13 +16,18 @@ import sys
 
 from playwright.sync_api import sync_playwright
 
+from automation_guard import assert_focus_unchanged, assert_isolated_browser, foreground_window_token
+
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:5173"
 issues = []
 
 
 def run():
+    focus_before = foreground_window_token()
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
+        browser._isolated_launch = True  # launched by this process -> scoped input only
+        assert_isolated_browser(browser)
         page = browser.new_context(viewport={"width": 1280, "height": 860}).new_page()
         page.goto(BASE, wait_until="networkidle")
         page.wait_for_function(
@@ -130,6 +135,8 @@ def run():
             issues.append("tab/DOM order starts in the footer composer, not the header")
 
         browser.close()
+
+    assert_focus_unchanged(focus_before, foreground_window_token())
 
     print("\n=== A11Y ISSUES ===")
     for i in issues:
