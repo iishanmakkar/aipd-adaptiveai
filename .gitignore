@@ -38,3 +38,7 @@ postgres_data/
 
 # load-test artifacts
 backend/loadtest-*.json
+
+# DB dumps / backups - never commit
+*.sql
+!backend/alembic/**/*.sql
