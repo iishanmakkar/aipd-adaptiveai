@@ -17,6 +17,7 @@ import { useApiQuery } from '../hooks/useApiQuery';
 import { apiService } from '../services/api';
 import type { Verbosity } from '../types/api';
 import type { Message } from '../types/chat';
+import type { DisabilityProfile, LanguageComplexity } from '../types/accessibility';
 
 interface ChatInterfaceProps {
   initialScreenContext?: string;
@@ -47,6 +48,8 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
     setFontSize,
     toggleContrast,
     setVoiceSpeed,
+    setDisabilityProfile,
+    setLanguageComplexity,
     resetToDefaults,
   } = useAccessibility();
 
@@ -68,15 +71,24 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
   useEffect(() => {
     if (!sessionReady) return;
     apiService.getPreferences()
-      .then((p) => setVerbosity(p.verbosity_level))
+      .then((p) => {
+        setVerbosity(p.verbosity_level);
+        setDisabilityProfile(p.disability_profile as DisabilityProfile);
+        setLanguageComplexity(p.language_complexity as LanguageComplexity);
+      })
       .catch(() => { /* demo mode: keep the local default */ });
   }, [sessionReady]);
 
   const handleVerbosityChange = useCallback((level: Verbosity) => {
     setVerbosity(level);
-    apiService.updatePreferences({ verbosity_level: level, voice_speed: prefs.voiceSpeed })
+    apiService.updatePreferences({ 
+      verbosity_level: level, 
+      voice_speed: prefs.voiceSpeed,
+      disability_profile: prefs.disabilityProfile,
+      language_complexity: prefs.languageComplexity,
+    })
       .catch(() => { /* demo mode: preference stays local-only */ });
-  }, [prefs.voiceSpeed]);
+  }, [prefs.voiceSpeed, prefs.disabilityProfile, prefs.languageComplexity]);
 
   const handleOpenHistory = useCallback(() => {
     loadSessions();
@@ -314,10 +326,14 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
         contrastMode={prefs.contrastMode}
         voiceSpeed={prefs.voiceSpeed}
         verbosity={verbosity}
+        disabilityProfile={prefs.disabilityProfile}
+        languageComplexity={prefs.languageComplexity}
         onFontSizeChange={setFontSize}
         onContrastToggle={toggleContrast}
         onVoiceSpeedChange={setVoiceSpeed}
         onVerbosityChange={handleVerbosityChange}
+        onDisabilityProfileChange={setDisabilityProfile}
+        onLanguageComplexityChange={setLanguageComplexity}
         onResetAccessibility={resetToDefaults}
         showAccessibility={showAccessibility}
         onToggleAccessibility={handleToggleAccessibility}

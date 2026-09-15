@@ -42,10 +42,21 @@ export interface SessionListResponse {
 }
 
 export type Verbosity = 'concise' | 'standard' | 'detailed';
+export type DisabilityProfile = 'none' | 'blind' | 'low_vision' | 'cognitive' | 'motor';
+export type LanguageComplexity = 'simple' | 'standard' | 'technical';
 
 export interface PreferenceResponse {
   verbosity_level: Verbosity;
   voice_speed: number;
+  disability_profile: DisabilityProfile;
+  language_complexity: LanguageComplexity;
+}
+
+export interface PreferenceUpdate {
+  verbosity_level: Verbosity;
+  voice_speed: number;
+  disability_profile: DisabilityProfile;
+  language_complexity: LanguageComplexity;
 }
 
 /**

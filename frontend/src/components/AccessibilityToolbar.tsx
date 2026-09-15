@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { FontSize, ContrastMode } from '../types/accessibility';
+import type { FontSize, ContrastMode, DisabilityProfile, LanguageComplexity } from '../types/accessibility';
 import type { Verbosity } from '../types/api';
 import { FONT_SIZE_MAP } from '../types/accessibility';
 
@@ -8,10 +8,14 @@ interface AccessibilityToolbarProps {
   contrastMode: ContrastMode;
   voiceSpeed: number;
   verbosity: Verbosity;
+  disabilityProfile: DisabilityProfile;
+  languageComplexity: LanguageComplexity;
   onFontSizeChange: (size: FontSize) => void;
   onContrastToggle: () => void;
   onVoiceSpeedChange: (speed: number) => void;
   onVerbosityChange: (level: Verbosity) => void;
+  onDisabilityProfileChange: (profile: DisabilityProfile) => void;
+  onLanguageComplexityChange: (complexity: LanguageComplexity) => void;
   onReset: () => void;
 }
 
@@ -28,15 +32,33 @@ const VERBOSITY_LEVELS: { value: Verbosity; label: string }[] = [
   { value: 'detailed', label: 'Detailed' },
 ];
 
+const DISABILITY_PROFILES: { value: DisabilityProfile; label: string }[] = [
+  { value: 'none', label: 'None' },
+  { value: 'blind', label: 'Blind' },
+  { value: 'low_vision', label: 'Low Vision' },
+  { value: 'cognitive', label: 'Cognitive' },
+  { value: 'motor', label: 'Motor' },
+];
+
+const LANGUAGE_COMPLEXITIES: { value: LanguageComplexity; label: string }[] = [
+  { value: 'simple', label: 'Simple' },
+  { value: 'standard', label: 'Standard' },
+  { value: 'technical', label: 'Technical' },
+];
+
 export function AccessibilityToolbar({
   fontSize,
   contrastMode,
   voiceSpeed,
   verbosity,
+  disabilityProfile,
+  languageComplexity,
   onFontSizeChange,
   onContrastToggle,
   onVoiceSpeedChange,
   onVerbosityChange,
+  onDisabilityProfileChange,
+  onLanguageComplexityChange,
   onReset,
 }: AccessibilityToolbarProps) {
   const handleFontSizeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -46,6 +68,14 @@ export function AccessibilityToolbar({
   const handleVerbosityChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
     onVerbosityChange(e.target.value as Verbosity);
   }, [onVerbosityChange]);
+
+  const handleDisabilityProfileChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    onDisabilityProfileChange(e.target.value as DisabilityProfile);
+  }, [onDisabilityProfileChange]);
+
+  const handleLanguageComplexityChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    onLanguageComplexityChange(e.target.value as LanguageComplexity);
+  }, [onLanguageComplexityChange]);
 
   const handleVoiceSpeedChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     onVoiceSpeedChange(parseFloat(e.target.value));
@@ -72,6 +102,34 @@ export function AccessibilityToolbar({
             <option key={value} value={value}>
               {label} ({FONT_SIZE_MAP[value]})
             </option>
+          ))}
+        </select>
+      </fieldset>
+
+      <fieldset className="toolbar-group">
+        <legend>Disability Profile</legend>
+        <select
+          value={disabilityProfile}
+          onChange={handleDisabilityProfileChange}
+          className="toolbar-select"
+          aria-label="Select disability profile for adapted responses"
+        >
+          {DISABILITY_PROFILES.map(({ value, label }) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
+      </fieldset>
+
+      <fieldset className="toolbar-group">
+        <legend>Language Complexity</legend>
+        <select
+          value={languageComplexity}
+          onChange={handleLanguageComplexityChange}
+          className="toolbar-select"
+          aria-label="Select language complexity level"
+        >
+          {LANGUAGE_COMPLEXITIES.map(({ value, label }) => (
+            <option key={value} value={value}>{label}</option>
           ))}
         </select>
       </fieldset>

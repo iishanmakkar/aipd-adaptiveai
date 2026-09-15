@@ -1,7 +1,7 @@
 from openai import AsyncOpenAI
 from uuid import UUID
 from app.config import settings
-from app.models.preference import VerbosityLevel
+from app.models.preference import VerbosityLevel, DisabilityProfile, LanguageComplexity
 from app.models.message import Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,39 @@ client = AsyncOpenAI(
     timeout=settings.rewrite_timeout_seconds,
     max_retries=1,
 )
+
+
+DISABILITY_PROMPTS = {
+    DisabilityProfile.blind: (
+        "Respond with clear, step-by-step verbal instructions. "
+        "Avoid visual references like 'click here', 'see above', or 'on the right'. "
+        "Use spatial descriptions: 'the first field', 'the button below the form'. "
+        "Announce state changes explicitly."
+    ),
+    DisabilityProfile.low_vision: (
+        "Describe visual elements with high-contrast references. "
+        "Reference sizes: 'large button', 'small text'. "
+        "Mention color only with contrast context: 'red error text on white background'."
+    ),
+    DisabilityProfile.cognitive: (
+        "Use simple language. Break information into short steps. "
+        "Avoid technical jargon and complex sentences. "
+        "Maximum 2 clauses per sentence. Use bullet points for lists."
+    ),
+    DisabilityProfile.motor: (
+        "Minimize required interactions. Prefer voice-first workflows. "
+        "Combine multiple steps into single actions. "
+        "Indicate keyboard shortcuts when available."
+    ),
+    DisabilityProfile.none: "",
+}
+
+
+LANGUAGE_COMPLEXITY_PROMPTS = {
+    LanguageComplexity.simple: "Use simple words, short sentences, and concrete terms.",
+    LanguageComplexity.standard: "",
+    LanguageComplexity.technical: "Use precise terminology and detailed explanations.",
+}
 
 
 async def count_clarifying_questions(db: AsyncSession | None, session_id: UUID | str, window: int = 5) -> int:
@@ -58,20 +91,42 @@ async def adjust_response(
     Currently uses simple rule-based logic with optional LLM rewrite.
     """
     
-    # Rule 1: High confusion → simplify
+    # Build disability-specific instruction
+    disability_instruction = DISABILITY_PROMPTS.get(user_prefs.disability_profile, "")
+    language_instruction = LANGUAGE_COMPLEXITY_PROMPTS.get(user_prefs.language_complexity, "")
+    
+    combined_instruction = f"{disability_instruction} {language_instruction}".strip()
+    
+    # Rule 1: High confusion → simplify (highest priority)
     if clarifying_count >= settings.clarifying_threshold:
-        return await llm_rewrite(raw_answer, "Simplify this explanation for a confused user. Use plain language, short sentences, and avoid jargon.")
+        instruction = "Simplify this explanation for a confused user. Use plain language, short sentences, and avoid jargon."
+        if combined_instruction:
+            instruction = f"{combined_instruction} {instruction}"
+        return await llm_rewrite(raw_answer, instruction)
 
-    # Rule 2: Verbosity preference
+    # Rule 2: Disability profile + language complexity (always apply if set)
+    if combined_instruction:
+        return await llm_rewrite(raw_answer, combined_instruction)
+
+    # Rule 3: Verbosity preference
     if user_prefs.verbosity_level == VerbosityLevel.concise:
-        return await llm_rewrite(raw_answer, "Make this response concise - maximum 2 sentences, direct and to the point.")
+        instruction = "Make this response concise - maximum 2 sentences, direct and to the point."
+        if language_instruction:
+            instruction = f"{language_instruction} {instruction}"
+        return await llm_rewrite(raw_answer, instruction)
     elif user_prefs.verbosity_level == VerbosityLevel.detailed:
-        return await llm_rewrite(raw_answer, "Expand this response with examples, context, and thorough explanation.")
+        instruction = "Expand this response with examples, context, and thorough explanation."
+        if language_instruction:
+            instruction = f"{language_instruction} {instruction}"
+        return await llm_rewrite(raw_answer, instruction)
 
-    # Rule 3: First-time user (few messages in session)
+    # Rule 4: First-time user (few messages in session)
     msg_count = await get_message_count(db, session_id)
     if msg_count < 3:
-        return await llm_rewrite(raw_answer, "Add a brief welcoming orientation. Be encouraging and explain any next steps.")
+        instruction = "Add a brief welcoming orientation. Be encouraging and explain any next steps."
+        if combined_instruction:
+            instruction = f"{combined_instruction} {instruction}"
+        return await llm_rewrite(raw_answer, instruction)
 
     # Default: return as-is
     return raw_answer

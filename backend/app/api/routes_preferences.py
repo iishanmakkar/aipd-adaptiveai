@@ -45,7 +45,12 @@ async def get_preferences(
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=503, detail=f"Database connection failed: {str(e)[:200]}")
-    return PreferenceResponse(verbosity_level=pref.verbosity_level, voice_speed=pref.voice_speed)
+    return PreferenceResponse(
+        verbosity_level=pref.verbosity_level,
+        voice_speed=pref.voice_speed,
+        disability_profile=pref.disability_profile,
+        language_complexity=pref.language_complexity,
+    )
 
 
 @router.put("/preferences", response_model=PreferenceResponse)
@@ -59,9 +64,16 @@ async def update_preferences(
         pref = await _get_or_create_preference(db, current_user)
         pref.verbosity_level = update.verbosity_level
         pref.voice_speed = update.voice_speed
+        pref.disability_profile = update.disability_profile
+        pref.language_complexity = update.language_complexity
         await db.commit()
         await db.refresh(pref)
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=503, detail=f"Database connection failed: {str(e)[:200]}")
-    return PreferenceResponse(verbosity_level=pref.verbosity_level, voice_speed=pref.voice_speed)
+    return PreferenceResponse(
+        verbosity_level=pref.verbosity_level,
+        voice_speed=pref.voice_speed,
+        disability_profile=pref.disability_profile,
+        language_complexity=pref.language_complexity,
+    )

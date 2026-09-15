@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { FontSize, ContrastMode } from '../types/accessibility';
+import type { FontSize, ContrastMode, DisabilityProfile, LanguageComplexity } from '../types/accessibility';
 import type { Verbosity } from '../types/api';
 import { AccessibilityToolbar } from './AccessibilityToolbar';
 
@@ -13,10 +13,14 @@ interface HeaderProps {
   contrastMode: ContrastMode;
   voiceSpeed: number;
   verbosity: Verbosity;
+  disabilityProfile: DisabilityProfile;
+  languageComplexity: LanguageComplexity;
   onFontSizeChange: (size: FontSize) => void;
   onContrastToggle: () => void;
   onVoiceSpeedChange: (speed: number) => void;
   onVerbosityChange: (level: Verbosity) => void;
+  onDisabilityProfileChange: (profile: DisabilityProfile) => void;
+  onLanguageComplexityChange: (complexity: LanguageComplexity) => void;
   onResetAccessibility: () => void;
   showAccessibility: boolean;
   onToggleAccessibility: () => void;
@@ -32,10 +36,14 @@ export function Header({
   contrastMode,
   voiceSpeed,
   verbosity,
+  disabilityProfile,
+  languageComplexity,
   onFontSizeChange,
   onContrastToggle,
   onVoiceSpeedChange,
   onVerbosityChange,
+  onDisabilityProfileChange,
+  onLanguageComplexityChange,
   onResetAccessibility,
   showAccessibility,
   onToggleAccessibility,
@@ -134,10 +142,14 @@ export function Header({
             contrastMode={contrastMode}
             voiceSpeed={voiceSpeed}
             verbosity={verbosity}
+            disabilityProfile={disabilityProfile}
+            languageComplexity={languageComplexity}
             onFontSizeChange={onFontSizeChange}
             onContrastToggle={onContrastToggle}
             onVoiceSpeedChange={onVoiceSpeedChange}
             onVerbosityChange={onVerbosityChange}
+            onDisabilityProfileChange={onDisabilityProfileChange}
+            onLanguageComplexityChange={onLanguageComplexityChange}
             onReset={onResetAccessibility}
           />
         </div>

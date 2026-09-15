@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { AccessibilityPreferences, FontSize, ContrastMode } from '../types/accessibility';
+import type { AccessibilityPreferences, FontSize, ContrastMode, DisabilityProfile, LanguageComplexity } from '../types/accessibility';
 import { DEFAULT_ACCESSIBILITY_PREFS, FONT_SIZE_MAP, STORAGE_KEY } from '../types/accessibility';
 
 export function useAccessibility() {
@@ -74,6 +74,14 @@ export function useAccessibility() {
     setPrefs((prev) => ({ ...prev, reduceMotion: reduce }));
   }, []);
 
+  const setDisabilityProfile = useCallback((profile: DisabilityProfile) => {
+    setPrefs((prev) => ({ ...prev, disabilityProfile: profile }));
+  }, []);
+
+  const setLanguageComplexity = useCallback((complexity: LanguageComplexity) => {
+    setPrefs((prev) => ({ ...prev, languageComplexity: complexity }));
+  }, []);
+
   const resetToDefaults = useCallback(() => {
     setPrefs(DEFAULT_ACCESSIBILITY_PREFS);
   }, []);
@@ -87,6 +95,8 @@ export function useAccessibility() {
     setVoicePitch,
     setVoiceVolume,
     setReduceMotion,
+    setDisabilityProfile,
+    setLanguageComplexity,
     resetToDefaults,
   };
 }

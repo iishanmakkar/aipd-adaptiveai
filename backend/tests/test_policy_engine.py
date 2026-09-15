@@ -5,7 +5,7 @@ documented rules and the LLM-failure fallback, all without touching NIM.
 """
 import pytest
 
-from app.models.preference import VerbosityLevel
+from app.models.preference import VerbosityLevel, DisabilityProfile, LanguageComplexity
 from app.services import policy_engine
 from app.services.policy_engine import adjust_response, count_clarifying_questions
 
@@ -26,6 +26,8 @@ def rewrites(monkeypatch):
 def _prefs(verbosity):
     class P:
         verbosity_level = verbosity
+        disability_profile = DisabilityProfile.none
+        language_complexity = LanguageComplexity.standard
     return P()
 
 

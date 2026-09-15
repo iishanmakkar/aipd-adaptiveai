@@ -17,6 +17,20 @@ class VerbosityLevel(str, enum.Enum):
     detailed = "detailed"
 
 
+class DisabilityProfile(str, enum.Enum):
+    none = "none"
+    blind = "blind"
+    low_vision = "low_vision"
+    cognitive = "cognitive"
+    motor = "motor"
+
+
+class LanguageComplexity(str, enum.Enum):
+    simple = "simple"
+    standard = "standard"
+    technical = "technical"
+
+
 class Preference(Base):
     __tablename__ = "preferences"
 
@@ -24,5 +38,7 @@ class Preference(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
     verbosity_level: Mapped[VerbosityLevel] = mapped_column(SQLEnum(VerbosityLevel), default=VerbosityLevel.standard, nullable=False)
     voice_speed: Mapped[float] = mapped_column(default=1.0, nullable=False)
+    disability_profile: Mapped[DisabilityProfile] = mapped_column(SQLEnum(DisabilityProfile), default=DisabilityProfile.none, nullable=False)
+    language_complexity: Mapped[LanguageComplexity] = mapped_column(SQLEnum(LanguageComplexity), default=LanguageComplexity.standard, nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="preferences")

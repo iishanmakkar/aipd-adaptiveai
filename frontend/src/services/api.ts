@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import type {
   QueryRequest, QueryResponse, TranscribeResponse, SessionResponse, HistoryResponse,
-  SessionListResponse, PreferenceResponse, Verbosity, VLMRequest, VLMResponse,
+  SessionListResponse, PreferenceResponse, PreferenceUpdate, VLMRequest, VLMResponse,
 } from '../types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
@@ -82,7 +82,7 @@ class ApiService {
     return response.data;
   }
 
-  async updatePreferences(prefs: { verbosity_level: Verbosity; voice_speed: number }): Promise<PreferenceResponse> {
+  async updatePreferences(prefs: PreferenceUpdate): Promise<PreferenceResponse> {
     const response = await this.client.put<PreferenceResponse>('/api/preferences', prefs);
     return response.data;
   }
