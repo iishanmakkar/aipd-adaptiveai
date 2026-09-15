@@ -158,16 +158,20 @@ jobs:
           rc_total=0
           for req in backend intent-engine agents; do
             echo "::group::$req"
-            pip-audit --format json --progress-spinner off -r "$req/requirements.txt" > "audit-$req.json" 2>"audit-$req.err"
+            # --no-deps audits the pinned set directly and does not build a full
+            # transitive resolution graph - the resolver errors (exit>=2) on the
+            # runner for packages like av/faster-whisper that have no clean linux
+            # wheel, which would otherwise read as "scanner failed". Transitive
+            # coverage is provided by the sealed deep scan (README B7).
+            pip-audit --no-deps --format json --progress-spinner off -r "$req/requirements.txt" > "audit-$req.json" 2>"audit-$req.err"
             rc=$?
             if [ "$rc" -ge 2 ]; then
               echo "::error::pip-audit FAILED TO RUN for $req (exit $rc) - not treating a broken scan as clean"
               cat "audit-$req.err"
               rc_total=1
             else
-              n=$(python -c "import json;print(len(json.load(open('audit-$req.json')).get('dependencies',[])))" 2>/dev/null || echo '?')
-              echo "$req: scanner OK, $n packages checked (exit $rc; 1 = advisories present)"
-              python -c "import json,sys; d=json.load(open('audit-$req.json')); v=[x for x in d.get('dependencies',[]) if x.get('vulns')]; [print('  ADV', x['name'], x['version'], [q['id'] for q in x['vulns']]) for x in v]" || true
+              echo "$req: scanner OK (exit $rc; 1 = advisories present)"
+              python -c "import json;d=json.load(open('audit-$req.json'));[print('  ADV',x['name'],x['version'],[q['id'] for q in x['vulns']]) for x in d.get('dependencies',[]) if x.get('vulns')]" || true
             fi
             echo "::endgroup::"
           done

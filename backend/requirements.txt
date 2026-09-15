@@ -1,11 +1,11 @@
-fastapi==0.116.1
+fastapi==0.119.0
 uvicorn[standard]==0.34.0
 sqlalchemy[asyncio]==2.0.36
 asyncpg==0.29.0
 alembic==1.13.2
 pydantic[email]==2.9.2
 pydantic-settings==2.5.2
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.4.0
 # Direct bcrypt: passlib 1.7.4 is unmaintained and raises against bcrypt >= 4.1,
 # which broke register/login with a 500 (see app/api/auth.py).
 bcrypt==5.0.0
@@ -14,7 +14,7 @@ openai==1.54.0
 # 0.0.9 carried a dozen advisories and this parses /api/transcribe uploads - the
 # most exposed dependency we ship.
 python-multipart==0.0.32
-python-dotenv==1.1.1
+python-dotenv==1.2.2
 faster-whisper==1.1.1
 av==13.0.0
 # faster-whisper 1.1.1 does `import requests`, but newer huggingface_hub no

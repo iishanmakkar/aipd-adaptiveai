@@ -2,6 +2,6 @@
 # Install torch CPU-only BEFORE this file, exactly as the Dockerfile does, so CI
 # never downloads ~3 GB of CUDA wheels it cannot use:
 #   pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cpu
-pytest==8.2.0
-pytest-asyncio==0.24.0
+pytest==9.0.3
+pytest-asyncio==0.25.0
 httpx==0.27.0
