@@ -2,6 +2,7 @@ import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import type {
   QueryRequest, QueryResponse, TranscribeResponse, SessionResponse, HistoryResponse,
   SessionListResponse, PreferenceResponse, PreferenceUpdate, VLMRequest, VLMResponse,
+  BehaviorEvent,
 } from '../types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
@@ -84,6 +85,11 @@ class ApiService {
 
   async updatePreferences(prefs: PreferenceUpdate): Promise<PreferenceResponse> {
     const response = await this.client.put<PreferenceResponse>('/api/preferences', prefs);
+    return response.data;
+  }
+
+  async recordBehaviorEvent(event: BehaviorEvent): Promise<{ status: string }> {
+    const response = await this.client.post<{ status: string }>('/api/behavior-event', event);
     return response.data;
   }
 

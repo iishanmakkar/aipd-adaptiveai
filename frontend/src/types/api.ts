@@ -59,6 +59,13 @@ export interface PreferenceUpdate {
   language_complexity: LanguageComplexity;
 }
 
+/** Behavior event sent from frontend to backend for adaptive policy tracking. */
+export interface BehaviorEvent {
+  session_id: string;
+  event_type: 'replay' | 'skip' | 'listen';
+  listen_time?: number;
+}
+
 /**
  * One message row as the backend's GET /api/history actually returns it:
  * `created_at` is an ISO string on the wire (Message.timestamp is a Date only
