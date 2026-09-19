@@ -25,7 +25,12 @@ class BaseAgent(ABC):
         # 1. Retrieve relevant documents.
         #    Embedding inference is CPU-bound sync work; running it on the event
         #    loop serialises every concurrent request, so offload it to a thread.
-        docs = await asyncio.to_thread(self.retriever.retrieve, query)
+        #    The live page/screen context (if any) joins the retrieval query:
+        #    without it, a generic question like "what does this form ask for?"
+        #    retrieves whatever the words match (e.g. a declaration-form doc)
+        #    instead of what is ACTUALLY on the user's page.
+        retrieval_query = query if not extra_context else f"{query}\n{extra_context}"
+        docs = await asyncio.to_thread(self.retriever.retrieve, retrieval_query)
 
         # 2. Format sources for prompt
         sources_text = self.retriever.format_sources(docs)
@@ -51,12 +56,19 @@ class BaseAgent(ABC):
         }
 
     def _build_prompt(self, query: str, entity: str, extra_context: str, sources_text: str) -> str:
+        grounding = ""
+        if extra_context:
+            grounding = (
+                "\nGROUNDING PRIORITY: the Extra Context above describes the ACTUAL "
+                "page the user is on right now. Ground specifics (names, fields, "
+                "elements, steps) in it FIRST; use Retrieved Knowledge only for "
+                "background explanations of those specifics.")
         return f"""Entity: {entity}
 Extra Context: {extra_context if extra_context else 'None provided'}
 User Question: {query}
 
 Retrieved Knowledge:
-{sources_text}"""
+{sources_text}{grounding}"""
 
     def _get_suggested_action(self, query: str, entity: str) -> str:
         return "none"

@@ -2,7 +2,7 @@ import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import type {
   QueryRequest, QueryResponse, TranscribeResponse, SessionResponse, HistoryResponse,
   SessionListResponse, PreferenceResponse, PreferenceUpdate, VLMRequest, VLMResponse,
-  BehaviorEvent,
+  BehaviorEvent, PageContextResponse,
 } from '../types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
@@ -39,12 +39,19 @@ class ApiService {
     );
   }
 
-  async query(request: QueryRequest): Promise<QueryResponse> {
-    // A real query spans intent classification + RAG retrieval + an NIM
+  async query(request: QueryRequest): Promise<QueryResponse> {    // A real query spans intent classification + RAG retrieval + an NIM
     // completion, and NIM latency on this account varies from ~3s to ~90s+.
     // This must exceed the backend's worst case (45s intent + 90s agent +
     // 30s policy rewrite), otherwise the UI aborts a request still in flight.
     const response = await this.client.post<QueryResponse>('/api/query', request, {
+      timeout: 180000,
+    });
+    return response.data;
+  }
+
+  async pageContext(url: string): Promise<PageContextResponse> {
+    // Live Chromium load + snapshot + VLM description; can take ~30-60s.
+    const response = await this.client.post<PageContextResponse>('/api/page-context', { url }, {
       timeout: 180000,
     });
     return response.data;

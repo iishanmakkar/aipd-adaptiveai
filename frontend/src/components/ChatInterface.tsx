@@ -166,6 +166,36 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
     // creates it within a moment of load, so just wait it out.
     if (!sessionReady) return;
 
+    // Real page, not generic advice: if the message links a URL, load it in
+    // the backend's live Chromium first and ask about what is ACTUALLY there.
+    const pageUrl = messageText.match(/https?:\/\/[^\s)]+/i)?.[0];
+    let effectiveScreenContext = screenContext || '';
+    if (pageUrl) {
+      try {
+        const page = await apiService.pageContext(pageUrl);
+        const fieldLines = page.fields
+          .map((f) => `- ${f.label} (${f.type}${f.required ? ', required' : ''})`)
+          .join('\n');
+        effectiveScreenContext =
+          `Live page: ${page.title} (${page.url}). ${page.description}\n` +
+          `Interactive fields:\n${fieldLines}`;
+        const note: Message = {
+          id: uuidv4(), role: 'assistant',
+          content: `Loaded the live page: ${page.title} — ${page.field_count} interactive fields found. Ask me about anything on it.`,
+          timestamp: new Date(), is_loading: false,
+        };
+        addMessage(note);
+      } catch (err) {
+        console.error('Page load failed:', err);
+        const fail: Message = {
+          id: uuidv4(), role: 'assistant',
+          content: 'I could not open that page (it may block automated browsing or need login). I can still help if you describe it or upload a screenshot.',
+          timestamp: new Date(), is_loading: false,
+        };
+        addMessage(fail);
+      }
+    }
+
     // Add user message
     const userMessage: Message = {
       id: uuidv4(),
@@ -173,7 +203,7 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
       content: messageText,
       timestamp: new Date(),
       input_source: text ? 'voice' : 'text',
-      screen_context: screenContext || undefined,
+      screen_context: effectiveScreenContext || undefined,
     };
     addMessage(userMessage);
     setInputValue('');
@@ -196,7 +226,7 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
         session_id: sessionId,
         input_text: messageText,
         input_source: text ? 'voice' : 'text',
-        screen_context: screenContext || '',
+        screen_context: effectiveScreenContext,
       });
 
       // Update assistant message with response

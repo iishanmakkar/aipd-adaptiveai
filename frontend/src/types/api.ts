@@ -66,6 +66,22 @@ export interface BehaviorEvent {
   listen_time?: number;
 }
 
+/** Live page context: what the backend's Chromium actually saw at a URL. */
+export interface PageField {
+  label: string;
+  type: string;
+  required: boolean;
+}
+
+export interface PageContextResponse {
+  url: string;
+  http_status: number | null;
+  title: string;
+  field_count: number;
+  fields: PageField[];
+  description: string;
+}
+
 /**
  * One message row as the backend's GET /api/history actually returns it:
  * `created_at` is an ISO string on the wire (Message.timestamp is a Date only
