@@ -1,0 +1,61 @@
+name: Accuracy Nightly (live NIM)
+
+# Live behavioral gates that cannot run per-push (they spend NIM quota and need
+# a running stack). Scheduled nightly + manual dispatch.
+#
+# FAIL-CLOSED (Round 6 lesson): when explicitly dispatched, a missing
+# NIM_API_KEY secret is a loud error, never a silent green skip. On schedule
+# without a secret the job fails too - a gate that can't run must complain,
+# not pass. The team must add the NIM_API_KEY repo secret for this to run.
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: accuracy-nightly
+  cancel-in-progress: false
+
+jobs:
+  bare-noun:
+    name: Bare-noun accuracy (B1 live gate, 13/15)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require NIM_API_KEY (fail closed, never skip silently)
+        run: |
+          if [ -z "${{ secrets.NIM_API_KEY }}" ]; then
+            echo "::error::NIM_API_KEY repo secret is missing - the live gate cannot run and will NOT be treated as passing. Add the secret or run workflow_dispatch after adding it."
+            exit 2
+          fi
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: agents/requirements*.txt
+      - name: Start full stack
+        run: docker compose up -d --build
+      - name: Wait for agents health
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8002/health && break
+            sleep 10
+          done
+          curl -sf http://localhost:8002/health
+        env:
+          NIM_API_KEY: ${{ secrets.NIM_API_KEY }}
+      - name: Run bare-noun live gate
+        working-directory: agents
+        run: |
+          pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt -r requirements-dev.txt
+          python -m pytest tests/test_bare_noun_live.py -m live -v
+        env:
+          NIM_API_KEY: ${{ secrets.NIM_API_KEY }}
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose logs --tail=50 agents intent-engine backend
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

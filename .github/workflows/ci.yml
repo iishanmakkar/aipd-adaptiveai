@@ -156,7 +156,7 @@ jobs:
       - name: pip-audit each service (fail if the scanner errors)
         run: |
           rc_total=0
-          for req in backend intent-engine agents; do
+          for req in backend intent-engine agents browser-agent; do
             echo "::group::$req"
             # --no-deps audits the pinned set directly and does not build a full
             # transitive resolution graph - the resolver errors (exit>=2) on the

@@ -14,6 +14,7 @@ import { useSpeechToText } from '../hooks/useSpeechToText';
 import { useTextToSpeech } from '../hooks/useTextToSpeech';
 import { useVisionModel } from '../hooks/useVisionModel';
 import { useApiQuery } from '../hooks/useApiQuery';
+import { useBehaviorTracking } from '../hooks/useBehaviorTracking';
 import { apiService } from '../services/api';
 import type { Verbosity } from '../types/api';
 import type { Message } from '../types/chat';
@@ -108,6 +109,10 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
   const { speak, stop: stopSpeaking, isSpeaking } = useTextToSpeech();
   const { describeImage, isDescribing } = useVisionModel();
   const { sendQuery, isQuerying } = useApiQuery();
+  // Behavior signals: replay/skip feed policy Rule 5 (defaults only).
+  // recordReplay fires from the per-answer Replay button; recordSkip from the
+  // user-initiated stop-speaking control (an interruption, not a clean finish).
+  const { recordReplay, recordSkip } = useBehaviorTracking(sessionId);
 
   // Sync status with recording/speaking state
   useEffect(() => {
@@ -259,6 +264,19 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
     setShowHistory(false);
   }, [createNewSession, stopSpeaking]);
 
+  // Replay path: the user didn't get the answer - re-speak it AND log the
+  // signal so the policy engine can simplify subsequent answers.
+  const handleReplayAnswer = useCallback((content: string) => {
+    recordReplay();
+    speak(content);
+  }, [recordReplay, speak]);
+
+  // Skip path: the user cut speech off - log it (too verbose) then stop.
+  const handleStopSpeaking = useCallback(() => {
+    recordSkip();
+    stopSpeaking();
+  }, [recordSkip, stopSpeaking]);
+
   const handleToggleAccessibility = useCallback(() => {
     setShowAccessibility((prev) => !prev);
   }, []);
@@ -357,7 +375,7 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
           aria-label="Conversation"
         >
           {history.map((message) => (
-            <MessageBubble key={message.id} message={message} />
+            <MessageBubble key={message.id} message={message} onReplay={handleReplayAnswer} />
           ))}
 
           {history.length === 1 && sessionReady && !isQuerying && (
@@ -380,7 +398,7 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
           <div ref={messagesEndRef} />
         </div>
 
-        <StatusIndicator status={status} listeningTime={recordingTime} onStopSpeaking={stopSpeaking} />
+        <StatusIndicator status={status} listeningTime={recordingTime} onStopSpeaking={handleStopSpeaking} />
       </main>
 
       <footer className="chat-footer" role="contentinfo">

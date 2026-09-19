@@ -4,9 +4,10 @@ import { renderMarkdown } from '../utils/markdown';
 
 interface MessageBubbleProps {
   message: Message;
+  onReplay?: (content: string) => void;
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, onReplay }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
 
@@ -78,6 +79,17 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             aria-label={copied ? 'Answer copied' : 'Copy answer to clipboard'}
           >
             {copied ? '✓ Copied' : 'Copy'}
+          </button>
+        )}
+
+        {!isUser && !message.is_loading && message.content && onReplay && (
+          <button
+            type="button"
+            className="copy-button replay-button"
+            onClick={() => onReplay(message.content)}
+            aria-label="Listen to this answer again"
+          >
+            🔊 Replay
           </button>
         )}
       </div>

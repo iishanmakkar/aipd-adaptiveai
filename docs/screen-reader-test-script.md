@@ -86,6 +86,29 @@ that is a blocking finding, not a nitpick.
 | 6.1 | Stop the backend (`docker compose stop backend`), send a message | the assistant bubble should say and **speak** an error ("Sorry, I encountered an error…") — not silent failure |
 | 6.2 | Upload a non-image file via the dropzone | the upload error ("…must be an image…") is announced (`role=alert`) |
 
+## Test 7 — New since Round 5: sources, adaptive controls, replay/skip (critical)
+
+Round 7 added RAG source chips, disability-profile/complexity/verbosity selects,
+a per-answer Replay button, and behavior-driven adaptation. None of these existed
+when Tests 1–6 were written.
+
+| # | Action | Expected |
+|---|--------|----------|
+| 7.1 | Ask a question, wait for the answer | below the answer, NVDA reads "Knowledge sources used" followed by chips (`form_aadhar_number`, …) — each chip reachable by Tab |
+| 7.2 | Same answer | NVDA announces the agent badge ("Handled by form_agent") and confidence ("Confidence 90%") |
+| 7.3 | Open accessibility settings | three NEW selects vs Round 5: "Select disability profile for adapted responses", "Select language complexity level", "Select answer detail level" — each announces its value on change |
+| 7.4 | Set profile Blind + detail Concise, ask a question | the answer comes back as numbered steps AND noticeably short (proves profile+verbosity reached the backend policy engine) |
+| 7.5 | On any assistant answer, Tab to "Listen to this answer again", Enter | the answer is spoken again (Replay); NVDA announces the button by its full name, not just "button" |
+| 7.6 | While an answer is being spoken, Tab to the stop-speaking control, Enter | speech stops immediately; this is logged as a skip (answers get shorter when skipped repeatedly — backend Rule 5) |
+| 7.7 | Stop the backend (`docker compose stop backend`), send a message | error bubble is spoken ("Sorry, I encountered an error…"), not silence |
+
+**Form-fill honesty note (for the examiner):** autonomous form filling has NO chat
+UI trigger — it is `POST /api/form-fill` plus the runnable demo page
+`demo/book-tickets.html` (open it directly in Edge/Chrome: full keyboard flow,
+real confirmation region with `role=status`). Do NOT mark "form-fill initiation"
+as a UI pass; verify the demo page reads correctly instead (labels, required
+announcement, confirmation text).
+
 ## Record results
 
 For each numbered step, log: **Pass / Fail + what NVDA actually said.** Anything
@@ -136,6 +159,14 @@ last column. Return this filled table — it is the deliverable, not verbal note
 | 5.4 | Copy button announces "copied" | | |
 | 6.1 | Backend down → error spoken (not silence) | | |
 | 6.2 | Non-image upload → error announced | | |
+| **7.1** | **Source chips announced + reachable** | | |
+| 7.2 | Agent badge + confidence announced | | |
+| 7.3 | Profile / complexity / detail selects named + announce | | |
+| 7.4 | Blind+Concise → steps AND short (reaches backend) | | |
+| 7.5 | "Listen to this answer again" replays | | |
+| 7.6 | Stop-speaking stops + is named | | |
+| 7.7 | Backend down → error spoken (re-check post-R7) | | |
+| — | demo/book-tickets.html reads correctly (labels/confirmation) | | |
 
 **Overall verdict:** ☐ Usable with a screen reader  ☐ Usable with noted issues
 (list below)  ☐ Blocking issues found

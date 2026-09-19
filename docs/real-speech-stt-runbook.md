@@ -5,9 +5,34 @@ SAPI voices): 0% on short clips, 2.8% on a 36-word sentence, silence/noise
 correctly rejected. Synthesized speech is clean and evenly paced — real human
 speech (accents, disfluencies, background noise, fast/mumbled) will score
 **worse**, and that number has not been measured because this environment has no
-human voice to record. This runbook closes that with a real microphone.
+human voice to record. Verified 2026-09-19: audio devices exist (Intel SST
+Digital Microphones, OK) but no capture tooling (no ffmpeg, no sounddevice) —
+so even room-tone capture isn't possible from here. A phone recording works.
 
-## What to record (8–10 clips)
+## Five-minute version (minimum viable: 3 clips on any phone)
+
+Record with any voice-memo app, transfer the files to one folder, add a matching
+`.txt` per clip with the words actually spoken:
+
+1. `clean.wav` — "What is the permanent address field asking for?" (normal pace,
+   quiet room) + `clean.txt` with that sentence.
+2. `noisy.wav` — same sentence with TV/fan on + `noisy.txt` (same text).
+3. `fast.wav` — "and what about this one" (fast, mumbled) + `fast.txt`.
+
+Then (stack up):
+
+```bash
+docker compose up -d
+cd backend
+python stt_wer.py ../path/to/your/clips   # needs httpx (in requirements-dev.txt)
+```
+
+Expected honest outcome: `clean` near 0%, `noisy`/`fast` worse — report all
+three numbers, don't average them away. The full 10-clip matrix below is the
+thorough version; the 3-clip version above closes the gap enough to replace
+"unmeasured" with a real number.
+
+## Full matrix (when you have 20 minutes + multiple speakers)
 
 Record each as `NAME.wav` (16-bit PCM WAV, 16 kHz mono is ideal but any format
 Whisper accepts works) into one folder, with a matching `NAME.txt` containing the
