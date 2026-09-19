@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # Frontend CORS
     frontend_url: str = "http://localhost:3000"
 
+    # Trusted hosts (production): comma-separated, e.g. "app.example.com,api.example.com".
+    # Empty = TrustedHost middleware skipped with a loud warning (set this in prod).
+    allowed_hosts: str = ""
+
     # Policy engine
     clarifying_threshold: int = 3
     context_window_size: int = 5

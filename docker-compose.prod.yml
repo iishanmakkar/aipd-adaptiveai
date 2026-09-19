@@ -1,0 +1,14 @@
+# Production overlay: expose ONLY the frontend and the public API.
+# intent-engine / agents / browser-agent / postgres stay on the internal
+# compose network (the browser-agent drives live Chromium - it must never be
+# reachable by untrusted callers; SSRF guard is the second layer, not the only one).
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+services:
+  postgres:
+    ports: !reset []
+  intent-engine:
+    ports: !reset []
+  agents:
+    ports: !reset []
+  browser-agent:
+    ports: !reset []

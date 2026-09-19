@@ -70,6 +70,10 @@ class BrowserTool:
     # -- navigation --
 
     async def navigate(self, url: str) -> Dict[str, Any]:
+        # Defense in depth: endpoints 422 first, but no caller reaches the
+        # network with a forbidden URL even if a code path forgets to check.
+        from app.api.url_guard import validate_browse_url
+        validate_browse_url(url)
         page = self._require_page()
         response = await page.goto(url, wait_until="domcontentloaded")
         status = response.status if response else None

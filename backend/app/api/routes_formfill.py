@@ -11,10 +11,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.agents.form.form_agent import FormAgent
+from app.api.url_guard import validate_browse_url
 
 router = APIRouter(prefix="/api", tags=["form-fill"])
-
-_ALLOWED_SCHEMES = ("http://", "https://", "file://", "data:")
 
 
 class FormFillRequest(BaseModel):
@@ -25,8 +24,10 @@ class FormFillRequest(BaseModel):
 
 @router.post("/form-fill")
 async def form_fill(req: FormFillRequest):
-    if not req.url.startswith(_ALLOWED_SCHEMES):
-        raise HTTPException(status_code=422, detail="url must be http(s), file or data")
+    try:
+        validate_browse_url(req.url)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     if not req.values:
         raise HTTPException(status_code=422, detail="values must not be empty")
     try:

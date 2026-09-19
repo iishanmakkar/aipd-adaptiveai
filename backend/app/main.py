@@ -117,13 +117,16 @@ app = FastAPI(
 )
 
 
-# Security: TrustedHost middleware - only allow specific hosts in production
+# Security: TrustedHost middleware - enforced from ALLOWED_HOSTS in production.
+# The old hardcoded placeholder domain is gone: an env you forget is now a
+# loud warning, not a silent misconfiguration.
 if not settings.debug:
-    from fastapi.middleware.trustedhost import TrustedHostMiddleware
-    app.add_middleware(
-        TrustedHostMiddleware,
-        allowed_hosts=["your-domain.com", "api.your-domain.com"]
-    )
+    _allowed = [h.strip() for h in settings.allowed_hosts.split(",") if h.strip()]
+    if _allowed:
+        from fastapi.middleware.trustedhost import TrustedHostMiddleware
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed)
+    else:
+        logger.warning("ALLOWED_HOSTS is empty with DEBUG=False - TrustedHost skipped; set ALLOWED_HOSTS in production")
 
 
 # CORS - restrict in production

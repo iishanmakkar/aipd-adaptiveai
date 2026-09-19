@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.services.browser_agent import BrowserAgent
 from app.tools.driver import Driver
+from app.tools.url_guard import validate_browse_url
 
 
 class BrowseRequest(BaseModel):
@@ -59,6 +60,10 @@ async def health():
 @app.post("/browse")
 async def browse(req: BrowseRequest):
     """Navigate a REAL browser to req.url; return live title/status/snapshot."""
+    try:
+        validate_browse_url(req.url)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     driver = Driver()
     await driver.start()
     try:
@@ -83,6 +88,10 @@ async def fill(req: FillRequest):
     """Fill REAL fields on a live page; every result carries a same-page readback."""
     if not req.fields:
         raise HTTPException(status_code=422, detail="fields must not be empty")
+    try:
+        validate_browse_url(req.url)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     driver = Driver()
     await driver.start()
     try:

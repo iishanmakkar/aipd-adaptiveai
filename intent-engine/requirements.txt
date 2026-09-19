@@ -6,4 +6,6 @@ httpx==0.27.2
 openai==1.54.0
 python-dotenv==1.2.2
 pytest==9.0.3
-pytest-asyncio==0.25.0
+# 0.25.0 caps pytest<9 (breaks fresh resolves against pytest 9 - found by the
+# WSL2 deploy build, not by review). 0.24.0 is the proven pin (see -dev file).
+pytest-asyncio==0.24.0
