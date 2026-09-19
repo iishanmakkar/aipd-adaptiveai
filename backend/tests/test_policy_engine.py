@@ -129,3 +129,71 @@ async def test_threshold_is_configurable(monkeypatch):
 
 async def test_no_db_means_zero_counts():
     assert await count_clarifying_questions(None, "s") == 0
+
+
+# --- Rule 5: behavior-driven shaping (B2, lowest priority, defaults only) ---
+
+def _established_db():
+    """FakeSession reporting >= 3 messages so Rule 4 (first-time user) passes through."""
+    from conftest import FakeResult, FakeSession
+    return FakeSession([FakeResult(["m1", "m2", "m3", "m4"])])
+
+
+async def test_replays_simplify_for_default_user(rewrites):
+    await adjust_response(
+        raw_answer="Long text", user_prefs=_prefs(VerbosityLevel.standard),
+        clarifying_count=0,
+        session_context={"message_count": 10, "replay_count": 2, "skip_count": 0},
+        db=_established_db(), session_id="s",
+    )
+    assert len(rewrites) == 1
+    assert "replay" in rewrites[0]
+
+
+async def test_skips_concise_for_default_user(rewrites):
+    await adjust_response(
+        raw_answer="Long text", user_prefs=_prefs(VerbosityLevel.standard),
+        clarifying_count=0,
+        session_context={"message_count": 10, "replay_count": 0, "skip_count": 3},
+        db=_established_db(), session_id="s",
+    )
+    assert len(rewrites) == 1
+    assert "concise" in rewrites[0]
+
+
+async def test_single_replay_is_noise_not_signal(rewrites):
+    await adjust_response(
+        raw_answer="Plain", user_prefs=_prefs(VerbosityLevel.standard),
+        clarifying_count=0,
+        session_context={"message_count": 10, "replay_count": 1, "skip_count": 0},
+        db=_established_db(), session_id="s",
+    )
+    assert rewrites == []
+
+
+async def test_explicit_detailed_beats_inferred_skips(rewrites):
+    """Explicit preferences always win: heavy skipping must NOT override
+    a user who asked for detail."""
+    await adjust_response(
+        raw_answer="Long text", user_prefs=_prefs(VerbosityLevel.detailed),
+        clarifying_count=0,
+        session_context={"message_count": 10, "replay_count": 0, "skip_count": 5},
+        db=_established_db(), session_id="s",
+    )
+    assert len(rewrites) == 1
+    assert "Expand" in rewrites[0]
+
+
+async def test_explicit_profile_beats_inferred_replays(rewrites):
+    """A stated disability profile (Rule 2) outranks replay inference (Rule 5)."""
+    from app.models.preference import DisabilityProfile as DP
+    p = _prefs(VerbosityLevel.standard)
+    p.disability_profile = DP.blind
+    await adjust_response(
+        raw_answer="Long text", user_prefs=p,
+        clarifying_count=0,
+        session_context={"message_count": 10, "replay_count": 4, "skip_count": 0},
+        db=_established_db(), session_id="s",
+    )
+    assert len(rewrites) == 1
+    assert "step-by-step" in rewrites[0]

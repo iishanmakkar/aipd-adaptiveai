@@ -11,6 +11,7 @@ from app.models.user import User
 from app.models.session import Session
 from app.models.message import Message, MessageRole
 from app.models.preference import Preference
+from app.models.behavior import BehaviorSignal
 from app.schemas.query import QueryRequest, QueryResponse
 from app.services.clients import classify_intent, get_agent_response
 from app.services.policy_engine import adjust_response, count_clarifying_questions
@@ -97,12 +98,23 @@ async def process_query(
     prefs = result.scalar_one_or_none()
     
     clarifying_count = await count_clarifying_questions(db, session_uuid)
-    
+
+    # Behavior signals feed policy Rule 5 (lowest priority, defaults only).
+    # A missing row means "no observed behavior" - zeros, never an error.
+    sig_result = await db.execute(
+        select(BehaviorSignal).where(BehaviorSignal.session_id == session_uuid)
+    )
+    signals = sig_result.scalar_one_or_none()
+
     adjusted_answer = await adjust_response(
         raw_answer=agent_result.answer,
         user_prefs=prefs,
         clarifying_count=clarifying_count,
-        session_context={"message_count": len(recent_messages)},
+        session_context={
+            "message_count": len(recent_messages),
+            "replay_count": signals.replay_count if signals else 0,
+            "skip_count": signals.skip_count if signals else 0,
+        },
         db=db,
         session_id=session_uuid
     )
@@ -172,11 +184,16 @@ async def process_query_demo(http_request: Request, request: QueryRequest):
         raise HTTPException(status_code=502, detail=f"Agent service error: {describe(e)}")
 
     # Step 3: Apply Policy Engine (simplified - no DB prefs)
-    from app.models.preference import VerbosityLevel
+    from app.models.preference import VerbosityLevel, DisabilityProfile, LanguageComplexity
     from types import SimpleNamespace
-    
-    # Mock preferences for demo
-    prefs = SimpleNamespace(verbosity_level=VerbosityLevel.standard)
+
+    # Demo defaults: full shape so every policy rule sees the same attributes
+    # as a real Preference row (a partial namespace 500'd on Rule 2 before).
+    prefs = SimpleNamespace(
+        verbosity_level=VerbosityLevel.standard,
+        disability_profile=DisabilityProfile.none,
+        language_complexity=LanguageComplexity.standard,
+    )
     clarifying_count = 0
     
     adjusted_answer = await adjust_response(

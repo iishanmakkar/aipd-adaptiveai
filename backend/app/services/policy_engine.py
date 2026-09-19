@@ -128,8 +128,40 @@ async def adjust_response(
             instruction = f"{combined_instruction} {instruction}"
         return await llm_rewrite(raw_answer, instruction)
 
+    # Rule 5: Observed behavior - LOWEST priority, defaults only.
+    # replay = the user replayed answers (didn't get it) -> simplify.
+    # skip = the user cut answers off (too verbose) -> lean concise.
+    # Any explicit preference (non-default verbosity/profile/complexity) wins
+    # over inference: this rule fires only when the user never stated otherwise.
+    if _prefs_are_defaults(user_prefs):
+        replays = (session_context or {}).get("replay_count", 0)
+        skips = (session_context or {}).get("skip_count", 0)
+        if replays >= 2:
+            return await llm_rewrite(
+                raw_answer,
+                "The user replayed previous answers, so they found them hard to "
+                "follow. Simplify: plain words, short sentences, one idea per sentence.")
+        if skips >= 2:
+            return await llm_rewrite(
+                raw_answer,
+                "The user keeps skipping answers before they finish, so they find "
+                "them too long. Be concise: maximum 2 sentences, key point first.")
+
     # Default: return as-is
     return raw_answer
+
+
+def _prefs_are_defaults(user_prefs) -> bool:
+    """True when the user never stated a non-default preference.
+
+    Missing attributes (demo/partial prefs) count as defaults - only an
+    explicitly stored non-default value opts out of behavior-driven shaping.
+    """
+    return (
+        getattr(user_prefs, "verbosity_level", VerbosityLevel.standard) == VerbosityLevel.standard
+        and getattr(user_prefs, "disability_profile", DisabilityProfile.none) == DisabilityProfile.none
+        and getattr(user_prefs, "language_complexity", LanguageComplexity.standard) == LanguageComplexity.standard
+    )
 
 
 async def llm_rewrite(text: str, instruction: str) -> str:
