@@ -1,5 +1,8 @@
 # AdaptiveAI — Final Build (verified live, 2026-09-19)
 
+> **Release:** `v1.0` @ `e1c9117` (local tag; everything below corresponds to
+> this commit).
+
 Context-aware AI that helps blind and low-vision users **do things** — fill forms,
 book tickets, browse pages, understand documents — not just read content aloud.
 
