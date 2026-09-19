@@ -56,8 +56,8 @@ Replay → Heal** in live Chromium (`POST /api/form-fill`).
 | 5 | **Really adaptive** (same question, two profiles) | blind+concise+simple → **818 chars, step-by-step** ("follow these steps: 1. Type the first letter…"); none+detailed+technical → **1088 chars, technical** ("alphanumeric identifier issued by the Income Tax Department…") |
 | 6 | **UI loop in real Chromium** | title `AdaptiveAI`, welcome bubble, `Message input` named, send → user bubble + answer with `form_agent` badge, **90%**, 3 source chips (screenshot in run log) |
 | 7 | Form discovery sees real pages | 4/4 fields with true labels on a live page; NIM vision described the real screenshot (1269 chars) |
-| 8 | Behavior events accepted | `POST /api/behavior-event` → `{"status":"accepted"}` (logged; policy consumption is next) |
-| 9 | Migrations | `alembic upgrade head` on the live DB applied `20260915_add_disability_profile` |
+| 8 | Behavior events wired end-to-end | 2 replays → next answer **852→346 chars** (simplified, Rule 5); explicit detailed + 3 skips → stays detailed at **2256 chars** (explicit wins); UI Replay button + stop-speaking control emit the signals; `query-demo` latent 500 fixed (200) |
+| 9 | Migrations | `alembic upgrade head` on the live DB applied `20260915_add_disability_profile` + `20260919_behavior_signals` (table verified in psql) |
 
 Bugs this build round found **by running, not reviewing** (all fixed, all re-proven):
 `page.accessibility` gone in Playwright 1.62 → DOM-evaluate tree; replay located
@@ -72,6 +72,33 @@ by a failing run, then green.
 Earlier rounds (1–6) are in git history: 34 audited fixes (503/502/429 degrade
 paths, bcrypt 5.0, per-user rate limits, request-ID tracing, VLM upload caps,
 account deletion, backup/restore drill, sealed security scan `findingCount 0`).
+
+### 2B. Second host: WSL2 Ubuntu, prod overlay (measured 2026-09-19)
+
+Clean clone at `172d65d` (zero `.env`), keys placed, `docker compose build` +
+`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`:
+6/6 healthy with **only 8000+5173 published** (8001/8002/8003/5432 internal).
+`alembic upgrade head` on the fresh volume applied both migrations. Evidence,
+same standard as §2, all inside the WSL2 host: register **201** → login
+**200** → session **201** → query **200 in 26.1s** (local: 10.9s — cold NIM +
+slower vCPU) `form_agent` grounded → history `total: 2` → metrics
+`14/14 2xx, 4/4 SSRF probes 422, 0 5xx`; ticket demo **9/9 via remote Chromium**;
+in-container Chromium drove the UI: HTTP 200 + answer rendered (screenshot);
+production guard fires (`Refusing to start…` under `ADAPTIVEAI_PRODUCTION=1` +
+`DEBUG=True`); idle footprint **~710 MB** total. Full story incl. everything
+the clean room caught: `DEPLOY.md` §6 (compose plugin, exit-0 builds, pytest-9
+pin, `--reload` flap, Vite 403, thermal + auto-stop host caveats).
+
+Round 7 fix log (found by running): pytest-asyncio×pytest-9 unresolvable on
+fresh resolves (PyPI metadata confirms no compatible pair — downgraded to
+pytest 8.4.2/PA 0.26, proven by reinstall + 218 green) → clean-room only;
+first-event `None+1` 503 in behavior upsert (caught by the new route test) →
+explicit zeros; `query-demo` 500 on partial prefs → full-shape demo defaults;
+live prefs test asserting the stale 2-field shape → 4-field contract;
+a11y harness emoji crash on cp1252 → UTF-8 reconfigure; bare-noun hedges
+(12/15 → 15/15) → per-agent prompt rules + live gate; behavior accepted-only
+→ Rule 5 + ownership + UI signals (above); SSRF surface (metadata/file/
+internal/loopback all fetchable) → allowlist + prod port lockdown, proven 422.
 
 ---
 
@@ -110,7 +137,7 @@ there is no mock to hide it.
 |------|---------|----------------|
 | `POST /api/query` | backend→intent→agents | `response_text, agent_used, suggested_action, confidence, sources_used` |
 | `POST /api/form-fill` `{url, values, replay}` | backend→live Chromium | per-action statuses (`success/partial_success`), `episode_id` |
-| `POST /api/behavior-event` | backend log | `{"status":"accepted"}` |
+| `POST /api/behavior-event` | Postgres `behavior_signals` → policy Rule 5 | `{"status":"accepted", replay_count, skip_count}` (shapes answers while prefs are default; explicit prefs always win) |
 | `POST /api/transcribe` (multipart audio) | faster-whisper | `transcript` (422 on silence — VAD filtered) |
 | `POST /v1/chat/completions` | NIM vision proxy | upstream response, status passed through |
 | `GET/PUT /api/preferences` | Postgres | `verbosity_level, voice_speed, disability_profile, language_complexity` |
@@ -127,16 +154,16 @@ real browser and reports each action.
 
 ```powershell
 cd intent-engine; python -m pytest   # 68 passed - keyword + HTTP contract
-cd agents;        python -m pytest   # 59 passed - FAISS/RAG, registry, API
-cd backend;       python -m pytest   # 71 passed - policy, clients, auth, degrade,
-                                     #   behavior + form-fill contracts, hardening
+cd agents;        python -m pytest   # 64 passed - FAISS/RAG, registry, API, prompt contracts
+cd backend;       python -m pytest   # 86 passed - policy (Rules 1-5), clients, auth, degrade,
+                                     #   behavior + form-fill + SSRF contracts, hardening
 cd frontend;      npm run build      # tsc strict + vite (CSS 25.93 kB, a11y bundled)
 docker compose config --quiet        # 6 services parse with zero .env files
 ```
 
-Total: **198 offline tests green** (CI also runs 10 live-Postgres + live-LLM
-accuracy). Live proofs for this build: §2 table (each row is a command + output,
-not a code reading).
+Total: **218 offline tests green** (CI also runs 15 live-Postgres + live-LLM
+accuracy + the nightly bare-noun live gate). Live proofs for this build: §2 table
+(each row is a command + output, not a code reading).
 
 ---
 
@@ -147,16 +174,20 @@ not a code reading).
   `docs/screen-reader-test-script.md`.
 - **Human-speech STT WER**: measured on synthesized speech only (0–2.8%) —
   `docs/real-speech-stt-runbook.md` + `backend/stt_wer.py`.
-- **Cloud deploy + paid-tier capacity**: `DEPLOY.md` §6/§9 (10–20 concurrent is a
-  *free-tier* number). Not executed from here (no credentials).
-- **Answer variance on ambiguous phrasing**: observed live — "What is the Aadhaar
-  number field?" (no verb) got a cautious non-answer while "…field asking for?"
-  got steps. Wiring (intent→RAG→sources→confidence→policy) is correct in both;
-  prompt hardening for bare-noun questions is open.
-- **Behavior signals**: accepted + logged, not yet consumed by the policy engine
-  (FEATURE_PLAN 1.2 follow-up). The response says `accepted`, not `applied`.
+- **Cloud deploy + paid-tier capacity**: second-host deploy is done on WSL2
+  Ubuntu (`DEPLOY.md` §6, prod overlay, remote proof table in §2B below);
+  a public-cloud deploy + paid-tier retest still need credentials (`DEPLOY.md`
+  §6b/§9; 10–20 concurrent is a *free-tier* number).
+- **Answer variance on ambiguous phrasing**: CLOSED in Round 7 — bare-noun
+  probes went 12/15 → 15/15 after prompt hardening (per-agent
+  BARE-NOUN/NO-DOCUMENT/VAGUE-INPUT rules), locked by offline prompt-contract
+  tests + the nightly live gate (13/15 fail-closed). Genuinely vague input
+  still clarifies (policy Rule 1 untouched).
 - **Backup/restore**: validated earlier (`docs/backup-restore.md`); re-run after
   any Postgres major upgrade.
+- **This dev host fights back** (machine-specific, not project defects):
+  thermal hibernates under sustained builds, WSL2 self-stops when idle, and
+  Windows→guest TCP is blocked here — all in `DEPLOY.md` §6c with workarounds.
 
 ---
 

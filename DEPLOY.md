@@ -70,16 +70,76 @@ All services run `restart: unless-stopped`, so a crashed container restarts
 with the daemon and the whole stack comes back after a host reboot without
 manual intervention.
 
-## 6. Cloud VM (standard path, not run from this machine)
+## 6. Second host, EXECUTED: WSL2 Ubuntu on a different kernel (2026-09-19)
 
-Any Linux VM with Docker + Compose v2:
+Deployed from a clean clone (`git clone` of the repo, zero `.env` files present,
+commit `172d65d`) into WSL2 Ubuntu 26.04 (docker engine 29.1.3, no Docker
+Desktop involvement) and proved per README §2 there. Use the **prod overlay**
+(only 5173+8000 published; 8001/8002/8003/internal stay inside):
 
 ```bash
-git clone <repo> && cd adaptiveai
-# place .env files (section 2), set production flags (section 3)
-docker compose up -d --build
-docker compose exec backend alembic upgrade head
+wsl -d Ubuntu
+git clone <repo> ~/adaptiveai && cd ~/adaptiveai
+# place the five .env files (section 2) with real keys
+docker compose build          # then VERIFY images exist (see 6a)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend alembic upgrade head
 ```
+
+Remote proof (all inside the WSL2 host; Windows cannot open TCP to the guest on
+this machine - host firewall fact, §6c): 6/6 healthy under the prod overlay,
+register 201 → login 200 → session 201 → **query 200 in 26.1s** (local: 10.9s -
+the delta is cold NIM + slower WSL2 CPU), `form_agent`, grounded;
+`POST /api/form-fill` on the ticket demo **9/9 via remote Chromium**;
+SSRF probes (metadata/file/internal/loopback) all **422**; UI driven by
+in-container Chromium: HTTP 200 + answer rendered (screenshot on file);
+production guard fires (`Refusing to start…` with `ADAPTIVEAI_PRODUCTION=1` +
+`DEBUG=True`); memory footprint ~710 MB total (agents 381 MB, backend 93 MB).
+
+### 6a. What the clean-room build caught (each fixed, none hidden)
+
+1. **No compose plugin** in stock Ubuntu (`docker compose` unknown; only legacy
+   v1, which cannot parse this file). Fix without root:
+   `curl` the plugin into `~/.docker/cli-plugins` (pinned v5.3.1).
+2. **`docker compose build` exits 0 on failure** in this engine (no buildx).
+   Never trust the exit code: verify with `docker images` afterwards.
+3. **pytest 9 unresolvable**: every `pytest-asyncio` (0.24–0.26, per PyPI
+   metadata) caps `pytest<9`, so the pinned `pytest==9.0.3` failed fresh
+   resolves in intent/agents images (stale local images hid it). Fixed to
+   `pytest==8.4.2` + `pytest-asyncio==0.26.0`, proven by reinstall + full
+   re-run locally, then rebuilt remotely.
+4. **Flaky host network**: transient DNS/TLS failures inside builds
+   (`Temporary failure in name resolution`, MITM-looking TLS errors) that
+   cleared on retry; a compose network created mid-flap had dead embedded DNS
+   until `docker compose down` recreated it.
+5. **`--reload` must not ship**: the base file's backend `--reload` flapped
+   connections on this kernel (worker restart loop); the prod overlay runs
+   plain `uvicorn` (verified: zero reloader lines post-recreate).
+6. **Vite 403 in-network**: dev server rejects `Host: frontend`; fixed with
+   `server.allowedHosts` including the compose service name.
+
+### 6b. Cloud VM (standard path, same prod overlay)
+
+Any Linux VM with Docker + Compose v2 (needs no cloud-specific steps beyond
+this file): clone, place `.env`, set production flags (§3),
+`docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`,
+`alembic upgrade head`. Resource bar from real images: ~9.4 GB disk
+(backend 3.47 + agents 2.5 + browser-agent 2.2 + intent 0.53 + frontend 0.31 +
+postgres 0.42) and ~1 GB RAM at idle — above most always-free tiers; pick at
+least 2 vCPU / 4 GB RAM / 30 GB disk. TLS: terminate in front of 5173/8000
+(Caddy/nginx), set `FRONTEND_URL` + `ALLOWED_HOSTS` to the real origin.
+
+### 6c. Host caveats found (honest, machine-specific)
+
+- This Windows host **hibernates on critical thermal events** (100 °C trip,
+  logged 2026-09-18/19) under sustained build load. Builds + full stack push
+  it there; allow cool-down between heavy steps.
+- The WSL2 distro **stops itself minutes after the last session closes**,
+  killing the stack with it (observed repeatedly). Proofs must run in a single
+  invocation; a persistent `wsl` session holds it up.
+- Windows → WSL2 guest TCP is **blocked on this machine** (any port, NAT and
+  mirrored modes, non-admin) — verification runs inside the guest. This is a
+  host firewall fact, not a stack defect (localhost path works on normal hosts).
 
 Put a TLS reverse proxy (Caddy/nginx/Traefik) in front of 5173 and 8000, or
 deploy the frontend as a static `npm run build` bundle to a CDN and the three
