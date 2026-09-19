@@ -36,15 +36,9 @@ pip install -r requirements.txt
 ### 2. Configure Environment
 Create `.env` file:
 ```bash
-# Choose one:
-LLM_PROVIDER=openai
-LLM_MODEL=gpt-4o-mini
-LLM_API_KEY=sk-your-openai-key
-
-# OR
-LLM_PROVIDER=anthropic
-LLM_MODEL=claude-3-haiku-20240307
-LLM_API_KEY=sk-ant-your-anthropic-key
+LLM_PROVIDER=nim
+LLM_MODEL=meta/llama-3.2-11b-vision-instruct
+NIM_API_KEY=nvapi-your-nvidia-key
 ```
 
 ### 3. Run Service
@@ -88,27 +82,23 @@ Service runs at `http://localhost:8002`
 
 - **Vector DB**: FAISS (persistent, file-based at `./data/chroma`)
 - **Embeddings**: `sentence-transformers/all-MiniLM-L6-v2` (local, no API key)
-- **Seed Documents**: 20 documents
-  - 10 Form-field glossary entries (permanent_address, aadhar_number, pan_number, etc.)
-  - 10 Accessibility FAQ entries (screen_reader_navigation, keyboard_only_forms, etc.)
+- **Seed Documents**: 29 documents grounding all 5 agents (form glossary +
+  accessibility FAQ + education/document/web coverage, so no agent answers
+  ungrounded)
 
 ## Testing
 
-### Run Pipeline Validation (no API key required)
+### Run Offline Suite (no API key required)
 ```bash
-python tests/run_pipeline_test.py
+python -m pytest   # 59 tests: FAISS store, registry, API contract, seed grounding
 ```
 
-This validates the full RAG + Agent pipeline using a mock LLM.
+Offline tests use in-process stubs (test isolation). The mock LLM client was
+deleted; real-LLM accuracy runs via:
 
-### Run Full Test Suite (requires LLM API key)
 ```bash
-python -m tests.run_tests
+python tests/run_tests.py   # 40+ real-LLM queries -> test_results.json (spends NIM quota)
 ```
-
-Outputs:
-- Console summary with pass/fail per test
-- JSON report: `test_results_YYYYMMDD_HHMMSS.json`
 
 ### Test Coverage
 - **form_agent**: 10 queries (field explanations, formats, examples)
@@ -141,8 +131,7 @@ agents/
 │   ├── seed_data.py        # 20 seed documents
 │   └── retriever.py        # Top-k retrieval + formatting
 ├── llm/
-│   ├── client.py           # OpenAI/Anthropic client
-│   ├── mock_client.py      # Mock LLM for testing
+│   ├── client.py           # OpenAI-compatible client (NIM) + Anthropic
 │   └── prompts.py          # Agent system prompts
 ├── schemas/
 │   ├── request.py          # AgentRespondRequest
@@ -180,7 +169,7 @@ Frontend (8080) → Backend (8000) → Intent Engine (8001) → Agents (8002)
 
 | Issue | Fix |
 |-------|-----|
-| `LLM_API_KEY not set` | Add to `.env` or export in shell |
+| `LLM_API_KEY not set` / `NIM_API_KEY not set` | Add to `.env` or export in shell |
 | `FAISS error` | Delete `./data/chroma` and restart |
 | `Import errors` | Run `pip install -r requirements.txt` |
 | `Slow first request` | Embedding model loads on first use (~5s) |

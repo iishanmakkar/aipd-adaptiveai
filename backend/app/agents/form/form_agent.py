@@ -9,12 +9,13 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Dict, List, Optional
 
-from app.services.episodic_memory import EpisodicMemory
-from agents.form.discovery_agent import DiscoveryAgent
-from agents.form.cache_agent import CacheAgent
-from agents.form.healing_agent import HealingAgent
-from agents.form.replay_agent import ReplayAgent
-from agents.tools.browser_tool import BrowserTool
+from app.services.episodic_memory import EpisodicMemory, episodic_memory
+from app.agents.form.discovery_agent import DiscoveryAgent
+from app.agents.form.cache_agent import CacheAgent
+from app.agents.form.healing_agent import HealingAgent
+from app.agents.form.replay_agent import ReplayAgent
+
+from app.agents.form.browser_tool import BrowserTool
 
 
 class FormAgent:
@@ -30,13 +31,15 @@ class FormAgent:
         result = await agent.fill_form(url, replay=True)
     """
     
-    def __init__(self, browser: BrowserTool, memory: EpisodicMemory = None):
-        self.browser = browser
+    def __init__(self, browser: Optional[BrowserTool] = None, memory: Optional[EpisodicMemory] = None):
+        # A real headless Chromium is the default: this pipeline never runs on a
+        # simulated browser. Pass an already-started driver to share one browser.
+        self.browser = browser or BrowserTool()
         self.memory = memory or episodic_memory
-        self.discovery_agent = DiscoveryAgent(browser)
+        self.discovery_agent = DiscoveryAgent(self.browser)
         self.cache_agent = CacheAgent(self.memory)
-        self.healing_agent = HealingAgent(browser, self.memory)
-        self.replay_agent = ReplayAgent(browser, self.memory)
+        self.healing_agent = HealingAgent(self.browser, self.memory)
+        self.replay_agent = ReplayAgent(self.browser, self.memory)
     
     async def fill_form(self, url: str, replay: bool = False, user_values: Dict[str, str] = None) -> Dict[str, Any]:
         """Fill a form, either by replaying cached actions or discovering anew.

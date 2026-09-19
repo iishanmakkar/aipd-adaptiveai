@@ -4,6 +4,7 @@ backend/.env
 intent-engine/.env
 agents/.env
 frontend/.env
+browser-agent/.env
 *.key
 *.pem
 

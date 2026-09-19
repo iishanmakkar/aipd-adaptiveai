@@ -85,6 +85,25 @@ services:
       timeout: 5s
       retries: 20
 
+  # Browser Agent (real Playwright navigation + form filling) - port 8003
+  browser-agent:
+    restart: unless-stopped
+    build: ./browser-agent
+    ports:
+      - "8003:8003"
+    env_file:
+      - path: ./browser-agent/.env
+        required: false
+    environment:
+      - NIM_BASE_URL=https://integrate.api.nvidia.com/v1
+      - NIM_MODEL=meta/llama-3.2-11b-vision-instruct
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
   # Frontend (Ishika) - React + Vite - port 5173 - REAL API (no mocks)
   frontend:
     restart: unless-stopped

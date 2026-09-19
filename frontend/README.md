@@ -9,7 +9,7 @@ React + Vite frontend for the AdaptiveAI system — an accessible chat interface
 - **Text-to-Speech**: Auto-speaks responses using Web Speech API (browser native)
 - **Screenshot Understanding**: Upload image → VLM describes it → used as context for queries
 - **Accessibility Toolbar**: Font size (4 levels), high contrast mode, voice speed control
-- **Mock Server**: Standalone development without backend dependencies
+- **No mock layer**: the Express mock server and `mockApi.ts` were deleted; every request goes to the real backend
 
 ## Quick Start
 
@@ -18,11 +18,7 @@ React + Vite frontend for the AdaptiveAI system — an accessible chat interface
 cd frontend
 npm install
 
-# 2. Start mock server (terminal 1)
-npm run mock
-# Runs on http://localhost:3001
-
-# 3. Start Vite dev server (terminal 2)
+# 2. Start Vite dev server (needs backend on http://localhost:8000)
 npm run dev
 # Runs on http://localhost:5173
 ```
@@ -50,14 +46,10 @@ frontend/
 │   │   ├── useSession.ts          # Session management
 │   │   └── useAccessibility.ts    # Accessibility preferences
 │   ├── services/         # API services
-│   │   ├── api.ts                 # Axios client + real endpoints
-│   │   └── mockApi.ts             # Mock responses for dev
+│   │   └── api.ts                 # Axios client (only client; no mock exists)
 │   ├── types/            # TypeScript interfaces
 │   ├── utils/            # Utility functions
 │   └── styles/           # CSS (CSS custom properties for theming)
-├── mock-server/          # Express.js mock server
-│   ├── server.js               # Mock endpoints
-│   └── package.json
 ├── public/
 ├── index.html
 ├── package.json
@@ -71,12 +63,10 @@ frontend/
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `VITE_API_BASE_URL` | Backend API base URL | `http://localhost:8000` |
-| `VITE_NIM_VLM_URL` | NVIDIA NIM VLM endpoint | `http://localhost:8000/v1/chat/completions` |
+| `VITE_NIM_VLM_URL` | VLM proxy (backend, which adds the server key) | `http://localhost:8000/v1/chat/completions` |
 | `VITE_NIM_VLM_MODEL` | VLM model name | `meta/llama-3.2-11b-vision-instruct` |
-| `VITE_NIM_API_KEY` | NIM API key (if using hosted) | - |
-| `VITE_USE_MOCK` | Use mock server | `true` |
-| `VITE_MOCK_API_URL` | Mock server URL | `http://localhost:3001` |
-| `VITE_MOCK_DELAY_MS` | Mock response delay | `800` |
+
+No `VITE_USE_MOCK` exists: the mock server and `mockApi.ts` were deleted, every request hits the real backend.
 
 ## API Contracts
 
@@ -136,11 +126,11 @@ frontend/
 
 ## Development
 
-### Using Real Backend
-1. Set `VITE_USE_MOCK=false` in `.env`
-2. Ensure backend runs on `http://localhost:8000`
-3. Ensure `/api/transcribe` endpoint exists (faster-whisper)
-4. For VLM: Deploy NVIDIA NIM or use hosted endpoint
+The frontend only talks to the real backend (`VITE_API_BASE_URL`, default
+`http://localhost:8000`). Transcription is `POST /api/transcribe`
+(faster-whisper server-side); vision goes through the backend VLM proxy
+`POST /v1/chat/completions`, which attaches `NIM_API_KEY` server-side, so no
+key ever ships in the JS bundle.
 
 ### NVIDIA NIM VLM Setup
 ```bash
@@ -162,7 +152,6 @@ Or use NVIDIA hosted API (requires NGC API key):
 | `npm run dev` | Start Vite dev server |
 | `npm run build` | Production build |
 | `npm run preview` | Preview production build |
-| `npm run mock` | Start Express mock server |
 | `npm run lint` | Run ESLint |
 
 ## Demo Checklist

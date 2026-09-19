@@ -13,7 +13,7 @@ import hashlib
 import logging
 from typing import Any, Dict, List, Optional
 
-from agents.tools.browser_tool import BrowserTool
+from app.agents.form.browser_tool import BrowserTool
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +21,9 @@ logger = logging.getLogger(__name__)
 class DiscoveryAgent:
     """Discovers forms on a page using dual-layer perception."""
     
-    def __init__(self, browser: BrowserTool, vlm_prompt: str = None):
-        self.browser = browser
+    def __init__(self, browser: Optional[BrowserTool] = None, vlm_prompt: str = None):
+        # Real Chromium by default - never a simulated page.
+        self.browser = browser or BrowserTool()
         self.vlm_prompt = vlm_prompt or "Describe this page for a visually impaired user. Identify form fields, buttons, layout, and any visible text. Be concise but thorough."
     
     async def discover_form(self, url: str, iframe_depth: int = 5) -> Dict[str, Any]:
@@ -39,7 +40,7 @@ class DiscoveryAgent:
         tree_result = await self.browser.get_accessibility_tree()
         tree = tree_result.get("tree", [])
         
-        # Get VLM description for visual elements
+        # Real vision description of the live page (raises if VLM unconfigured).
         vlm_result = await self.browser.get_vlm_description(self.vlm_prompt)
         
         # Parse fields from accessibility tree
@@ -53,7 +54,7 @@ class DiscoveryAgent:
             "url": url,
             "fields": fields,
             "tree_snapshot": tree[:50],  # First 50 nodes
-            "vlm_description": vlm_result.get("status", ""),
+            "vlm_description": vlm_result.get("description", vlm_result.get("status", "")),
             "iframe_depth": iframe_depth,
             "status": "success",
         }
@@ -79,22 +80,37 @@ class DiscoveryAgent:
                     "label": label or inner_text[:100],
                     "tag": tag,
                     "aria_role": role,
-                    " bounding_box": None,  # Would be computed from coordinates
-                    "placeholder": "",
-                    "required": "required" in label.lower() or "aria-required" in str(node),
+                    "selector": node.get("selector", ""),
+                    "placeholder": node.get("placeholder", ""),
+                    "required": node.get("required", False) or "required" in label.lower(),
                     "description": f"{tag} {label}".strip(),
                 }
                 fields.append(field)
-            
+
+            # Radios / checkboxes are choices, not text: click them.
+            elif role in ("radio", "checkbox"):
+                field = {
+                    "field_id": hashlib.sha256(f"{tag}{label}".encode()).hexdigest()[:12],
+                    "type": role,
+                    "label": label or inner_text[:100] or role,
+                    "tag": tag,
+                    "aria_role": role,
+                    "selector": node.get("selector", ""),
+                    "is_action_button": False,
+                    "description": f"{tag} {role} - {label}".strip(),
+                }
+                fields.append(field)
+
             # Search buttons
             elif role in ("button", "submit", "reset"):
-                if any(kw in (label or "").lower() for kw in ["submit", "send", "search", "go"]):
+                if any(kw in (label or "").lower() for kw in ["submit", "send", "search", "go", "book", "pay", "confirm", "continue", "next", "login", "sign"]):
                     field = {
                         "field_id": hashlib.sha256(f"{tag}{label}".encode()).hexdigest()[:12],
                         "type": role,
                         "label": label or "Submit",
                         "tag": tag,
                         "aria_role": role,
+                        "selector": node.get("selector", ""),
                         "is_action_button": True,
                         "description": f"{tag} - {label}".strip(),
                     }

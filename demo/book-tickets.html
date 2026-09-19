@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SwiftRail — Book Train Tickets (demo)</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 560px; margin: 2rem auto; padding: 0 1rem; }
+  label { display: block; margin-top: 1rem; font-weight: 600; }
+  input, select { display: block; width: 100%; padding: .5rem; margin-top: .25rem; }
+  fieldset { margin-top: 1rem; }
+  button { margin-top: 1.25rem; padding: .6rem 1.2rem; font-size: 1rem; }
+  #confirmation { display: none; margin-top: 1.5rem; border: 2px solid green; padding: 1rem; }
+</style>
+</head>
+<body>
+<main>
+<h1>SwiftRail ticket booking</h1>
+<p>Demo form for the AdaptiveAI form-filler pipeline (discover → cache → replay → heal).</p>
+<form id="booking" action="#" method="post">
+  <label for="pname">Passenger name (required)</label>
+  <input id="pname" name="pname" type="text" placeholder="Asha Sharma" required>
+
+  <label for="pemail">Email address</label>
+  <input id="pemail" name="pemail" type="email" placeholder="asha@example.com">
+
+  <label for="from">From station</label>
+  <input id="from" name="from" type="text" placeholder="New Delhi">
+
+  <label for="to">To station</label>
+  <input id="to" name="to" type="text" placeholder="Chandigarh">
+
+  <label for="date">Travel date</label>
+  <input id="date" name="date" type="date">
+
+  <label for="seats">Seats</label>
+  <select id="seats" name="seats">
+    <option value="1">1</option>
+    <option value="2">2</option>
+    <option value="3">3</option>
+    <option value="4">4</option>
+  </select>
+
+  <fieldset>
+    <legend>Class</legend>
+    <label><input type="radio" name="cls" value="sleeper" checked> Sleeper</label>
+    <label><input type="radio" name="cls" value="ac3"> AC 3-tier</label>
+  </fieldset>
+
+  <button type="submit">Book tickets</button>
+</form>
+<div id="confirmation" role="status"></div>
+</main>
+<script>
+document.getElementById('booking').addEventListener('submit', function (ev) {
+  ev.preventDefault();
+  const get = (id) => document.getElementById(id).value;
+  const ref = 'PNR' + Math.abs([...get('pname')].reduce((a, c) => a + c.charCodeAt(0), 0) % 900000 + 100000);
+  const box = document.getElementById('confirmation');
+  box.style.display = 'block';
+  box.dataset.pname = get('pname');
+  box.dataset.pemail = get('pemail');
+  box.dataset.from = get('from');
+  box.dataset.to = get('to');
+  box.dataset.date = get('date');
+  box.dataset.seats = get('seats');
+  box.textContent = 'Booked ' + get('seats') + ' seat(s), ' + get('from') + ' to ' + get('to') +
+    ' on ' + get('date') + ' for ' + get('pname') + '. Reference ' + ref + '.';
+});
+</script>
+</body>
+</html>

@@ -12,8 +12,9 @@ import hashlib
 import logging
 from typing import Any, Dict, List, Optional
 
-from app.services.episodic_memory import EpisodicMemory, Episode
-from agents.tools.browser_tool import BrowserTool
+from app.services.episodic_memory import EpisodicMemory, Episode, episodic_memory
+
+from app.agents.form.browser_tool import BrowserTool
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,8 @@ logger = logging.getLogger(__name__)
 class ReplayAgent:
     """Replays cached form filling actions from episodic memory."""
     
-    def __init__(self, browser: BrowserTool, memory: EpisodicMemory = None):
-        self.browser = browser
+    def __init__(self, browser: Optional[BrowserTool] = None, memory: Optional[EpisodicMemory] = None):
+        self.browser = browser or BrowserTool()
         self.memory = memory or episodic_memory
     
     async def replay_form(self, episode_id: str, url: str, values: Dict[str, str] = None) -> Dict[str, Any]:
@@ -86,19 +87,27 @@ class ReplayAgent:
         }
     
     async def _execute_replay_action(self, action: Dict[str, Any], values: Dict[str, str] = None) -> Dict[str, Any]:
-        """Execute a single replay action with state verification."""
+        """Execute a single replay action with state verification.
+
+        Locating order (all real DOM data stored at discovery time):
+        stored css selector -> placeholder text -> label text.
+        """
         action_type = action.get("type", "focus_and_type")
         field_id = action.get("field_id", "")
-        
-        # Find the field on the current page
-        field = await self.browser._page.query_selector(f"[aria-describedby*={field_id}]")
-        if not field:
-            # Try by label or placeholder
-            field = await self.browser._page.query_selector(f"input[placeholder*={field_id}]")
-        
-        if not field:
-            # Try by label text
-            field = await self.browser._page.query_selector(f"label:has-text('{field_id}')")
+        label = action.get("label", "") or ""
+        placeholder = action.get("placeholder", "") or ""
+        page = self.browser._page
+
+        field = None
+        if action.get("selector"):
+            try:
+                field = await page.query_selector(action["selector"])
+            except Exception:
+                field = None
+        if not field and placeholder:
+            field = await page.query_selector(f"input[placeholder='{placeholder}']")
+        if not field and label:
+            field = await page.query_selector(f"label:has-text('{label}')")
         
         if not field:
             return {"status": "failed", "reason": f"Field {field_id} not found on page", "action": "skip"}
@@ -108,8 +117,11 @@ class ReplayAgent:
         if not is_enabled:
             return {"status": "skipped", "reason": f"Field {field_id} is disabled", "action": "skip"}
         
-        # Determine value to use
-        value = values.get(field_id) if values else None
+        # Determine value to use: callers key overrides by visible label
+        # (what a user knows), falling back to the internal field id.
+        value = None
+        if values:
+            value = values.get(label) or values.get(field_id)
         if value is None:
             # Use cached value or empty
             value = action.get("value", "")
@@ -118,7 +130,7 @@ class ReplayAgent:
         try:
             if action_type == "focus_and_type":
                 await field.click()
-                await field.type(value or "")
+                await field.fill(value or "")
                 return {"status": "success", "action": action_type, "field_id": field_id, "value": value}
             
             elif action_type == "click":

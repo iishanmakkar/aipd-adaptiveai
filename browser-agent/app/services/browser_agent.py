@@ -1,22 +1,25 @@
-"""Main browser agent that orchestrates tools for autonomous web navigation."""
+"""Main browser agent that orchestrates REAL tools for web navigation."""
 import asyncio
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
-from app.services.browser_agent_tools import BrowserTool, AccessibilityTreeTool, VLMAnalysisTool, FormFillingTool
+from app.tools.base import BrowserTool, AccessibilityTreeTool, VLMAnalysisTool, FormFillingTool
+from app.tools.driver import Driver
 
 
 class BrowserAgent:
-    """Autonomous browser agent for web navigation and form filling."""
-    
-    def __init__(self, session_id: str, preferences: Dict[str, Any] = None):
+    """Autonomous browser agent: one real Chromium per task, tools share it."""
+
+    def __init__(self, session_id: str, preferences: Dict[str, Any] = None,
+                 driver: Optional[Driver] = None):
         self.session_id = session_id
         self.preferences = preferences or {}
+        self.driver = driver or Driver()
         self.tools = {
-            "browser": BrowserTool(),
-            "accessibility_tree": AccessibilityTreeTool(),
-            "vlm_analysis": VLMAnalysisTool(),
-            "form_filling": FormFillingTool(),
+            "browser": BrowserTool(self.driver),
+            "accessibility_tree": AccessibilityTreeTool(self.driver),
+            "vlm_analysis": VLMAnalysisTool(self.driver),
+            "form_filling": FormFillingTool(self.driver),
         }
         # Episodic memory: store successful workflows for replay
         self.episodic_memory: List[Dict[str, Any]] = []
@@ -24,46 +27,52 @@ class BrowserAgent:
         self.pattern_cache: Dict[str, Dict[str, Any]] = {}
         
     async def execute_task(self, intent: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Execute a full task based on natural language intent."""
+        """Execute a full task on a REAL browser (started here, stopped after)."""
         # Parse intent and select tools
-        steps = await self._plan_task(intent, context or {})
-        
+        steps = self._plan_task(intent, context or {})
+
         results = []
-        for step in steps:
-            tool_name = step["tool"]
-            action = step["action"]
-            args = step.get("args", {})
-            
-            tool = self.tools.get(tool_name)
-            if not tool:
-                return {"status": "error", "detail": f"Unknown tool: {tool_name}"}
-            
-            # Check pattern cache first
-            cache_key = f"{self.session_id}:{tool_name}:{action}"
-            if cache_key in self.pattern_cache:
-                result = self.pattern_cache[cache_key].copy()
-                result["cached"] = True
-                results.append(result)
-                continue
-            
-            # Execute the tool
-            try:
-                result = await tool.execute(**args)
-                result["cached"] = False
-                
-                # Store in episodic memory if successful
-                if result.get("status") == "completed":
-                    self._store_episode(tool_name, action, args, result)
-                
-                results.append(result)
-            except Exception as e:
-                results.append({
-                    "status": "error",
-                    "detail": str(e),
-                    "tool": tool_name,
-                    "action": action
-                })
-        
+        await self.driver.start()
+        try:
+            for step in steps:
+                tool_name = step["tool"]
+                action = step["action"]
+                args = step.get("args", {})
+
+                tool = self.tools.get(tool_name)
+                if not tool:
+                    results.append({"status": "error", "detail": f"Unknown tool: {tool_name}",
+                                    "tool": tool_name, "action": action})
+                    continue
+
+                # Check pattern cache first
+                cache_key = f"{self.session_id}:{tool_name}:{action}"
+                if cache_key in self.pattern_cache:
+                    result = self.pattern_cache[cache_key].copy()
+                    result["cached"] = True
+                    results.append(result)
+                    continue
+
+                # Execute the tool (action is the first positional arg of every tool)
+                try:
+                    result = await tool.execute(action, **args)
+                    result["cached"] = False
+
+                    # Store in episodic memory if successful
+                    if result.get("status") == "completed":
+                        self._store_episode(tool_name, action, args, result)
+
+                    results.append(result)
+                except Exception as e:
+                    results.append({
+                        "status": "error",
+                        "detail": str(e),
+                        "tool": tool_name,
+                        "action": action
+                    })
+        finally:
+            await self.driver.stop()
+
         # Consolidate results and return final status
         return {
             "session_id": self.session_id,
@@ -76,17 +85,20 @@ class BrowserAgent:
         }
     
     def _plan_task(self, intent: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Plan the sequence of tool actions needed for the intent."""
-        # Simple intent → tool mapping (would be LLM-driven in production)
+        """Plan tool steps for an intent. Every entry maps to an action the
+        tools REALLY implement (see app/tools/base.py) - no aspirational verbs."""
         intent_tools = {
-            "navigate_to_url": [{"tool": "browser", "action": "navigate", "args": {"url": intent}}],
-            "click_element": [{"tool": "browser", "action": "click", "args": {"selector": context.get("selector")}}],
-            "fill_field": [{"tool": "form_filling", "action": "fill", "args": {"field": context.get("field"), "value": context.get("value")}}],
-            "select_dropdown": [{"tool": "browser", "action": "select", "args": {"selector": context.get("selector"), "option": context.get("option")}}],
-            "scroll_page": [{"tool": "browser", "action": "scroll", "args": {"direction": context.get("direction", "down"), "amount": context.get("amount", 300)}}],
-            "extract_text": [{"tool": "accessibility_tree", "action": "extract", "args": {}}],
+            "navigate_to_url": [{"tool": "browser", "action": "navigate",
+                                 "args": {"url": context.get("url", "")}}],
+            "click_element": [{"tool": "browser", "action": "click",
+                               "args": {"selector": context.get("selector")}}],
+            "fill_field": [{"tool": "form_filling", "action": "fill",
+                            "args": {"field": context.get("field"), "value": context.get("value")}}],
+            "extract_text": [{"tool": "browser", "action": "extract", "args": {}}],
             "analyze_page": [{"tool": "vlm_analysis", "action": "describe", "args": {}}],
-            "fill_form": [{"tool": "form_filling", "action": "discover_and_fill", "args": {"form_purpose": intent}}],
+            "snapshot": [{"tool": "accessibility_tree", "action": "extract", "args": {}}],
+            "fill_form": [{"tool": "form_filling", "action": "discover_and_fill",
+                           "args": {"fields": context.get("fields", [])}}],
         }
         
         # Default: try to match intent or return exploratory steps

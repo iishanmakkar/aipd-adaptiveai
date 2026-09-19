@@ -11,10 +11,10 @@ import asyncio
 import base64
 import hashlib
 import logging
+import math
+import random
 import time
 from typing import Any, Dict, List, Optional, Tuple
-
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +201,9 @@ class EpisodicMemory:
         
         Returns list of (episode, similarity_score) tuples.
         """
-        query_emb = np.array(query_embedding, dtype=float)
+        # Pure-stdlib cosine similarity (no numpy: backend/requirements.txt is
+        # deliberately lean; numpy only arrived transitively via faster-whisper).
+        query_emb = [float(x) for x in (query_embedding or [])]
         
         candidates: List[Tuple[str, float]] = []  # (episode_id, similarity)
         
@@ -234,12 +236,15 @@ class EpisodicMemory:
                 continue
             
             # Cosine similarity
-            ep_emb = np.array(entry.episode.embedding, dtype=float)
+            ep_emb = [float(x) for x in (entry.episode.embedding or [])]
             if len(ep_emb) == 0 or len(query_emb) == 0:
                 similarity = 0.0
             else:
-                dot = np.dot(query_emb, ep_emb)
-                norms = np.linalg.norm(query_emb) * np.linalg.norm(ep_emb)
+                dim = min(len(ep_emb), len(query_emb))
+                dot = sum(query_emb[i] * ep_emb[i] for i in range(dim))
+                norm_q = math.sqrt(sum(x * x for x in query_emb))
+                norm_e = math.sqrt(sum(x * x for x in ep_emb))
+                norms = norm_q * norm_e
                 similarity = dot / norms if norms > 0 else 0.0
             
             if similarity >= self.similarity_threshold:
@@ -367,8 +372,10 @@ class EpisodicMemory:
         hash_val = int(hashlib.sha256(hash_input.encode()).hexdigest()[:16], 16)
         
         # Generate pseudo-random but deterministic embedding
-        np.random.seed(hash_val)
-        embedding = np.random.randn(self.embedding_dim).tolist()
+        # (random.Random accepts arbitrarily large seeds, unlike np.random.seed
+        # which rejects values >= 2**32 - and sha256 gives up to 2**64-1.)
+        rng = random.Random(hash_val)
+        embedding = [rng.gauss(0.0, 1.0) for _ in range(self.embedding_dim)]
         
         # Normalize
         norm = sum(x*x for x in embedding) ** 0.5

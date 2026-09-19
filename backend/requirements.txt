@@ -21,3 +21,6 @@ av==13.0.0
 # longer depends on requests - without this pin the import fails, STT silently
 # falls back to NIM (which has no whisper endpoint) and every voice message 502s.
 requests==2.34.2
+# Real browser driver for the form-filler pipeline (headless Chromium).
+# Pinned to the version proven locally with a live Chromium launch.
+playwright==1.62.0

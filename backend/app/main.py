@@ -18,6 +18,8 @@ from app.api.routes_query import router as query_router
 from app.api.routes_transcribe import router as transcribe_router
 from app.api.routes_vlm import router as vlm_router
 from app.api.routes_preferences import router as preferences_router
+from app.api.routes_behavior import router as behavior_router
+from app.api.routes_formfill import router as formfill_router
 
 logger = logging.getLogger("adaptiveai.access")
 
@@ -241,6 +243,8 @@ app.include_router(query_router)
 app.include_router(transcribe_router)
 app.include_router(vlm_router)
 app.include_router(preferences_router)
+app.include_router(behavior_router)
+app.include_router(formfill_router)
 
 
 @app.get("/health")

@@ -14,8 +14,10 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from app.services.episodic_memory import EpisodicMemory
-from agents.tools.browser_tool import BrowserTool
+from app.services.episodic_memory import EpisodicMemory, Episode, episodic_memory
+from app.agents.form.cache_agent import CacheAgent
+
+from app.agents.form.browser_tool import BrowserTool
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +25,8 @@ logger = logging.getLogger(__name__)
 class HealingAgent:
     """Heals broken form replays with surgical LLM repairs."""
     
-    def __init__(self, browser: BrowserTool, memory: EpisodicMemory = None):
-        self.browser = browser
+    def __init__(self, browser: Optional[BrowserTool] = None, memory: Optional[EpisodicMemory] = None):
+        self.browser = browser or BrowserTool()
         self.memory = memory or episodic_memory
     
     async def heal_replay(self, episode_id: str, current_url: str) -> Dict[str, Any]:
@@ -134,8 +136,8 @@ If the page changed too much, set repaired=false and provide guidance.
     
     async def _full_discovery(self, url: str) -> Dict[str, Any]:
         """Perform full form discovery and create new episode."""
-        from agents.form.discovery_agent import DiscoveryAgent
-        
+        from app.agents.form.discovery_agent import DiscoveryAgent
+
         browser = BrowserTool(headless=True)
         await browser.start()
         await browser.navigate(url)

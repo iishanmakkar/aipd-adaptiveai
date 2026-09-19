@@ -133,10 +133,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Config parses (5 services, no env files present)
+      - name: Config parses (6 services, no env files present)
         run: |
           docker compose config --quiet
-          test "$(docker compose config --services | wc -l)" -eq 5
+          test "$(docker compose config --services | wc -l)" -eq 6
           docker compose config --services | sort | tr '\n' ' '
 
   security:

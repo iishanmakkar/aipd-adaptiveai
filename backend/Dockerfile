@@ -17,6 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # pays a ~75MB download at request time (and fails entirely while offline).
 RUN python -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8')"
 
+# Real Chromium for the form-filler browser driver (never a simulated browser).
+RUN playwright install --with-deps chromium
+
 # Copy application code
 COPY ./app ./app
 COPY ./alembic ./alembic

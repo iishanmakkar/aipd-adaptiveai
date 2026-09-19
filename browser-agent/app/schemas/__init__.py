@@ -1,4 +1,6 @@
 """Schema definitions for browser agent actions and results."""
+from uuid import uuid4
+
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
@@ -63,5 +65,3 @@ class EpisodicMemoryEntry(BaseModel):
     args_summary: str
     result: Dict[str, Any]
     success: bool
-    
-import uuid

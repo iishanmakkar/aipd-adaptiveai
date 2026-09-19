@@ -36,8 +36,9 @@ docker-compose up --build
 
 This starts:
 - Backend API on http://localhost:8000
-- Mock Intent Service on http://localhost:8001
-- Mock Agent Service on http://localhost:8002
+- Real Intent Engine on http://localhost:8001
+- Real Agents + RAG on http://localhost:8002
+- Postgres on localhost:5433 (host) -> 5432 (container)
 
 ### 3. Run Locally (without Docker)
 
@@ -45,14 +46,14 @@ This starts:
 cd backend
 pip install -r requirements.txt
 
-# Terminal 1: Mock Intent
-uvicorn app.mocks.mock_intent:app --reload --port 8001
+# Terminal 1: Intent Engine (real)
+cd ../intent-engine; uvicorn app.main:app --reload --port 8001
 
-# Terminal 2: Mock Agent
-uvicorn app.mocks.mock_agent:app --reload --port 8002
+# Terminal 2: Agents + RAG (real)
+cd ../agents; uvicorn main:app --reload --port 8002
 
 # Terminal 3: Backend
-uvicorn app.main:app --reload --port 8000
+cd ../backend; uvicorn app.main:app --reload --port 8000
 ```
 
 ## API Endpoints
@@ -129,25 +130,22 @@ Uses NVIDIA NIM (OpenAI-compatible) for LLM rewrites.
 
 Migrations via Alembic: `alembic upgrade head`
 
-## Replacing Mocks with Real Services
+## Service Wiring (all real — the mock ecosystem was deleted)
 
-When teammates complete their services:
-
-1. **Kakul's Intent Engine**: Replace `mock-intent` in docker-compose.yml with `build: ./intent-engine`
-2. **Kartik's Agents**: Replace `mock-agent` in docker-compose.yml with `build: ./agents`
-3. Update `INTENT_SERVICE_URL` and `AGENT_SERVICE_URL` in backend `.env`
-
-No code changes needed in backend - contracts are fixed.
+`INTENT_SERVICE_URL` and `AGENT_SERVICE_URL` in `backend/.env` point at the real
+services (`http://localhost:8001` / `8002` locally, `http://intent-engine:8001` /
+`http://agents:8002` in Docker). No code changes needed — contracts are fixed
+(see root `README.md` §4).
 
 ## Testing
 
 ```bash
-# Test mocks
+# Offline unit suite (no services, no API key)
 cd backend
-python test_integration.py
-
-# Run backend tests (when added)
 pytest
+
+# Against real Postgres (see root README.md §7 for TEST_DATABASE_URL)
+pytest -m live
 ```
 
 ## Environment Variables

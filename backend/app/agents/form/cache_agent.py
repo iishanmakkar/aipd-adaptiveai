@@ -11,10 +11,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from app.services.episodic_memory import EpisodicMemory, Episode, MemoryEntry
+from app.services.episodic_memory import EpisodicMemory, Episode, MemoryEntry, episodic_memory
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +77,27 @@ class CacheAgent:
         return base64.b64encode(json_str.encode()).decode()
     
     def _actions_from_fields(self, fields: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Convert fields to action sequence for episode storage."""
+        """Convert fields to action sequence for episode storage.
+
+        Every action carries the REAL locating data observed in the DOM
+        (css selector, label, placeholder) - replay uses these, never the
+        internal field_id hash (which exists nowhere in the page).
+        """
         actions = []
         for i, field in enumerate(fields):
+            ftype = field["type"]
+            if ftype in ("button", "submit", "radio", "checkbox"):
+                atype = "click"
+            elif ftype in ("combobox", "listbox", "select"):
+                atype = "select"
+            else:
+                atype = "focus_and_type"
             action = {
-                "type": "focus_and_type" if field["type"] not in ("button", "submit") else "click",
+                "type": atype,
                 "field_id": field["field_id"],
+                "selector": field.get("selector", ""),
+                "label": field.get("label", ""),
+                "placeholder": field.get("placeholder", ""),
                 "description": field.get("description", ""),
                 "status": "success",
                 "order": i,

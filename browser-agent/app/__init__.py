@@ -1,0 +1,1 @@
+"""Browser agent application package."""
