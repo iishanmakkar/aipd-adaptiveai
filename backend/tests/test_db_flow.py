@@ -198,7 +198,8 @@ def test_preferences_round_trip_persists(client):
     put = client.put("/api/preferences", headers=hdr,
                      json={"verbosity_level": "detailed", "voice_speed": 1.3})
     assert put.status_code == 200, put.text
-    assert put.json() == {"verbosity_level": "detailed", "voice_speed": 1.3}
+    assert put.json() == {"verbosity_level": "detailed", "voice_speed": 1.3,
+                          "disability_profile": "none", "language_complexity": "standard"}
 
     got = client.get("/api/preferences", headers=hdr)
     assert got.status_code == 200

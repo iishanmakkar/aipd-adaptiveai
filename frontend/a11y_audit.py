@@ -14,6 +14,13 @@ Usage: python a11y_audit.py <base_url>
 """
 import sys
 
+# Windows consoles default to cp1252, which cannot print the emoji icons used
+# in suggestion chips - without this the audit crashes mid-run (found live).
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 from playwright.sync_api import sync_playwright
 
 from automation_guard import assert_focus_unchanged, assert_isolated_browser, foreground_window_token
