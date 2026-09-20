@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # External services (can be overridden for real services)
     intent_service_url: str = "http://localhost:8001"
     agent_service_url: str = "http://localhost:8002"
+    browser_service_url: str = "http://localhost:8003"
+    # Browser calls are local Chromium work (no NIM inside except page-context
+    # VLM, which has its own budget); keep well under the 180s frontend budget.
+    browser_timeout_seconds: float = 120.0
 
     # Timeouts for those calls, and for the policy rewrite below. NIM latency on
     # this account measures 3-15s per completion but spikes well past that, so

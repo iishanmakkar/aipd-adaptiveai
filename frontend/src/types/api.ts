@@ -147,3 +147,49 @@ export interface VLMUsage {
   completion_tokens: number;
   total_tokens: number;
 }
+
+/** Round 9: real-time page monitoring. */
+export interface MonitorStartResponse {
+  active: boolean;
+  status: string;
+  message?: string;
+}
+
+export interface MonitorStopResponse {
+  active: boolean;
+  status: string;
+  stats?: MonitorStats;
+}
+
+export interface MonitorCounters {
+  polls: number;
+  polls_idle: number;
+  baseline_polls: number;
+  raw_activity: number;
+  changes_detected: number;
+  minor_ignored: number;
+  deferred_by_quiet: number;
+  rate_blocked: number;
+  nim_calls: number;
+  narrations: number;
+  errors: number;
+}
+
+export interface MonitorStats {
+  session_id?: string;
+  active?: boolean;
+  counters?: MonitorCounters;
+}
+
+export interface NarrationEvent {
+  id: number;
+  ts: number;
+  text: string;
+}
+
+export interface MonitorEventsResponse {
+  active: boolean;
+  narrations: NarrationEvent[];
+  cursor: number;
+  stats: MonitorStats;
+}

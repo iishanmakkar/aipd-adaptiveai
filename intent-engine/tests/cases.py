@@ -50,4 +50,30 @@ CONTEXT_TEST_CASES = [
     ("What is this?", "education_help", "education_agent", "educational content about DNA"),
 ]
 
-ALL_CASES = TEST_CASES + CONTEXT_TEST_CASES
+# (input_text, expected_intent, expected_target_agent, screen_context)
+# Action/inspect phrasing that must reach the LIVE browser - every one of these
+# carries the "Live page:" marker, which is the backend's signal that a browser
+# session is open for this chat session. The SAME words without a page open
+# stay informational (see the web/form cases above): there is nothing real to
+# act on, so answering generically is correct there.
+LIVE_PAGE_MARKER = "Live page: SwiftRail ticket booking (https://tickets.example.com). "
+BROWSER_CASES = [
+    ("Where is the submit button on this page?", "browser_inspect", "browser_agent",
+     LIVE_PAGE_MARKER + "Book tickets button, Passenger name field"),
+    ("What does this field want?", "browser_inspect", "browser_agent",
+     LIVE_PAGE_MARKER + "Passenger name field, Email field"),
+    ("Find the email field", "browser_inspect", "browser_agent",
+     LIVE_PAGE_MARKER + "Passenger name field, Email field"),
+    ("Fill in my name as Asha Sharma", "browser_act", "browser_agent",
+     LIVE_PAGE_MARKER + "Passenger name field, Email field"),
+    ("Click the Book tickets button", "browser_act", "browser_agent",
+     LIVE_PAGE_MARKER + "Book tickets button"),
+    ("Book 2 seats for me", "browser_act", "browser_agent",
+     LIVE_PAGE_MARKER + "Seats dropdown, Book tickets button"),
+]
+
+ALL_CASES = (
+    [(text, intent, agent, "") for (text, intent, agent) in TEST_CASES]
+    + CONTEXT_TEST_CASES
+    + BROWSER_CASES
+)

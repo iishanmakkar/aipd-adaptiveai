@@ -38,6 +38,16 @@ code review alone.
   10.9s local.
 - **Really fills forms / browses**: ticket booking 9/9 in remote Chromium with
   the page's own confirmation; browser agent navigates + fills with readbacks.
+  Round 8: "where is the submit button on this page?" now answers from the
+  LIVE session's DOM (the chat holds one persistent Chromium page per chat
+  session; submit-class clicks are held behind an explicit confirmation).
+- **Round 9 — really watches the page**: explicit-consent monitoring of the
+  live session narrates meaningful changes through the same NIM vision
+  endpoint and the same policy engine as chat. Measured over a real 5-minute
+  session: 164 local polls → **2 NIM calls**; a 250ms-mutation stress page
+  stayed capped at 3 calls/60s (hard 20s ceiling); interruption holds
+  narrations ~15s while the user talks; stop freezes NIM calls at the exact
+  count. Full numbers, transcripts and seal: `docs/round9-monitoring.md`.
 - **Really adaptive**: same question answered step-by-step (blind+concise,
   818 chars) vs technical (detailed, 1088 chars); observed replays/skips reshape
   subsequent answers unless the user stated otherwise (852→346 proven).

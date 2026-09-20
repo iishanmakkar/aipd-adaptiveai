@@ -36,6 +36,10 @@ class _RecordingClient:
         self.captured.append({"url": url, "json": json, "headers": headers})
         return self.response
 
+    async def get(self, url, headers=None):
+        self.captured.append({"url": url, "json": None, "headers": headers})
+        return self.response
+
 
 @pytest.fixture
 def capture(monkeypatch):
@@ -110,6 +114,17 @@ async def test_agent_response_contract(capture, monkeypatch):
     assert result.suggested_action == "highlight_field"
 
 
+async def test_browser_open_session_contract(capture, monkeypatch):
+    monkeypatch.setattr(clients.settings, "browser_service_url", "http://browser:8003")
+    calls = capture({"status": "opened", "url": "https://x.example/", "title": "X"})
+    result = await clients.browser_open_session(
+        session_id="chat-1", url="https://x.example/", request_id="req-b")
+    assert calls[0]["url"] == "http://browser:8003/session/open"
+    assert calls[0]["json"] == {"session_id": "chat-1", "url": "https://x.example/"}
+    assert calls[0]["headers"]["X-Request-ID"] == "req-b"
+    assert result["status"] == "opened"
+
+
 async def test_upstream_error_propagates(capture):
     """Clients must raise so the route can report 502 - never swallow it."""
     capture({"detail": "boom"}, status=500)
@@ -141,3 +156,37 @@ async def test_client_uses_configured_agent_timeout(monkeypatch):
     await clients.get_agent_response(session_id="s", agent="form_agent", query="q",
                                       entity="e", extra_context="")
     assert seen["timeout"] == 77.0
+
+
+# ---- Round 9 monitor clients -------------------------------------------------
+
+async def test_monitor_start_contract(capture, monkeypatch):
+    monkeypatch.setattr(clients.settings, "browser_service_url", "http://browser:8003")
+    calls = capture({"status": "started", "stats": {}})
+    result = await clients.browser_monitor_start("chat-1", "voice", "req-m1")
+    assert calls[0]["url"] == "http://browser:8003/session/chat-1/monitor/start"
+    assert calls[0]["json"] == {"requested_by": "voice"}
+    assert calls[0]["headers"]["X-Request-ID"] == "req-m1"
+    assert result["status"] == "started"
+
+
+async def test_monitor_stop_contract(capture, monkeypatch):
+    monkeypatch.setattr(clients.settings, "browser_service_url", "http://browser:8003")
+    calls = capture({"status": "stopped", "stats": {}})
+    result = await clients.browser_monitor_stop("chat-1", "req-m2")
+    assert calls[0]["url"] == "http://browser:8003/session/chat-1/monitor/stop"
+    assert result["status"] == "stopped"
+
+
+async def test_monitor_interrupt_contract(capture, monkeypatch):
+    monkeypatch.setattr(clients.settings, "browser_service_url", "http://browser:8003")
+    calls = capture({"status": "interrupted", "quiet_until": 1.0})
+    await clients.browser_monitor_interrupt("chat-1", "req-m3")
+    assert calls[0]["url"] == "http://browser:8003/session/chat-1/monitor/interrupt"
+
+
+async def test_monitor_narrations_url_carries_since(capture, monkeypatch):
+    monkeypatch.setattr(clients.settings, "browser_service_url", "http://browser:8003")
+    calls = capture({"active": True, "events": [], "stats": {}})
+    await clients.browser_monitor_narrations("chat-1", 7)
+    assert calls[0]["url"].endswith("/session/chat-1/monitor/narrations?since=7")

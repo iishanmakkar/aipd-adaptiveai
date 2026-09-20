@@ -23,6 +23,38 @@ def _evict_expired() -> None:
         _session_memory.pop(sid, None)
 
 
+# Action/inspect verbs that ONLY route to the live browser when a page is
+# actually open. The open page is signalled by the "Live page:" marker the
+# backend puts in screen_context when a browser session exists for the chat
+# session. Gating on the marker (not just the verbs) is what keeps every
+# pre-existing case routing exactly as before: "Click it" with no page open
+# stays informational, because there is nothing real to act on.
+BROWSER_ACT_VERBS = (
+    "fill in", "fill this", "fill out", "fill the", "click the", "press the",
+    "submit", "book", "type ", "enter ", "select the", "choose ",
+)
+BROWSER_INSPECT_VERBS = (
+    "where is", "find", "locate", "what does this", "describe",
+    "show me", "which ",
+)
+
+
+def _browser_route(text_lower: str, context_lower: str):
+    """(intent, agent, entity_hint) or None. Live-page marker is mandatory.
+
+    Inspect is checked first on purpose: when phrasing is ambiguous ("find
+    the submit button and click it"), the read-only path wins and the user
+    confirms the action explicitly on the next turn.
+    """
+    if "live page:" not in context_lower:
+        return None
+    if any(v in text_lower for v in BROWSER_INSPECT_VERBS):
+        return ("browser_inspect", "browser_agent", "live page element")
+    if any(v in text_lower for v in BROWSER_ACT_VERBS):
+        return ("browser_act", "browser_agent", "live page element")
+    return None
+
+
 # Keyword-based fallback classifier
 KEYWORD_RULES = [
     # (keywords, intent, target_agent, entity_hint)
@@ -54,6 +86,15 @@ def keyword_classify(text: str, screen_context: str = "") -> Tuple[str, str, str
     """
     text_lower = text.lower()
     context_lower = (screen_context or "").lower()
+
+    # Live browser routing comes first and needs the page marker: without an
+    # open page there is nothing real to inspect or act on, so every old case
+    # below scores exactly as it always has.
+    browser_hit = _browser_route(text_lower, context_lower)
+    if browser_hit is not None:
+        intent, agent, entity_hint = browser_hit
+        return (intent, agent, entity_hint, 0.85,
+                f"Live page open and action/inspect phrasing detected: {intent}")
 
     best_score = 0
     best_rule = None
@@ -106,12 +147,30 @@ Classify the user's input into ONE of these intents and pick the corresponding t
 3. web_navigation_help -> web_agent: User needs help navigating a website, finding elements, understanding UI
 4. education_help -> education_agent: User wants to learn or understand an educational concept
 5. general_query -> general_agent: General questions, greetings, or unclear intent
+6. browser_inspect -> browser_agent: User asks about elements ON THE OPEN LIVE PAGE
+   (screen context contains a "Live page:" marker) - "where is X", "what does
+   this field mean", "find/describe/show me X". The page is real and open; the
+   answer must come from its live DOM, never from generic advice.
+7. browser_act -> browser_agent: User asks to DO something on the open live
+   page ("fill in", "click the X", "submit", "book", "type", "select") - again
+   ONLY when the "Live page:" marker is present. Without an open page, the
+   same words are informational (form_help/web_navigation_help) instead.
+   When phrasing is ambiguous between looking and doing, prefer
+   browser_inspect: reading is safe, acting needs a second explicit turn.
+
+   Hard rule with examples: the "Live page:" marker (a line like
+   "Live page: <title> (<url>)" in the screen context) is the ONLY thing that
+   makes browser_inspect/browser_act legal.
+   - "Where is the submit button on this page?" + screen context "None" (or
+     any context WITHOUT that marker) -> web_navigation_help, NEVER browser_*.
+   - "Fill in my name as Asha" with no marker -> form_help, NEVER browser_act.
+   A missing page means there is nothing real to look at or touch.
 
 Also extract the specific entity (field name, document section, web element, concept) the user is asking about.
 
 Return ONLY valid JSON with these exact fields:
 {
-  "intent": "one_of_the_5_intents",
+  "intent": "one_of_the_7_intents",
   "target_agent": "corresponding_agent",
   "extracted_entity": "specific thing user is asking about",
   "reasoning": "brief explanation of why this classification was chosen",
@@ -170,14 +229,17 @@ Classify this request."""
         return ClassifyResponse(**{**result, "confidence": confidence})
         
     except Exception as e:
-        # Fallback to keyword classifier
-        intent, agent, entity, reasoning = keyword_classify(request.input_text, request.screen_context)
+        # Fallback to keyword classifier. NOTE: keyword_classify returns a
+        # 5-tuple (with confidence) - unpack all five so the keyword match
+        # strength survives instead of resetting to the 0.5 default.
+        intent, agent, entity, confidence, reasoning = keyword_classify(request.input_text, request.screen_context)
         reasoning += f" (LLM failed: {str(e)[:100]}, using keyword fallback)"
         return ClassifyResponse(
             intent=intent,
             target_agent=agent,
             extracted_entity=entity,
-            reasoning=reasoning
+            reasoning=reasoning,
+            confidence=confidence,
         )
 
 

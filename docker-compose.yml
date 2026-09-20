@@ -78,6 +78,7 @@ services:
     environment:
       - INTENT_SERVICE_URL=http://intent-engine:8001
       - AGENT_SERVICE_URL=http://agents:8002
+      - BROWSER_SERVICE_URL=http://browser-agent:8003
       - SUPABASE_DB_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/adaptiveai
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]

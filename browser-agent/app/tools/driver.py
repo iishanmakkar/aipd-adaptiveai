@@ -18,15 +18,22 @@ SNAPSHOT_JS = """() => {
     'input, textarea, select, button, [role=textbox], [role=button], ' +
     '[role=combobox], [role=listbox], [role=searchbox], a[href], h1, h2, h3'
   );
-  els.forEach((el) => {
-    const tag = (el.tagName || '').toLowerCase();
-    let label = el.getAttribute('aria-label') || '';
-    if (!label && el.id) {
-      const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (lab) label = lab.innerText || '';
-    }
-    if (!label) label = el.getAttribute('placeholder') || el.getAttribute('alt') || '';
-    if (!label) label = ((el.innerText || '').trim().split('\\n')[0] || '').slice(0, 80);
+    els.forEach((el) => {
+      const tag = (el.tagName || '').toLowerCase();
+      let label = el.getAttribute('aria-label') || '';
+      if (!label && el.id) {
+        const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        if (lab) label = lab.innerText || '';
+      }
+      if (!label) label = el.getAttribute('placeholder') || el.getAttribute('alt') || '';
+      // Radios/checkboxes wrapped in a <label> carry their text in the
+      // wrapper, not in the input's own innerText (which is empty) - found
+      // live when "AC 3-tier" resolved to a hidden field instead.
+      if (!label) {
+        const wrap = el.closest('label');
+        if (wrap) label = wrap.innerText || '';
+      }
+      if (!label) label = ((el.innerText || '').trim().split('\\n')[0] || '').slice(0, 80);
     let selector = '';
     if (el.id) selector = '#' + CSS.escape(el.id);
     else {
@@ -49,6 +56,19 @@ SNAPSHOT_JS = """() => {
               type: (el.getAttribute('type') || '').toLowerCase()});
   });
   return {title: document.title, url: location.href, nodes: out};
+}"""
+
+
+MONITOR_JS = """() => {
+  if (window.__a11yMutationCount === undefined) {
+    window.__a11yMutationCount = 0;
+    new MutationObserver((muts) => {
+      window.__a11yMutationCount += muts.length;
+    }).observe(document.documentElement,
+               {subtree: true, childList: true, characterData: true, attributes: true});
+  }
+  return {mutations: window.__a11yMutationCount,
+          text: document.body ? document.body.innerText : ''};
 }"""
 
 
@@ -141,3 +161,14 @@ class Driver:
         else:
             text = await page.evaluate("() => document.body ? document.body.innerText.slice(0, 8000) : ''")
         return {"status": "completed", "text": text}
+
+    async def monitor_signal(self) -> Dict[str, Any]:
+        """One cheap page.evaluate: DOM-mutation count + visible text.
+
+        The MutationObserver is installed on first call and survives for the
+        life of the page; navigation resets the counter to 0 (new JS context).
+        This is the Round 9 change-detection signal: a real DOM-mutation read,
+        not pixel diffing, and it costs one evaluate per poll - no screenshot,
+        no network, no model call.
+        """
+        return await self._require_page().evaluate(MONITOR_JS)

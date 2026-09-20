@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SwiftRail Live Departures (demo, stress)</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 560px; margin: 2rem auto; padding: 0 1rem; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border: 1px solid #ccc; padding: .4rem .6rem; text-align: left; }
+  .live { color: #b00020; font-weight: 700; }
+</style>
+</head>
+<body>
+<main>
+<h1>SwiftRail live departures board</h1>
+<p>Fares and platform numbers update continuously, like a live dashboard.</p>
+<table id="board">
+  <thead><tr><th>Train</th><th>Fare (live)</th><th>Platform</th></tr></thead>
+  <tbody>
+    <tr><td>12951 Rajdhani</td><td class="fare">₹1,450</td><td class="plat">3</td></tr>
+    <tr><td>12009 Shatabdi</td><td class="fare">₹980</td><td class="plat">1</td></tr>
+    <tr><td>19038 Avadh</td><td class="fare">₹620</td><td class="plat">5</td></tr>
+  </tbody>
+</table>
+<p class="live" id="tick">Last update: —</p>
+</main>
+<script>
+// Constant DOM churn (clock ticks every 250ms) PLUS content changes every
+// 5s: the worst realistic case. The gate must cap NIM calls at the hard
+// ceiling while the mutation counter keeps climbing.
+setInterval(() => {
+  document.getElementById('tick').textContent = 'Last update: ' + new Date().toLocaleTimeString();
+}, 250);
+setInterval(() => {
+  const t = Date.now();
+  document.querySelectorAll('.fare').forEach((el, i) => {
+    el.textContent = '₹' + (1200 + Math.floor((t / 900 + i * 137) % 500));
+  });
+  document.querySelectorAll('.plat').forEach((el, i) => {
+    el.textContent = String(1 + Math.floor((t / 5000 + i * 3) % 7));
+  });
+}, 5000);
+</script>
+</body>
+</html>

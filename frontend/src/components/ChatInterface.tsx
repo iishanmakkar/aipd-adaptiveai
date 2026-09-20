@@ -15,8 +15,9 @@ import { useTextToSpeech } from '../hooks/useTextToSpeech';
 import { useVisionModel } from '../hooks/useVisionModel';
 import { useApiQuery } from '../hooks/useApiQuery';
 import { useBehaviorTracking } from '../hooks/useBehaviorTracking';
+import { useScreenMonitor } from '../hooks/useScreenMonitor';
 import { apiService } from '../services/api';
-import type { Verbosity } from '../types/api';
+import type { Verbosity, NarrationEvent } from '../types/api';
 import type { Message } from '../types/chat';
 import type { DisabilityProfile, LanguageComplexity } from '../types/accessibility';
 
@@ -114,6 +115,24 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
   // user-initiated stop-speaking control (an interruption, not a clean finish).
   const { recordReplay, recordSkip } = useBehaviorTracking(sessionId);
 
+  // Round 9: continuous page monitoring. Consent is explicit (button / Alt+W /
+  // "watch my screen" in chat); narrations arrive as special assistant
+  // messages, announced by the polite live region below and spoken via TTS.
+  const handleNarration = useCallback((narration: NarrationEvent) => {
+    addMessage({
+      id: `narration-${narration.id}`,
+      role: 'assistant',
+      // The prefix keeps a screen-update distinguishable from a chat answer
+      // in the transcript and in the live-region announcement.
+      content: `Screen update: ${narration.text}`,
+      timestamp: new Date(narration.ts * 1000),
+      agent_used: 'browser_agent',
+      suggested_action: 'screen_narration',
+    });
+  }, [addMessage]);
+  const { active: monitorActive, starting: monitorStarting, toggle: toggleMonitor } =
+    useScreenMonitor(sessionId, handleNarration);
+
   // Sync status with recording/speaking state
   useEffect(() => {
     if (isRecording) {
@@ -136,28 +155,6 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
     scrollToBottom();
   }, [history, scrollToBottom]);
 
-  // Handle voice recording completion - real error TTS (accessibility critical)
-  const handleRecordingComplete = useCallback(async () => {
-    // stopRecording resolves once MediaRecorder has actually assembled the
-    // blob; the old code read the (still null) state synchronously here, so
-    // the first recording was always discarded before transcription.
-    const blob = await stopRecording();
-    if (!blob) return;
-
-    try {
-      const transcript = await transcribe(blob);
-      setInputValue(transcript);
-      // Auto-submit after transcription
-      setTimeout(() => handleSubmit(transcript), 100);
-    } catch (err) {
-      console.error('Transcription failed:', err);
-      const msg = 'Transcription failed. Please try again or type your message.';
-      const errMsg: Message = { id: uuidv4(), role: 'assistant', content: msg, timestamp: new Date(), is_loading: false };
-      addMessage(errMsg);
-      await speak(msg);
-    }
-  }, [stopRecording, transcribe, addMessage, speak]);
-
   // Handle form submit
   const handleSubmit = useCallback(async (text?: string) => {
     const messageText = text || inputValue.trim();
@@ -165,6 +162,11 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
     // The session must exist server-side before the first query; bootstrap
     // creates it within a moment of load, so just wait it out.
     if (!sessionReady) return;
+
+    // User input outranks any narration in flight: cut speech immediately.
+    // (The backend also opens a monitor quiet-window on every turn, so a
+    // pending screen description is deferred, never spoken over the answer.)
+    stopSpeaking();
 
     // Real page, not generic advice: if the message links a URL, load it in
     // the backend's live Chromium first and ask about what is ACTUALLY there.
@@ -259,7 +261,32 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
     updateMessage,
     sendQuery,
     speak,
+    stopSpeaking,
   ]);
+
+  // Handle voice recording completion - real error TTS (accessibility critical)
+  const handleRecordingComplete = useCallback(async () => {
+    // The user started talking: any narration stops immediately.
+    stopSpeaking();
+    // stopRecording resolves once MediaRecorder has actually assembled the
+    // blob; the old code read the (still null) state synchronously here, so
+    // the first recording was always discarded before transcription.
+    const blob = await stopRecording();
+    if (!blob) return;
+
+    try {
+      const transcript = await transcribe(blob);
+      setInputValue(transcript);
+      // Auto-submit after transcription
+      setTimeout(() => handleSubmit(transcript), 100);
+    } catch (err) {
+      console.error('Transcription failed:', err);
+      const msg = 'Transcription failed. Please try again or type your message.';
+      const errMsg: Message = { id: uuidv4(), role: 'assistant', content: msg, timestamp: new Date(), is_loading: false };
+      addMessage(errMsg);
+      await speak(msg);
+    }
+  }, [stopRecording, transcribe, addMessage, speak, stopSpeaking, handleSubmit]);
 
   // Handle image upload - real error TTS
   const handleImageUpload = useCallback(async (file: File) => {
@@ -432,6 +459,39 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
       </main>
 
       <footer className="chat-footer" role="contentinfo">
+        {/* Round 9: explicit monitor consent + persistent indicator + one-action
+            stop. aria-pressed exposes the state to screen readers; the pulsing
+            dot is the visual indicator for sighted observers; Alt+W is the
+            keyboard kill switch registered in useScreenMonitor. */}
+        <div className="monitor-bar" role="group" aria-label="Screen monitoring">
+          <button
+            type="button"
+            className={`monitor-toggle${monitorActive ? ' active' : ''}`}
+            aria-pressed={monitorActive}
+            onClick={() => void toggleMonitor()}
+            disabled={!sessionReady || monitorStarting}
+          >
+            <span
+              className={`monitor-dot${monitorActive ? ' pulsing' : ''}`}
+              aria-hidden="true"
+            />
+            {monitorActive
+              ? 'Stop watching screen (Alt+W)'
+              : monitorStarting
+                ? 'Starting…'
+                : 'Watch my screen (Alt+W)'}
+          </button>
+          <span className="visually-hidden" role="status" aria-live="polite">
+            {monitorActive
+              ? 'Screen monitoring is on. Every meaningful change on the live page will be narrated. Press Alt+W or use this button to stop.'
+              : 'Screen monitoring is off.'}
+          </span>
+          {monitorActive && (
+            <span className="monitor-hint" aria-hidden="true">
+              narrating meaningful changes · stop: button, Alt+W, or say “stop watching my screen”
+            </span>
+          )}
+        </div>
         <div className="input-row">
           <ScreenshotUpload
             onImageUpload={handleImageUpload}

@@ -21,6 +21,7 @@ from app.api.routes_preferences import router as preferences_router
 from app.api.routes_behavior import router as behavior_router
 from app.api.routes_formfill import router as formfill_router
 from app.api.routes_pagecontext import router as pagecontext_router
+from app.api.routes_monitor import router as monitor_router
 
 logger = logging.getLogger("adaptiveai.access")
 
@@ -250,6 +251,7 @@ app.include_router(preferences_router)
 app.include_router(behavior_router)
 app.include_router(formfill_router)
 app.include_router(pagecontext_router)
+app.include_router(monitor_router)
 
 
 @app.get("/health")

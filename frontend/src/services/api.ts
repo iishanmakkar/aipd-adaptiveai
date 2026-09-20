@@ -3,6 +3,7 @@ import type {
   QueryRequest, QueryResponse, TranscribeResponse, SessionResponse, HistoryResponse,
   SessionListResponse, PreferenceResponse, PreferenceUpdate, VLMRequest, VLMResponse,
   BehaviorEvent, PageContextResponse,
+  MonitorStartResponse, MonitorStopResponse, MonitorEventsResponse,
 } from '../types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
@@ -97,6 +98,30 @@ class ApiService {
 
   async recordBehaviorEvent(event: BehaviorEvent): Promise<{ status: string }> {
     const response = await this.client.post<{ status: string }>('/api/behavior-event', event);
+    return response.data;
+  }
+
+  // ---- Round 9: real-time page monitoring (explicit consent in, one-action out).
+
+  async monitorStart(sessionId: string): Promise<MonitorStartResponse> {
+    const response = await this.client.post<MonitorStartResponse>('/api/monitor/start', {
+      session_id: sessionId,
+    }, { timeout: 45000 });
+    return response.data;
+  }
+
+  async monitorStop(sessionId: string): Promise<MonitorStopResponse> {
+    const response = await this.client.post<MonitorStopResponse>('/api/monitor/stop', {
+      session_id: sessionId,
+    }, { timeout: 45000 });
+    return response.data;
+  }
+
+  async monitorEvents(sessionId: string, since: number): Promise<MonitorEventsResponse> {
+    const response = await this.client.get<MonitorEventsResponse>(
+      `/api/monitor/events?session_id=${encodeURIComponent(sessionId)}&since=${since}`, {
+        timeout: 45000,
+      });
     return response.data;
   }
 

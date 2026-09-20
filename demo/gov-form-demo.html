@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NagarPal Portal — Citizen Grievance Form (demo)</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 620px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.3rem; }
+  label { display: block; margin-top: 1rem; font-weight: bold; }
+  input, select, textarea { display: block; width: 100%; padding: .45rem; margin-top: .2rem; }
+  button { margin-top: 1.2rem; padding: .55rem 1.1rem; }
+  #ack { display: none; margin-top: 1.2rem; border: 2px solid #1a4d8f; padding: .9rem; }
+  .note { font-size: .8rem; color: #555; }
+</style>
+</head>
+<body>
+<main>
+<h1>NagarPal Portal — Citizen Grievance</h1>
+<p class="note">Second demo page: intentionally different layout, labels and
+field types from the ticket form, so guided fill is provably not hardcoded.</p>
+<form id="grievance" action="#" method="post" onsubmit="return submitG(event)">
+  <label for="citizen">Citizen full name</label>
+  <input id="citizen" name="citizen" type="text">
+
+  <label for="phone">Mobile number</label>
+  <input id="phone" name="phone" type="tel" placeholder="10 digits">
+
+  <label for="dept">Department</label>
+  <select id="dept" name="dept">
+    <option value="water">Water supply</option>
+    <option value="roads">Roads</option>
+    <option value="power">Electricity</option>
+  </select>
+
+  <label for="details">Complaint details</label>
+  <textarea id="details" name="details" rows="4"></textarea>
+
+  <label><input type="checkbox" id="anon" name="anon"> File anonymously</label>
+
+  <button type="submit">Lodge grievance</button>
+</form>
+<div id="ack" role="status"></div>
+</main>
+<script>
+function submitG(ev) {
+  ev.preventDefault();
+  const v = (id) => document.getElementById(id).value;
+  const ack = document.getElementById('ack');
+  ack.style.display = 'block';
+  ack.textContent = 'Grievance ' + (v('anon') === 'on' || document.getElementById('anon').checked ? '(anonymous) ' : '') +
+    'lodged for ' + v('citizen') + ' — department ' + v('dept') + '. Ticket GRV' +
+    (Math.abs([...v('details')].reduce((a, c) => a + c.charCodeAt(0), 0) % 90000) + 10000) + '.';
+  return false;
+}
+</script>
+</body>
+</html>

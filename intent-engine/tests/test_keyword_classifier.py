@@ -7,16 +7,20 @@ the only thing standing between the user and a wrong agent.
 import pytest
 
 from app.classifier import KEYWORD_RULES, keyword_classify
-from cases import CONTEXT_TEST_CASES, TEST_CASES
+from cases import BROWSER_CASES, CONTEXT_TEST_CASES, TEST_CASES
 
-VALID_INTENTS = {"form_help", "document_help", "web_navigation_help", "education_help", "general_query"}
-VALID_AGENTS = {"form_agent", "document_agent", "web_agent", "education_agent", "general_agent"}
+VALID_INTENTS = {"form_help", "document_help", "web_navigation_help", "education_help",
+                 "general_query", "browser_inspect", "browser_act"}
+VALID_AGENTS = {"form_agent", "document_agent", "web_agent", "education_agent",
+                "general_agent", "browser_agent"}
 AGENT_FOR_INTENT = {
     "form_help": "form_agent",
     "document_help": "document_agent",
     "web_navigation_help": "web_agent",
     "education_help": "education_agent",
     "general_query": "general_agent",
+    "browser_inspect": "browser_agent",
+    "browser_act": "browser_agent",
 }
 
 
@@ -82,7 +86,8 @@ def test_confidence_tracks_match_strength():
 
 
 def test_rules_cover_four_specific_intents():
-    """general_query is the default and is intentionally not a rule."""
+    """general_query is the default and is intentionally not a rule; the two
+    browser intents live in the live-page pre-check, not in KEYWORD_RULES."""
     intents = {rule[1] for rule in KEYWORD_RULES}
     assert intents == {"form_help", "document_help", "education_help", "web_navigation_help"}
     for keywords, _intent, _agent, _hint in KEYWORD_RULES:
@@ -102,3 +107,28 @@ def test_case_insensitive():
     upper = keyword_classify("SUMMARIZE THIS PDF FOR ME")
     lower = keyword_classify("summarize this pdf for me")
     assert upper[:4] == lower[:4]
+
+
+@pytest.mark.parametrize("text,expected_intent,expected_agent,context", BROWSER_CASES)
+def test_live_page_phrasing_routes_to_browser(text, expected_intent, expected_agent, context):
+    """Action/inspect words reach the live browser ONLY with a page open."""
+    intent, agent, _entity, _confidence, _reasoning = keyword_classify(text, context)
+    assert (intent, agent) == (expected_intent, expected_agent)
+
+
+@pytest.mark.parametrize("text,expected_intent,expected_agent,context", BROWSER_CASES)
+def test_same_words_without_open_page_stay_informational(text, expected_intent, expected_agent, context):
+    """The Round 8 guarantee in reverse: strip the marker and NONE of these
+    may route to the browser - there is no real page to act on."""
+    intent, agent, _, _, _ = keyword_classify(text, "")
+    assert agent != "browser_agent", f"'{text}' routed to browser with no page open"
+
+
+def test_browser_outputs_are_schema_valid():
+    """New intents must satisfy the widened ClassifyResponse patterns."""
+    from app.schemas import ClassifyResponse
+    for text, intent, agent, context in BROWSER_CASES:
+        got_intent, got_agent, entity, confidence, reasoning = keyword_classify(text, context)
+        ClassifyResponse(intent=got_intent, target_agent=got_agent,
+                         extracted_entity=entity, reasoning=reasoning,
+                         confidence=confidence)

@@ -1,0 +1,5 @@
+== 5-minute monitored session doing normal form-filling work
+== after 256s: polls=164 idle=159 raw_activity=2 changes=2 minor=0 rate_blocked=0 nim_calls=2 narrations=2 errors=0
+== narration transcript (this session):
+  [03:22:17] (change) The page has changed. A new field, "Meal preference (AC only)," has been added, with options for "Vegetarian" and "Non-vegetarian." This suggests that the user must now select a meal preference, in addition to the previous fields.
+  [03:23:02] (change) A confirmation message has appeared, stating that 1 seat has been booked for Asha Sharma. The reference number is PNR101017.
