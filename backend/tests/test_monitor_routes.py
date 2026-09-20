@@ -30,3 +30,26 @@ def test_bare_stop_is_not_a_watch_command():
 def test_unrelated_sentences_do_not_match():
     assert rq._watch_command("i stopped by the bank yesterday") is None
     assert rq._watch_command("which seat should i book") is None
+
+
+# ---- slot-fill values are data, not commands (found live) --------------------
+
+def test_free_text_values_are_not_cancel():
+    """A value containing a cancel WORD must reach the field, not cancel."""
+    assert not rq._is_exact_cancel("Street light not working near block 4")
+    assert not rq._is_exact_cancel("The notification never arrived")
+    assert not rq._is_exact_cancel("No response from the office for 2 weeks")
+    assert not rq._is_exact_cancel("abortion clinic signposting")  # substring safety
+
+
+def test_exact_cancel_phrases_still_cancel_fills():
+    assert rq._is_exact_cancel("cancel")
+    assert rq._is_exact_cancel("Cancel that.")
+    assert rq._is_exact_cancel("never mind")
+    assert rq._is_exact_cancel("stop")
+
+
+def test_held_submits_keep_the_loose_cancel_check():
+    """A held submit/navigate may be cancelled mid-sentence."""
+    assert rq._is_cancel("no, cancel that")
+    assert rq._is_cancel("actually stop")

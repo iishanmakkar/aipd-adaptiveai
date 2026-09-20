@@ -88,6 +88,17 @@ def _is_cancel(text: str) -> bool:
     return any(w in lowered for w in CANCEL_WORDS)
 
 
+def _is_exact_cancel(text: str) -> bool:
+    """The WHOLE message is a cancel phrase - used while a slot-fill waits for
+    a value, where free text like 'Street light not working' is field data,
+    not a command (found live: the substring check ate such values)."""
+    lowered = text.strip().lower().strip(".,!?;:")
+    if lowered in CANCEL_WORDS:
+        return True
+    return lowered in ("cancel that", "cancel it", "no cancel", "stop that",
+                       "stop it", "never mind", "nevermind", "abort")
+
+
 # Round 9: voice commands for the page monitor. They must NOT collide with
 # the cancel word "stop" alone - "stop" mid-slot-fill cancels a proposal;
 # only the explicit watching-phrases toggle monitoring.
@@ -413,7 +424,14 @@ async def _maybe_browser_turn(db, session, current_user, session_uuid, request,
     # 1. Held proposals / slot-fill values resolve before intent classification.
     pending = _get_pending(chat_id)
     if pending is not None:
-        if _is_cancel(text):
+        # While the loop is waiting for a FIELD VALUE, the text is data, not a
+        # command: only an exact cancel phrase may cancel. A substring check
+        # ate real values live ("Street light not working..." contains "no").
+        # For held submit/navigate proposals the looser check stays: "no,
+        # cancel that" must cancel a held click.
+        is_fill_value = pending.get("kind") == "fill_next"
+        if (not is_fill_value and _is_cancel(text)) or \
+                (is_fill_value and _is_exact_cancel(text)):
             _pending.pop(chat_id, None)
             return await _browser_answer(
                 db, session, current_user, session_uuid,

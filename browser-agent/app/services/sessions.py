@@ -80,6 +80,11 @@ def is_sensitive_url(url: str) -> bool:
 
 def is_submit_text(label: str, tag: str = "", input_type: str = "") -> bool:
     text = (label or "").lower()
+    # Structural rule first: a form's submit control is submit-class even when
+    # its label carries no submit verb ("Lodge grievance" on a government form
+    # - found live). <button> without a type attribute defaults to submit.
+    if tag == "button" and input_type in ("", "submit"):
+        return True
     if tag == "input" and input_type == "submit":
         return True
     return any(p in text for p in SUBMIT_PATTERNS)

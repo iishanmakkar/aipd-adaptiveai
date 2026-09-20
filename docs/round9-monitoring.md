@@ -177,6 +177,54 @@ Driven through the actual React UI at :5173 with a real browser (see
    1 vision calls)."* → post-stop changes produced **zero** additional NIM
    calls.
 
+## 6b. Guided fill + booking on ANY page (page-agnostic proof)
+
+`scripts/r9_any_site_fill_proof.py` drives the REAL chat path on two
+deliberately different local pages — no selectors hardcoded; the slot-fill
+loop reads each page's live DOM and asks for every real field by label:
+
+**Site 1 — citizen grievance form** (textarea + select + different layout):
+
+```
+turn 2: Got it: Citizen full name = 'Ravi Kumar'. What should go in 'Mobile number'?
+turn 3: Got it: Mobile number = '9876543210'. What should go in 'Department'?
+turn 4: Got it: Department = 'roads'. What should go in 'Complaint details'?
+turn 5: I found the form and filled 4 fields: - Citizen full name: 'Ravi Kumar'
+        - Mobile number: '9876543210' - Department: 'roads' - Complaint details:
+        'Street light not working near block 4 for two weeks.'
+turn 6 (submit): Submitted — clicked 'Lodge grievance' on the live page.
+page's own readback: "Grievance (anonymous) lodged for Ravi Kumar — department
+roads. Ticket GRV14820."
+```
+
+**Site 2 — train ticket booking**:
+
+```
+turn 5: I found the form and filled 3 fields: - Passenger name: 'Asha Sharma'
+        - Email address: 'asha@example.com' - Seats: '2'
+        I'm holding before 'Book tickets' - say 'submit' to actually click it
+turn 6 (submit): Submitted — clicked 'Book tickets' on the live page.
+page's own readback: "Booked 2 seat(s) for Asha Sharma (asha@example.com).
+Reference PNR101017."
+```
+
+Two real bugs were found and fixed by this proof (both generalized, with
+regression tests):
+1. The cancel check used substring matching, so a value like "Street light
+   **not** working…" cancelled the fill ("no" ⊂ "not"). Slot-fill values are
+   now data: only an exact cancel phrase cancels (`_is_exact_cancel`,
+   tests in `test_monitor_routes.py`).
+2. Submit-classification missed plain `<button type=submit>` elements whose
+   labels carry no submit verb ("Lodge grievance"). `is_submit_text` now
+   applies the structural rule (button/input with submit semantics) first.
+
+**Honest boundary (unchanged from Round 8):** acting is limited to pages the
+user explicitly opens, and sites that resist automation are refused honestly
+(CAPTCHA → 423, robots.txt disallow → 403, sensitive domains held for
+confirmation). "Any site" means any page within those rules — proving it on
+real third-party commercial sites would itself violate the project's safety
+policy, so the two-page proof above is the scope of the claim.
+
 ## 7. Battery + scan
 
 - Offline batteries after Round 9: backend **106 passed (+8 new)**, agents
