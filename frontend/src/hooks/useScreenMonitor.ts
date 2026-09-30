@@ -29,15 +29,20 @@ export function useScreenMonitor(sessionId: string | null,
   const [error, setError] = useState<string | null>(null);
   const sinceRef = useRef(0);
   const activeRef = useRef(false);
+  const pollingRef = useRef(false);
+  const cancelledRef = useRef(false);
   const timerRef = useRef<number | null>(null);
   const { speak, stop: stopSpeech } = useTextToSpeech();
   const onNarrationRef = useRef(onNarration);
   onNarrationRef.current = onNarration;
 
   const pollOnce = useCallback(async () => {
-    if (!activeRef.current || !sessionId) return;
+    // No overlapping polls: a slow TTS chain must not interleave with the
+    // next tick's batch (shared FIFO already orders within a batch).
+    if (!activeRef.current || !sessionId || pollingRef.current) return;
+    pollingRef.current = true;
     try {
-      const data = await apiService.monitorEvents(sessionId, sinceRef.current);
+      const data = await apiService.monitorEvents(sessionId);
       sinceRef.current = data.cursor ?? sinceRef.current;
       if (!data.active) {
         // Backend/browser says monitoring ended (idle sweep, session close,
@@ -46,18 +51,22 @@ export function useScreenMonitor(sessionId: string | null,
         setActive(false);
         return;
       }
+      // Shared FIFO speaks head-to-tail: no per-event cancel, no clipping.
+      // User input still outranks the queue - sending a message stops speech.
       for (const event of data.narrations ?? []) {
+        if (cancelledRef.current || !activeRef.current) break;
         onNarrationRef.current?.(event);
         // Narrations interrupt nothing: the user is not speaking - this is
         // the assistant's turn. User input always outranks it because sending
         // a message stops speech (see ChatInterface).
-        stopSpeech();
-        speak(event.text);
+        await speak(event.text);
       }
     } catch {
       // A failed poll must not kill monitoring; the next tick retries.
+    } finally {
+      pollingRef.current = false;
     }
-  }, [sessionId, speak, stopSpeech]);
+  }, [sessionId, speak]);
 
   useEffect(() => {
     if (!active || !sessionId) return;
@@ -121,7 +130,7 @@ export function useScreenMonitor(sessionId: string | null,
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
-    apiService.monitorEvents(sessionId, 0)
+    apiService.monitorEvents(sessionId)
       .then((data) => {
         if (cancelled) return;
         sinceRef.current = data.cursor ?? sinceRef.current;
@@ -149,8 +158,15 @@ export function useScreenMonitor(sessionId: string | null,
     return () => window.removeEventListener('keydown', handler);
   }, [sessionId, toggle]);
 
-  // Unmount (e.g., navigating away from the chat): stop speaking.
-  useEffect(() => () => stopSpeech(), [stopSpeech]);
+  // Unmount (e.g., navigating away from the chat): stop speaking and
+  // retire the in-flight poll loop so no narration lands after unmount.
+  useEffect(() => {
+    cancelledRef.current = false;
+    return () => {
+      cancelledRef.current = true;
+      stopSpeech();
+    };
+  }, [stopSpeech]);
 
   return { active, starting, error, start, stop, toggle };
 }

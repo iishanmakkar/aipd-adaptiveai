@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { Message } from '../types/chat';
 import { renderMarkdown } from '../utils/markdown';
+import { SignAvatar } from './SignAvatar';
 
 interface MessageBubbleProps {
   message: Message;
@@ -108,6 +109,13 @@ export function MessageBubble({ message, onReplay }: MessageBubbleProps) {
           <span className="action-icon" aria-hidden="true">💡</span>
           <span>Suggested: {message.suggested_action.replace('_', ' ')}</span>
         </div>
+      )}
+
+      {!isUser && !message.is_loading && message.content && message.content.length > 0 && (
+        <details className="alt-formats">
+          <summary>Alternative formats (Braille / Sign)</summary>
+          <SignAvatar text={message.content.split(/\s+/).find((w) => w.length > 3) ?? 'AI'} />
+        </details>
       )}
     </div>
   );

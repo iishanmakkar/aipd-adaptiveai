@@ -24,6 +24,3 @@ export function useBehaviorTracking(sessionId: string | null) {
 
   return { recordReplay, recordSkip, recordListen };
 }
-
-// Extend apiService with recordBehaviorEvent
-// This will be added to api.ts

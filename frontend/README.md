@@ -141,9 +141,9 @@ docker run -d --gpus all -p 8000:8000 \
 ```
 Then set `VITE_NIM_VLM_URL=http://localhost:8000/v1/chat/completions`
 
-Or use NVIDIA hosted API (requires NGC API key):
-- `VITE_NIM_VLM_URL=https://integrate.api.nvidia.com/v1/chat/completions`
-- `VITE_NIM_API_KEY=your-ngc-key`
+Or use NVIDIA hosted API: put the key in `backend/.env` as `NIM_API_KEY`
+(the backend proxy injects it server-side). Never use `VITE_NIM_API_KEY` —
+any `VITE_*` var bakes into the public JS bundle.
 
 ## Scripts
 

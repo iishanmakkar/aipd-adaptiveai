@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { enqueueSpeech, cancelSpeech, onSpeechQueueChange, speechQueueDepth } from '../utils/speechQueue';
 
 interface UseTextToSpeechReturn {
   speak: (text: string) => Promise<void>;
@@ -9,10 +10,15 @@ interface UseTextToSpeechReturn {
 
 export function useTextToSpeech(): UseTextToSpeechReturn {
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const voicesLoadedRef = useRef(false);
 
   const supported = 'speechSynthesis' in window;
+
+  useEffect(() => {
+    if (!supported) return;
+    setIsSpeaking(speechQueueDepth() > 0);
+    return onSpeechQueueChange(() => setIsSpeaking(speechQueueDepth() > 0));
+  }, [supported]);
 
   useEffect(() => {
     if (!supported) return;
@@ -38,72 +44,34 @@ export function useTextToSpeech(): UseTextToSpeechReturn {
 
   const getPreferredVoice = useCallback((): SpeechSynthesisVoice | null => {
     if (!supported) return null;
-    
+
     const voices = speechSynthesis.getVoices();
     if (voices.length === 0) return null;
 
     // Prefer natural, English voices
-    const preferred = voices.find((v) => 
+    const preferred = voices.find((v) =>
       v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Premium') || v.name.includes('Google'))
     );
-    
+
     return preferred || voices.find((v) => v.lang.startsWith('en')) || voices[0] || null;
   }, [supported]);
 
+  // Voice selection feeds the shared queue, which owns utterance construction.
   const speak = useCallback(async (text: string): Promise<void> => {
     if (!supported) return;
-    
-    // Stop any current speech
-    speechSynthesis.cancel();
 
-    return new Promise((resolve) => {
-      const utterance = new SpeechSynthesisUtterance(text);
-      utteranceRef.current = utterance;
+    // Apply user preferences from CSS custom properties
+    const rate = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--voice-rate') || '1');
+    const pitch = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--voice-pitch') || '1');
+    const volume = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--voice-volume') || '1');
 
-      const voice = getPreferredVoice();
-      if (voice) {
-        utterance.voice = voice;
-      }
-
-      // Apply user preferences from CSS custom properties
-      const rate = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--voice-rate') || '1');
-      const pitch = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--voice-pitch') || '1');
-      const volume = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--voice-volume') || '1');
-
-      utterance.rate = rate;
-      utterance.pitch = pitch;
-      utterance.volume = volume;
-
-      utterance.onstart = () => {
-        setIsSpeaking(true);
-      };
-
-      utterance.onend = () => {
-        setIsSpeaking(false);
-        utteranceRef.current = null;
-        resolve();
-      };
-
-      utterance.onerror = (event) => {
-        if (event.error !== 'interrupted') {
-          console.error('TTS error:', event.error);
-        }
-        setIsSpeaking(false);
-        utteranceRef.current = null;
-        resolve();
-      };
-
-      speechSynthesis.speak(utterance);
-    });
+    await enqueueSpeech(text, { rate, pitch, volume, voice: getPreferredVoice() });
   }, [supported, getPreferredVoice]);
 
   const stop = useCallback(() => {
-    if (supported) {
-      speechSynthesis.cancel();
-      setIsSpeaking(false);
-      utteranceRef.current = null;
-    }
-  }, [supported]);
+    cancelSpeech();
+    setIsSpeaking(false);
+  }, []);
 
   return {
     speak,

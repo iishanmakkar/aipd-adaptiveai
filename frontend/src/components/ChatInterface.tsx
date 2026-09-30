@@ -16,6 +16,8 @@ import { useVisionModel } from '../hooks/useVisionModel';
 import { useApiQuery } from '../hooks/useApiQuery';
 import { useBehaviorTracking } from '../hooks/useBehaviorTracking';
 import { useScreenMonitor } from '../hooks/useScreenMonitor';
+import { useInTabRAG } from '../hooks/useInTabRAG';
+import { useVoiceCommands } from '../hooks/useVoiceCommands';
 import { apiService } from '../services/api';
 import type { Verbosity, NarrationEvent } from '../types/api';
 import type { Message } from '../types/chat';
@@ -38,6 +40,8 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
   // State
   const [inputValue, setInputValue] = useState('');
   const [screenContext, setScreenContext] = useState(initialScreenContext);
+  // Phase 2.1: autonomous mode — goal → orchestrated plan → specialist.
+  const [autonomous, setAutonomous] = useState(false);
   const [status, setStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
   const [showAccessibility, setShowAccessibility] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -132,6 +136,29 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
   }, [addMessage]);
   const { active: monitorActive, starting: monitorStarting, toggle: toggleMonitor } =
     useScreenMonitor(sessionId, handleNarration);
+  const { askFresh, stats: inTabStats } = useInTabRAG();
+
+  // Phase 3.2: voice commands ("go back", "read that again", "bigger text",
+  // "high contrast") + Cmd+K palette. Inlined new-session body to avoid
+  // use-before-declare (handleNewSessionAndRefresh is defined below).
+  const { paletteOpen, setPaletteOpen, handleTranscript } = useVoiceCommands({
+    'go-back': () => window.history.back(),
+    replay: () => {
+      const last = [...history].reverse().find((m) => m.role === 'assistant' && m.content);
+      if (last) void speak(last.content);
+    },
+    'bigger-text': () => setFontSize('large'),
+    'toggle-contrast': () => toggleContrast(),
+    'monitor-start': () => { if (!monitorActive) void toggleMonitor(); },
+    'monitor-stop': () => { if (monitorActive) void toggleMonitor(); },
+    'new-session': () => {
+      createNewSession();
+      setScreenContext('');
+      setInputValue('');
+      stopSpeaking();
+      setShowHistory(false);
+    },
+  });
 
   // Sync status with recording/speaking state
   useEffect(() => {
@@ -187,14 +214,17 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
           timestamp: new Date(), is_loading: false,
         };
         addMessage(note);
-      } catch (err) {
-        console.error('Page load failed:', err);
+      } catch {
+        // One turn, one answer: a failed page load ends the turn here instead
+        // of falling through to a generic backend answer as a second bubble.
         const fail: Message = {
           id: uuidv4(), role: 'assistant',
           content: 'I could not open that page (it may block automated browsing or need login). I can still help if you describe it or upload a screenshot.',
           timestamp: new Date(), is_loading: false,
         };
         addMessage(fail);
+        await speak(fail.content);
+        return;
       }
     }
 
@@ -229,6 +259,14 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
         input_text: messageText,
         input_source: text ? 'voice' : 'text',
         screen_context: effectiveScreenContext,
+        autonomous,
+        // Phase 2.2: the fused context the backend folds into screen_ctx.
+        // Behavior travels separately via POST /api/behavior-event.
+        unified_context: {
+          screen_text: effectiveScreenContext,
+          dom_snapshot: '',
+          disability_profile: prefs.disabilityProfile,
+        },
       });
 
       // Update assistant message with response
@@ -255,6 +293,8 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
   }, [
     inputValue,
     screenContext,
+    autonomous,
+    prefs.disabilityProfile,
     sessionId,
     sessionReady,
     addMessage,
@@ -263,6 +303,24 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
     speak,
     stopSpeaking,
   ]);
+
+  // Phase 1.3: in-tab RAG — index page DOM + history locally, answer from it
+  // when possible, otherwise the normal backend path runs unchanged.
+  // askFresh builds + searches in one synchronous pass, so even the first
+  // click queries the just-built index (no stale-state fallthrough).
+  const handleAskThisPage = useCallback(() => {
+    const q = inputValue.trim() || 'Summarize this page';
+    const freshHits = askFresh(history, q);
+    if (freshHits) {
+      addMessage({
+        id: uuidv4(), role: 'assistant',
+        content: `From this page:\n\n${freshHits.map((h) => `• (${h.source}) ${h.text.slice(0, 400)}`).join('\n\n')}`,
+        timestamp: new Date(), agent_used: 'intab_rag',
+      });
+    } else {
+      void handleSubmit(q);
+    }
+  }, [askFresh, history, inputValue, addMessage, handleSubmit]);
 
   // Handle voice recording completion - real error TTS (accessibility critical)
   const handleRecordingComplete = useCallback(async () => {
@@ -276,6 +334,8 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
 
     try {
       const transcript = await transcribe(blob);
+      // Phase 3.2: voice commands short-circuit chat ("high contrast", ...).
+      if (handleTranscript(transcript)) return;
       setInputValue(transcript);
       // Auto-submit after transcription
       setTimeout(() => handleSubmit(transcript), 100);
@@ -321,6 +381,8 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
     setShowHistory(false);
   }, [createNewSession, stopSpeaking]);
 
+  // Phase 3.2: voice commands + Cmd+K palette (placed after all handlers).
+  // (migrated earlier to avoid use-before-declare; see block above)
   // Replay path: the user didn't get the answer - re-speak it AND log the
   // signal so the policy engine can simplify subsequent answers.
   const handleReplayAnswer = useCallback((content: string) => {
@@ -424,6 +486,19 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
         onRefresh={loadSessions}
       />
 
+      {paletteOpen && (
+        <div role="dialog" aria-label="Voice command palette" className="command-palette">
+          <p>Voice commands (Cmd+K) — say or pick one:</p>
+          <ul>
+            <li><button type="button" onClick={() => { window.history.back(); setPaletteOpen(false); }}>Go back</button></li>
+            <li><button type="button" onClick={() => { handleTranscript('read that again'); setPaletteOpen(false); }}>Read that again</button></li>
+            <li><button type="button" onClick={() => { handleTranscript('bigger text'); setPaletteOpen(false); }}>Bigger text</button></li>
+            <li><button type="button" onClick={() => { handleTranscript('high contrast'); setPaletteOpen(false); }}>High contrast</button></li>
+          </ul>
+          <button type="button" onClick={() => setPaletteOpen(false)}>Close (Esc)</button>
+        </div>
+      )}
+
       <main className="chat-main" role="main">
         <div 
           className="messages-container" 
@@ -464,6 +539,24 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
             dot is the visual indicator for sighted observers; Alt+W is the
             keyboard kill switch registered in useScreenMonitor. */}
         <div className="monitor-bar" role="group" aria-label="Screen monitoring">
+          <button
+            type="button"
+            className="monitor-toggle"
+            onClick={handleAskThisPage}
+            disabled={!sessionReady || isQuerying}
+            title={inTabStats.chunks > 0 ? `Local index: ${inTabStats.chunks} chunks` : 'Index this page locally and answer offline-first'}
+          >
+            Ask this page
+          </button>
+          <label className="autonomous-toggle" title="Route via the orchestrator: goal → plan → specialist agent">
+            <input
+              type="checkbox"
+              checked={autonomous}
+              onChange={(e) => setAutonomous(e.target.checked)}
+              aria-label="Autonomous mode: plan and route via orchestrator"
+            />
+            Autonomous
+          </label>
           <button
             type="button"
             className={`monitor-toggle${monitorActive ? ' active' : ''}`}

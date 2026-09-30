@@ -22,7 +22,10 @@ class ApiService {
 
     this.client.interceptors.request.use(
       (config: InternalAxiosRequestConfig) => {
-        console.log('[API] Request:', config.method?.toUpperCase(), config.url);
+        if (import.meta.env.DEV) {
+          // eslint-disable-next-line no-console
+          console.log('[API] Request:', config.method?.toUpperCase(), config.url);
+        }
         return config;
       },
       (error) => Promise.reject(error)
@@ -30,7 +33,10 @@ class ApiService {
 
     this.client.interceptors.response.use(
       (response) => {
-        console.log('[API] Response:', response.status, response.config.url);
+        if (import.meta.env.DEV) {
+          // eslint-disable-next-line no-console
+          console.log('[API] Response:', response.status, response.config.url);
+        }
         return response;
       },
       (error) => {
@@ -92,13 +98,40 @@ class ApiService {
   }
 
   async updatePreferences(prefs: PreferenceUpdate): Promise<PreferenceResponse> {
-    const response = await this.client.put<PreferenceResponse>('/api/preferences', prefs);
-    return response.data;
+    try {
+      const response = await this.client.put<PreferenceResponse>('/api/preferences', prefs);
+      return response.data;
+    } catch (err) {
+      // Offline (no response at all): queue the mutation for the
+      // online-drain in main.tsx. A 4xx is a bad payload, not an outage —
+      // queueing it would poison the drain, so rethrow.
+      if (axios.isAxiosError(err) && !err.response) {
+        const { enqueueMutation } = await import('../utils/offlineQueue');
+        await enqueueMutation({ url: '/api/preferences', method: 'PUT', body: prefs });
+      }
+      throw err;
+    }
   }
 
   async recordBehaviorEvent(event: BehaviorEvent): Promise<{ status: string }> {
-    const response = await this.client.post<{ status: string }>('/api/behavior-event', event);
-    return response.data;
+    try {
+      const response = await this.client.post<{ status: string }>('/api/behavior-event', event);
+      return response.data;
+    } catch (err) {
+      // Behavior signals are advisory: a dead network queues them for the
+      // online-drain; a 4xx means the event itself is invalid, so drop it.
+      // Either way chat continues — recording must never break answers.
+      if (axios.isAxiosError(err) && !err.response) {
+        try {
+          const { enqueueMutation } = await import('../utils/offlineQueue');
+          await enqueueMutation({ url: '/api/behavior-event', method: 'POST', body: event });
+        } catch {
+          /* IndexedDB unavailable - signal is lost, chat continues */
+        }
+        return { status: 'queued' };
+      }
+      return { status: 'dropped' };
+    }
   }
 
   // ---- Round 9: real-time page monitoring (explicit consent in, one-action out).
@@ -117,18 +150,22 @@ class ApiService {
     return response.data;
   }
 
-  async monitorEvents(sessionId: string, since: number): Promise<MonitorEventsResponse> {
+  async monitorEvents(sessionId: string): Promise<MonitorEventsResponse> {
+    // No `since`: delivery is owned server-side (cursor in SharedDict); the
+    // client cannot rewind it.
     const response = await this.client.get<MonitorEventsResponse>(
-      `/api/monitor/events?session_id=${encodeURIComponent(sessionId)}&since=${since}`, {
+      `/api/monitor/events?session_id=${encodeURIComponent(sessionId)}`, {
         timeout: 45000,
       });
     return response.data;
   }
 
   async describeImage(imageBase64: string, prompt?: string): Promise<string> {
+    // Vision always goes through the backend proxy, which injects NIM_API_KEY
+    // server-side. Never send a key from here: any VITE_* var bakes into the
+    // public JS bundle.
     const vlmUrl = import.meta.env.VITE_NIM_VLM_URL || 'http://localhost:8000/v1/chat/completions';
     const model = import.meta.env.VITE_NIM_VLM_MODEL || 'meta/llama-3.2-11b-vision-instruct';
-    const apiKey = import.meta.env.VITE_NIM_API_KEY;
 
     const request: VLMRequest = {
       model,
@@ -156,9 +193,6 @@ class ApiService {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`;
-    }
 
     // Backend VLM proxy allows 60s; stay above it so the caller sees the
     // upstream result (or its error) rather than a local abort.

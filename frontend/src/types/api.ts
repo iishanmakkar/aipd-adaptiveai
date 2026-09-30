@@ -3,6 +3,21 @@ export interface QueryRequest {
   input_text: string;
   input_source: 'voice' | 'text';
   screen_context: string;
+  unified_context?: UnifiedContext;
+  /** Phase 2.1: route via /agent/orchestrate instead of the single target agent. */
+  autonomous?: boolean;
+}
+
+/** Phase 2.2 — fused multimodal context (replaces bare screen_ctx string).
+ * Behavior travels separately via POST /api/behavior-event (the dedicated
+ * intake the policy engine reads); it is deliberately not a field here. */
+export interface UnifiedContext {
+  screen_text: string;
+  dom_snapshot: string;
+  screenshot_b64?: string;
+  vlm_description?: string;
+  user_intent?: string;
+  disability_profile: DisabilityProfile;
 }
 
 export interface QueryResponse {
