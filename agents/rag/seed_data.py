@@ -153,6 +153,35 @@ SEED_DOCUMENTS = [
         "text": "Navigating a Website: use the main landmark (many screen readers jump there with a shortcut) to skip repeated headers. Headings navigation (H key in most screen readers) moves between page sections. The search box, contact links and login controls are usually in the header or footer. To go back, use Alt+Left arrow; to return home, look for the site logo link at the top left.",
         "metadata": {"category": "web_navigation", "topic": "site_navigation", "tags": ["navigate", "landmarks", "headings", "browser"]}
     },
+
+    # Productivity planning (grounding for scheduler_agent)
+    {
+        "id": "sched_planning_day",
+        "text": "Scheduling Your Day: list tasks with a time for each, put appointments on a calendar with title, date, time and reminder. Schedule deep work first, buffer 10 minutes between appointments, and set a remind alarm the evening before and 30 minutes prior. Review the calendar each morning and each night.",
+        "metadata": {"category": "productivity_guides", "topic": "planning_day", "tags": ["schedule", "calendar", "appointment", "plan", "reminder"]}
+    },
+    {
+        "id": "sched_reminders_appointments",
+        "text": "Reminders and Appointments: create one reminder per appointment with what, where and when. Remind yourself twice: once a day before and once an hour before. For a doctor appointment, keep the clinic address, token number and reports list with the calendar entry so nothing is missed.",
+        "metadata": {"category": "productivity_guides", "topic": "reminders", "tags": ["remind", "appointment", "calendar", "schedule"]}
+    },
+
+    # Translation help (grounding for translator_agent)
+    {
+        "id": "trans_how_translation_works",
+        "text": "Translating Text: to translate, name the source text and the target language (for example: translate this notice in Hindi, in Spanish, in Tamil). Keep names, dates, addresses and numbers exactly as they are; translate only the surrounding words. Read the translation back to check names and numbers survived intact.",
+        "metadata": {"category": "language_guides", "topic": "translation", "tags": ["translate", "translation", "hindi", "spanish", "tamil"]}
+    },
+    {
+        "id": "trans_simple_multilingual",
+        "text": "Simple Multilingual Help: when a page or notice is not in your language, ask for a translation into Hindi, Spanish, Tamil or your preferred language. A good translation keeps the meaning sentence by sentence, keeps form labels exact, and says which words were left untranslated and why.",
+        "metadata": {"category": "language_guides", "topic": "multilingual", "tags": ["translate", "translation", "language", "hindi", "spanish"]}
+    },
+    {
+        "id": "trans_telugu_help",
+        "text": "Translating into Telugu: to translate a notice or message in Telugu, name the text and say 'in Telugu'. Telugu reads left to right; keep names, dates, addresses and numbers exactly as they are and translate only the surrounding words. Read the Telugu translation back to check names and numbers survived intact.",
+        "metadata": {"category": "language_guides", "topic": "telugu_translation", "tags": ["translate", "translation", "telugu", "language"]}
+    },
 ]
 
 

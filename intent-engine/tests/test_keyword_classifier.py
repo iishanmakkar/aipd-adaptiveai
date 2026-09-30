@@ -10,9 +10,13 @@ from app.classifier import KEYWORD_RULES, keyword_classify
 from cases import BROWSER_CASES, CONTEXT_TEST_CASES, TEST_CASES
 
 VALID_INTENTS = {"form_help", "document_help", "web_navigation_help", "education_help",
-                 "general_query", "browser_inspect", "browser_act"}
+                 "general_query", "browser_inspect", "browser_act",
+                 "scheduler_help", "translation_help", "ui_help",
+                 "content_explain", "profile_update", "navigation_help"}
 VALID_AGENTS = {"form_agent", "document_agent", "web_agent", "education_agent",
-                "general_agent", "browser_agent"}
+                "general_agent", "browser_agent",
+                "scheduler_agent", "translator_agent", "ui_adjuster_agent",
+                "content_explainer_agent", "profile_updater_agent", "navigation_agent"}
 AGENT_FOR_INTENT = {
     "form_help": "form_agent",
     "document_help": "document_agent",
@@ -21,6 +25,12 @@ AGENT_FOR_INTENT = {
     "general_query": "general_agent",
     "browser_inspect": "browser_agent",
     "browser_act": "browser_agent",
+    "scheduler_help": "scheduler_agent",
+    "translation_help": "translator_agent",
+    "ui_help": "ui_adjuster_agent",
+    "content_explain": "content_explainer_agent",
+    "profile_update": "profile_updater_agent",
+    "navigation_help": "navigation_agent",
 }
 
 
@@ -85,13 +95,57 @@ def test_confidence_tracks_match_strength():
     assert none == 0.3
 
 
-def test_rules_cover_four_specific_intents():
+def test_rules_cover_ten_specific_intents():
     """general_query is the default and is intentionally not a rule; the two
     browser intents live in the live-page pre-check, not in KEYWORD_RULES."""
     intents = {rule[1] for rule in KEYWORD_RULES}
-    assert intents == {"form_help", "document_help", "education_help", "web_navigation_help"}
+    assert intents == {"form_help", "document_help", "education_help", "web_navigation_help",
+                       "scheduler_help", "translation_help", "ui_help",
+                       "content_explain", "profile_update", "navigation_help"}
     for keywords, _intent, _agent, _hint in KEYWORD_RULES:
         assert keywords, "a rule with no keywords can never match"
+
+
+@pytest.mark.parametrize("text,expected_intent,expected_agent", [
+    ("schedule my doctor appointment for tomorrow", "scheduler_help", "scheduler_agent"),
+    ("translate this notice in Hindi please", "translation_help", "translator_agent"),
+    ("translate this message in Telugu", "translation_help", "translator_agent"),
+    ("make the font bigger", "ui_help", "ui_adjuster_agent"),
+    ("explain this page simply", "content_explain", "content_explainer_agent"),
+    ("update my profile to blind", "profile_update", "profile_updater_agent"),
+    ("go to checkout now", "navigation_help", "navigation_agent"),
+])
+def test_new_agents_are_reachable_by_keyword(text, expected_intent, expected_agent):
+    """6 of 11 agents were unreachable by default: the fallback only knew the
+    original four intents. Each new specialist must route on keywords alone."""
+    intent, agent, _entity, _confidence, _reasoning = keyword_classify(text)
+    assert (intent, agent) == (expected_intent, expected_agent)
+
+
+@pytest.mark.parametrize("text,expected_intent,expected_agent", [
+    ("schedule my doctor appointment for tomorrow", "scheduler_help", "scheduler_agent"),
+    ("translate this notice in Hindi please", "translation_help", "translator_agent"),
+    ("translate this message in Telugu", "translation_help", "translator_agent"),
+    ("make the font bigger", "ui_help", "ui_adjuster_agent"),
+    ("explain this page simply", "content_explain", "content_explainer_agent"),
+    ("update my profile to blind", "profile_update", "profile_updater_agent"),
+    ("go to checkout now", "navigation_help", "navigation_agent"),
+])
+def test_new_agent_outputs_are_schema_valid(text, expected_intent, expected_agent):
+    """New intents must satisfy the widened ClassifyResponse patterns."""
+    from app.schemas import ClassifyResponse
+    got_intent, got_agent, entity, confidence, reasoning = keyword_classify(text)
+    assert (got_intent, got_agent) == (expected_intent, expected_agent)
+    ClassifyResponse(intent=got_intent, target_agent=got_agent,
+                     extracted_entity=entity, reasoning=reasoning,
+                     confidence=confidence)
+
+
+def test_translation_tiebreaks_beat_profile_and_scheduler():
+    """'translate ... blind ...' and 'translate my schedule' tie at one hit
+    each; the translator rule sits first so the translation wins the tie."""
+    assert keyword_classify("translate this for a blind user")[:2] == ("translation_help", "translator_agent")
+    assert keyword_classify("translate my schedule to hindi")[:2] == ("translation_help", "translator_agent")
 
 
 def test_entity_extraction_prefers_specific_fields():

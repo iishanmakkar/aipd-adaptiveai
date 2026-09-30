@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,8 +28,14 @@ if not logger.handlers:
 logger.setLevel(logging.INFO)
 logger.propagate = False
 
-# Rate limiting store
-_rate_limit_store: dict = {}
+# Rate limiting store (ordered: recency drives the anti-spoof eviction below)
+_rate_limit_store: "OrderedDict[str, list[float]]" = OrderedDict()
+
+# The key falls back to X-Forwarded-For, which any client can spoof: without a
+# cap, random XFF values grow this dict forever (memory exhaustion). Evict the
+# oldest-idle bucket past the cap; recency order holds because every hit moves
+# its key to the end.
+_RATE_LIMIT_MAX_KEYS = 5000
 
 
 def check_rate_limit(client_ip: str, max_requests: int = 60, window_sec: int = 60) -> bool:
@@ -36,16 +43,22 @@ def check_rate_limit(client_ip: str, max_requests: int = 60, window_sec: int = 6
     now = time.time()
     if client_ip not in _rate_limit_store:
         _rate_limit_store[client_ip] = []
-    
+
     _rate_limit_store[client_ip] = [
         ts for ts in _rate_limit_store[client_ip]
         if now - ts < window_sec
     ]
-    
+    if not _rate_limit_store[client_ip]:
+        _rate_limit_store.pop(client_ip, None)
+        _rate_limit_store[client_ip] = []
+
     if len(_rate_limit_store[client_ip]) >= max_requests:
         return False
-    
+
     _rate_limit_store[client_ip].append(now)
+    _rate_limit_store.move_to_end(client_ip)
+    while len(_rate_limit_store) > _RATE_LIMIT_MAX_KEYS:
+        _rate_limit_store.popitem(last=False)
     return True
 
 
@@ -64,20 +77,33 @@ app = FastAPI(
     docs_url="/docs" if settings.debug else None,
 )
 
-# Security: TrustedHost
-if not settings.debug:
-    app.add_middleware(
-        TrustedHostMiddleware,
-        allowed_hosts=["your-domain.com", "api.your-domain.com"]
-    )
+def _parse_allowed_hosts(raw: str) -> list[str]:
+    """Split ALLOWED_HOSTS on commas, dropping blanks (env-driven TrustedHost)."""
+    return [h.strip() for h in raw.split(",") if h.strip()]
 
-# CORS - allow all origins in integrated mode for inter-service communication
-allow_origins = ["*"] if settings.debug else ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"]
+
+# Security: TrustedHost middleware - enforced from ALLOWED_HOSTS in production
+# (mirrors backend). An env you forget is a loud warning, not a silent 400.
+if not settings.debug:
+    _allowed = _parse_allowed_hosts(settings.allowed_hosts)
+    if _allowed:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed)
+    else:
+        logger.warning("ALLOWED_HOSTS is empty with DEBUG=False - TrustedHost skipped; set ALLOWED_HOSTS in production")
+
+# CORS - explicit origins in every mode (service-to-service needs no cookies,
+# and browsers reject wildcard + credentials). The list covers local dev and
+# the in-compose frontend hostname; the service is internal-only in prod.
+allow_origins = [
+    "http://localhost:3000", "http://localhost:5173",
+    "http://127.0.0.1:3000", "http://127.0.0.1:5173",
+    "http://frontend:5173",
+]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     max_age=3600,
@@ -128,7 +154,11 @@ async def classify_intent(http_request: Request, request: ClassifyRequest):
     # Rate limiting
     if not check_rate_limit(client_ip, max_requests=60, window_sec=60):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
-    
+
+    # Blank input would burn an LLM call (or the keyword fallback) on nothing.
+    if not request.input_text.strip():
+        raise HTTPException(status_code=400, detail="Input text must not be blank")
+
     # Validate input text length
     if len(request.input_text) > 2000:
         raise HTTPException(status_code=400, detail="Input text too long (max 2000 chars)")

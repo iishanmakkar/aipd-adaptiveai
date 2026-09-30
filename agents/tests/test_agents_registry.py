@@ -31,6 +31,8 @@ def registry(store, seeded):
 def test_registry_exposes_all_five_agents(registry):
     assert set(registry.get_all_names()) == {
         "form_agent", "document_agent", "web_agent", "education_agent", "general_agent",
+        "ui_adjuster_agent", "content_explainer_agent", "profile_updater_agent", "navigation_agent",
+        "scheduler_agent", "translator_agent",
     }
 
 
@@ -88,6 +90,8 @@ async def test_suggested_actions_are_intent_specific(registry, seeded):
 
 @pytest.mark.parametrize("name", [
     "form_agent", "document_agent", "web_agent", "education_agent", "general_agent",
+    "ui_adjuster_agent", "content_explainer_agent", "profile_updater_agent", "navigation_agent",
+    "scheduler_agent", "translator_agent",
 ])
 async def test_every_agent_answers_end_to_end(registry, seeded, name):
     result = await registry.get(name).handle("what is the aadhaar number field", "Aadhaar", "")

@@ -38,7 +38,8 @@ def test_health(client):
 
 def test_agents_listing(client):
     data = client.get("/agents").json()["agents"]
-    assert len(data) == 5
+    assert len(data) == 11
+    assert "orchestrator" not in data  # orchestrator is a route, not a registry agent
 
 
 def test_respond_returns_the_shared_contract(client):
@@ -56,9 +57,9 @@ def test_respond_is_rag_grounded(client):
 
 
 def test_knowledge_base_is_seeded_on_startup(client):
-    """29 docs means seeding happened exactly once (the idempotency guard)."""
+    """34 docs means seeding happened exactly once (the idempotency guard)."""
     from rag.vector_store import VectorStore
-    assert VectorStore().count() == 29
+    assert VectorStore().count() == 34
 
 
 @pytest.mark.parametrize("agent", [
@@ -83,6 +84,14 @@ def test_missing_field_is_422(client):
     assert client.post("/agent/respond", json=body).status_code == 422
 
 
+def test_orchestrate_rejects_empty_goal(client):
+    """An empty goal would burn an LLM planning call on nothing."""
+    r = client.post("/agent/orchestrate",
+                    json={"session_id": "s1", "goal": "", "entity": "",
+                          "extra_context": ""})
+    assert r.status_code == 422
+
+
 def test_llm_failure_surfaces_as_500_not_a_fake_answer(client, monkeypatch):
     import main as agents_main
 
@@ -98,3 +107,33 @@ def test_llm_failure_surfaces_as_500_not_a_fake_answer(client, monkeypatch):
     r = client.post("/agent/respond", json=_body())
     assert r.status_code == 500
     assert "Agent error" in r.json()["detail"]
+
+
+def test_malformed_json_is_422_not_500(client):
+    """Manual body parsing (for X-Request-ID) must still answer 422 for junk."""
+    r = client.post("/agent/respond", content=b"not json",
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 422, r.text
+    r = client.post("/agent/orchestrate", content=b"not json",
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 422, r.text
+
+
+def test_blank_query_and_goal_are_422(client):
+    """Whitespace-only input sails through min_length=1 and would burn
+    retrieval + an LLM call on nothing."""
+    assert client.post("/agent/respond", json=_body(query="   ")).status_code == 422
+    assert client.post("/agent/respond", json=_body(query="")).status_code == 422
+    r = client.post("/agent/orchestrate",
+                    json={"session_id": "s1", "goal": "   ", "entity": "",
+                          "extra_context": ""})
+    assert r.status_code == 422, r.text
+
+
+def test_cors_allows_origins_without_credentials(client):
+    """Service-to-service needs no cookies; browsers reject wildcard +
+    credentials, so origins are explicit and credentials are off."""
+    r = client.post("/agent/respond", json=_body(),
+                    headers={"Origin": "http://localhost:3000"})
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    assert "access-control-allow-credentials" not in r.headers

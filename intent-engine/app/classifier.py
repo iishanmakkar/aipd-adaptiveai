@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from collections import OrderedDict
 from typing import Dict, List, Tuple
@@ -55,6 +56,18 @@ def _browser_route(text_lower: str, context_lower: str):
     return None
 
 
+def _kw_in(haystack: str, keyword: str) -> bool:
+    """Single words match on word boundaries; phrases match as substrings.
+
+    Bare `in` let "form" match "information" and "read" match "already",
+    hijacking unrelated questions into the wrong agent. Phrases keep substring
+    matching (their internal spacing already anchors them).
+    """
+    if " " in keyword:
+        return keyword in haystack
+    return re.search(r"\b" + re.escape(keyword) + r"\b", haystack) is not None
+
+
 # Keyword-based fallback classifier
 KEYWORD_RULES = [
     # (keywords, intent, target_agent, entity_hint)
@@ -65,10 +78,27 @@ KEYWORD_RULES = [
     # hijacked education questions into document_help.
     (["document", "pdf", "read", "summarize", "summary", "extract", "contract", "agreement", "terms and conditions", "terms of service", "policy", "document content"],
      "document_help", "document_agent", "document content"),
-    (["explain", "teach", "learn", "study", "concept", "topic", "course", "lesson", "tutorial", "what is", "define", "meaning"],
+    (["explain", "teach", "learn", "study", "concept", "topic", "course", "lesson", "tutorial", "photosynthesis", "what is", "define", "meaning"],
      "education_help", "education_agent", "educational concept"),
     (["navigate", "website", "page", "click", "button", "link", "menu", "navigation", "find", "where is", "how to get to", "go to"],
      "web_navigation_help", "web_agent", "web element"),
+    # New specialists sit after the incumbents so best-score ties keep the old
+    # winner (existing routing is unchanged); each rule outscores the
+    # incumbents only on its own phrasing. Translator precedes profile and
+    # scheduler: "translate ... blind ..." and "translate my schedule" tie at
+    # one hit each, and the translation request must win the tie.
+    (["translate", "translation", "in hindi", "in tamil", "in telugu", "in spanish"],
+     "translation_help", "translator_agent", "text to translate"),
+    (["profile", "verbosity", "voice speed", "blind", "low vision", "update my profile"],
+     "profile_update", "profile_updater_agent", "user profile"),
+    (["go to", "navigate", "checkout", "contact form", "go to checkout", "navigate to checkout"],
+     "navigation_help", "navigation_agent", "navigation target"),
+    (["schedule", "scheduled", "remind", "appointment", "calendar", "plan my day"],
+     "scheduler_help", "scheduler_agent", "scheduled task"),
+    (["contrast", "font", "bigger text", "layout", "focus", "high contrast", "text size"],
+     "ui_help", "ui_adjuster_agent", "display setting"),
+    (["simplify", "simply", "what does this say", "in simple terms", "explain this", "easier to understand"],
+     "content_explain", "content_explainer_agent", "content to explain"),
 ]
 
 
@@ -99,8 +129,8 @@ def keyword_classify(text: str, screen_context: str = "") -> Tuple[str, str, str
     best_score = 0
     best_rule = None
     for keywords, intent, agent, entity_hint in KEYWORD_RULES:
-        score = sum(2 for kw in keywords if kw in text_lower)
-        score += sum(1 for kw in keywords if kw in context_lower)
+        score = sum(2 for kw in keywords if _kw_in(text_lower, kw))
+        score += sum(1 for kw in keywords if _kw_in(context_lower, kw))
         if score > best_score:
             best_score = score
             best_rule = (intent, agent, entity_hint)
@@ -158,7 +188,14 @@ Classify the user's input into ONE of these intents and pick the corresponding t
    When phrasing is ambiguous between looking and doing, prefer
    browser_inspect: reading is safe, acting needs a second explicit turn.
 
-   Hard rule with examples: the "Live page:" marker (a line like
+8. scheduler_help -> scheduler_agent: User wants to schedule, plan their day, set a reminder, or manage appointments/calendar
+9. translation_help -> translator_agent: User wants text translated into another language (Hindi, Tamil, Telugu, Spanish, ...)
+10. ui_help -> ui_adjuster_agent: User wants display changes (contrast, font size, layout, focus, high contrast)
+11. content_explain -> content_explainer_agent: User wants content simplified or explained in plain words ("explain this", "what does this say", "simplify")
+12. profile_update -> profile_updater_agent: User wants their profile updated (verbosity, voice speed, blind/low-vision settings)
+13. navigation_help -> navigation_agent: User wants to go somewhere in a site/app ("go to checkout", "navigate to ...", "contact form")
+
+    Hard rule with examples: the "Live page:" marker (a line like
    "Live page: <title> (<url>)" in the screen context) is the ONLY thing that
    makes browser_inspect/browser_act legal.
    - "Where is the submit button on this page?" + screen context "None" (or
@@ -170,7 +207,7 @@ Also extract the specific entity (field name, document section, web element, con
 
 Return ONLY valid JSON with these exact fields:
 {
-  "intent": "one_of_the_7_intents",
+  "intent": "one_of_the_13_intents",
   "target_agent": "corresponding_agent",
   "extracted_entity": "specific thing user is asking about",
   "reasoning": "brief explanation of why this classification was chosen",

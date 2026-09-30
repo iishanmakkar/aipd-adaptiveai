@@ -111,6 +111,17 @@ def test_client_ip_is_read_from_forwarded_header(client, monkeypatch):
     assert "203.0.113.7" in service._rate_limit_store
 
 
+def test_rate_limit_store_is_bounded():
+    """The key falls back to client-controlled X-Forwarded-For: spoofed values
+    must not grow the bucket dict without bound (memory exhaustion)."""
+    from app.main import check_rate_limit, _rate_limit_store, _RATE_LIMIT_MAX_KEYS
+    for i in range(_RATE_LIMIT_MAX_KEYS + 200):
+        assert check_rate_limit(f"10.9.{i // 256}.{i % 256}") is True
+    assert len(_rate_limit_store) <= _RATE_LIMIT_MAX_KEYS
+    # Recent legitimate buckets keep working after eviction.
+    assert check_rate_limit("10.9.9.9") is True
+
+
 def test_rate_limit_returns_429_after_window(client, monkeypatch):
     _stub_llm(monkeypatch, ClassifyResponse(
         intent="general_query", target_agent="general_agent",
@@ -169,3 +180,49 @@ def test_security_headers_present(client):
     assert r.headers["X-Content-Type-Options"] == "nosniff"
     assert r.headers["X-Frame-Options"] == "DENY"
     assert r.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+
+
+def test_blank_input_is_400_before_llm_burn(client, monkeypatch):
+    """Whitespace-only input sails through with no min_length and would burn
+    a 30s NIM call on nothing (seen live: 18s latency on '   ')."""
+    from app.schemas import ClassifyResponse
+    called = []
+
+    async def fake(request):
+        called.append(True)
+        return ClassifyResponse(intent="general_query", target_agent="general_agent",
+                                extracted_entity="x", reasoning="stub")
+    monkeypatch.setattr(service, "llm_classify", fake)
+    for blank in ("", "   "):
+        r = client.post("/intent/classify", json=_body(input_text=blank))
+        assert r.status_code == 400, r.text
+    assert not called, "blank input must never reach the classifier"
+
+
+def test_cors_allows_origins_without_credentials(client):
+    """Service-to-service needs no cookies; browsers reject wildcard +
+    credentials, so origins are explicit and credentials are off."""
+    r = client.post("/intent/classify", json=_body(),
+                    headers={"Origin": "http://localhost:3000"})
+    assert r.status_code == 200
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    assert "access-control-allow-credentials" not in r.headers
+
+
+def test_parse_allowed_hosts_drops_blanks():
+    from app.main import _parse_allowed_hosts
+    assert _parse_allowed_hosts("a.example.com, b.example.com") == ["a.example.com", "b.example.com"]
+    assert _parse_allowed_hosts("  , ,") == []
+    assert _parse_allowed_hosts("") == []
+
+
+def test_single_words_match_on_boundaries(client, monkeypatch):
+    """'form' in 'information' hijacked education questions into form_help;
+    the fallback must match whole words (phrases keep substring matching)."""
+    async def boom(request):
+        raise RuntimeError("NIM unreachable")
+    monkeypatch.setattr(service, "llm_classify", boom)
+    data = client.post("/intent/classify",
+                       json=_body(input_text="information about photosynthesis")).json()
+    assert data["intent"] == "education_help", data
+    assert data["target_agent"] == "education_agent", data

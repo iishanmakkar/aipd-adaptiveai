@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from config import settings
-from schemas import AgentRespondRequest, AgentRespondResponse
+from schemas import AgentRespondRequest, AgentRespondResponse, OrchestrateRequest
 from rag.vector_store import VectorStore
 from rag.seed_data import initialize_knowledge_base
 from rag.retriever import Retriever
@@ -56,8 +56,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    # Explicit origins, no credentials: service-to-service needs no cookies,
+    # and browsers reject wildcard + credentials. Covers local dev, docs, and
+    # the in-compose frontend hostname.
+    allow_origins=[
+        "http://localhost:3000", "http://localhost:5173",
+        "http://127.0.0.1:3000", "http://127.0.0.1:5173",
+        "http://frontend:5173",
+    ],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -71,7 +78,12 @@ async def health_check():
 @app.post("/agent/respond", response_model=AgentRespondResponse)
 async def agent_respond(request: Request):
     started = time.time()
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        # Manual parsing (to read X-Request-ID) skips FastAPI's automatic
+        # 422 for malformed JSON; without this it would 500.
+        return JSONResponse(status_code=422, content={"detail": "Invalid JSON body"})
     try:
         validated = AgentRespondRequest(**body)
     except ValidationError as e:
@@ -112,6 +124,47 @@ async def agent_respond(request: Request):
 @app.get("/agents")
 async def list_agents():
     return {"agents": agent_registry.get_all_names()}
+
+
+class OrchestrateResponse(AgentRespondResponse):
+    agent: str = ""
+    plan: list[str] = []  # type: ignore[assignment]
+
+
+@app.post("/agent/orchestrate")
+async def agent_orchestrate(request: Request):
+    """Natural-language goal -> plan + specialist execution (Phase 2.1)."""
+    from agents.orchestrator import llm_route, keyword_route
+
+    started = time.time()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=422, content={"detail": "Invalid JSON body"})
+    try:
+        validated = OrchestrateRequest(**body)
+    except ValidationError as e:
+        return JSONResponse(status_code=422, content={"detail": json.loads(e.json())})
+    # LLM routing with keyword fallback lives inside llm_route.
+    llm_client = agent_registry.get("general_agent").llm  # type: ignore[union-attr]
+    agent_name = llm_route(validated.goal, llm_client)
+    agent = agent_registry.get(agent_name)
+    if not agent:
+        agent_name = keyword_route(validated.goal)
+        agent = agent_registry.get(agent_name)
+    plan = [f"route -> {agent_name}", "execute specialist", "return grounded answer"]
+    try:
+        result = await agent.handle(validated.goal, validated.entity, validated.extra_context)  # type: ignore[union-attr]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
+    logger.info(json.dumps({
+        "event": "agent_orchestrate",
+        "request_id": request.headers.get("X-Request-ID"),
+        "session_id": validated.session_id,
+        "agent": agent_name,
+        "latency_ms": round((time.time() - started) * 1000, 1),
+    }))
+    return {**result, "agent": agent_name, "plan": plan}
 
 
 if __name__ == "__main__":

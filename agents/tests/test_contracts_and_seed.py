@@ -15,6 +15,8 @@ def test_valid_request_accepted():
 
 @pytest.mark.parametrize("agent", [
     "form_agent", "document_agent", "web_agent", "education_agent", "general_agent",
+    "ui_adjuster_agent", "content_explainer_agent", "profile_updater_agent", "navigation_agent",
+    "scheduler_agent", "translator_agent",
 ])
 def test_all_five_agents_are_accepted(agent):
     assert AgentRespondRequest(session_id="s", agent=agent, query="q", entity="e").agent == agent
@@ -43,7 +45,7 @@ def test_response_contract_matches_backend_client():
 
 def test_seed_documents_present_and_unique():
     from rag.seed_data import SEED_DOCUMENTS
-    assert len(SEED_DOCUMENTS) == 29
+    assert len(SEED_DOCUMENTS) == 34
     ids = [d["id"] for d in SEED_DOCUMENTS]
     assert len(set(ids)) == len(ids), "duplicate ids would shadow retrieval results"
 
@@ -57,6 +59,7 @@ def test_every_seed_document_is_searchable():
         assert meta.get("category") in {
             "form_glossary", "accessibility_faq",
             "education_concepts", "document_guides", "web_navigation",
+            "productivity_guides", "language_guides",
         }, doc["id"]
         assert meta.get("field") or meta.get("topic"), doc["id"]
 
@@ -68,7 +71,23 @@ def test_seed_covers_every_agent_domain():
     from rag.seed_data import SEED_DOCUMENTS
     cats = {d["metadata"]["category"] for d in SEED_DOCUMENTS}
     assert cats == {"form_glossary", "accessibility_faq",
-                    "education_concepts", "document_guides", "web_navigation"}
+                    "education_concepts", "document_guides", "web_navigation",
+                    "productivity_guides", "language_guides"}
+
+
+def test_translator_telugu_keyword_has_seed_grounding():
+    """The translator's 'in telugu' keyword had no Telugu-tagged seed doc, so
+    Telugu translations answered ungrounded. Every translator keyword language
+    must own a tagged grounding document."""
+    from rag.seed_data import SEED_DOCUMENTS
+    tagged = {tag
+              for doc in SEED_DOCUMENTS
+              for tag in doc["metadata"].get("tags", [])}
+    for language in ("hindi", "spanish", "tamil", "telugu"):
+        assert language in tagged, f"no seed doc tagged for {language}"
+    telugu_docs = [d for d in SEED_DOCUMENTS
+                   if "telugu" in d["metadata"].get("tags", [])]
+    assert telugu_docs and all(d["text"].strip() for d in telugu_docs)
 
 
 def test_initialize_is_idempotent(store):

@@ -10,8 +10,8 @@ class ClassifyRequest(BaseModel):
 
 
 class ClassifyResponse(BaseModel):
-    intent: str = Field(pattern="^(form_help|document_help|web_navigation_help|education_help|general_query|browser_inspect|browser_act)$")
-    target_agent: str = Field(pattern="^(form_agent|document_agent|web_agent|education_agent|general_agent|browser_agent)$")
+    intent: str = Field(pattern="^(form_help|document_help|web_navigation_help|education_help|general_query|browser_inspect|browser_act|scheduler_help|translation_help|ui_help|content_explain|profile_update|navigation_help)$")
+    target_agent: str = Field(pattern="^(form_agent|document_agent|web_agent|education_agent|general_agent|browser_agent|scheduler_agent|translator_agent|ui_adjuster_agent|content_explainer_agent|profile_updater_agent|navigation_agent)$")
     extracted_entity: str
     reasoning: str
     # Self-assessed by the LLM, or computed from keyword-match strength when

@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     debug: bool = True
 
+    # Trusted hosts (production): comma-separated. Empty = middleware skipped
+    # with a loud warning (mirrors backend) instead of a placeholder that 400s
+    # all real prod traffic.
+    allowed_hosts: str = ""
+
     # Context memory
     max_history_turns: int = 5
     # Session store bounds: at most max_sessions live sessions, each dropped

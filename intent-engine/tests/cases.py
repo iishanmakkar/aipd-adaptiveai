@@ -35,6 +35,32 @@ TEST_CASES = [
     ("What can you help me with?", "general_query", "general_agent"),
     ("Thanks for your help", "general_query", "general_agent"),
     ("Goodbye", "general_query", "general_agent"),
+
+    # scheduler_help
+    ("Schedule my doctor appointment for tomorrow", "scheduler_help", "scheduler_agent"),
+    ("Remind me to take my medicine at 8pm", "scheduler_help", "scheduler_agent"),
+    ("Plan my day for tomorrow", "scheduler_help", "scheduler_agent"),
+
+    # translation_help
+    ("Translate this notice in Hindi please", "translation_help", "translator_agent"),
+    ("Translate this letter in Tamil", "translation_help", "translator_agent"),
+    ("Translate this message in Telugu", "translation_help", "translator_agent"),
+
+    # ui_help
+    ("Make the font bigger", "ui_help", "ui_adjuster_agent"),
+    ("Turn on high contrast mode", "ui_help", "ui_adjuster_agent"),
+
+    # content_explain
+    ("Explain this page simply", "content_explain", "content_explainer_agent"),
+    ("What does this say? Simplify it", "content_explain", "content_explainer_agent"),
+
+    # profile_update
+    ("Update my profile to blind", "profile_update", "profile_updater_agent"),
+    ("Set my voice speed slower", "profile_update", "profile_updater_agent"),
+
+    # navigation_help
+    ("Go to checkout now", "navigation_help", "navigation_agent"),
+    ("Navigate to checkout", "navigation_help", "navigation_agent"),
 ]
 
 # (input_text, expected_intent, expected_target_agent, screen_context)
