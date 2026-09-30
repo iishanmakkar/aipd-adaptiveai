@@ -246,8 +246,10 @@ policy, so the two-page proof above is the scope of the claim.
    captured synchronously at consent, so a late loop can only *delay*
    narrations, never swallow them). A cooler host or dedicated CPU removes
    the stall.
-4. Narration delivery is at-least-once across a backend restart (cursor is
-   in-memory); duplicates are bounded by the browser-agent's 50-event deque.
+4. Narration delivery is at-least-once across a backend restart when Redis is
+   configured (cursor is store-backed since 2026-09-23: `SharedDict` over
+   Redis, in-memory TTL otherwise); without `REDIS_URL`, duplicates after a
+   restart are still bounded by the browser-agent's 50-event deque.
 
 ## Scan record
 

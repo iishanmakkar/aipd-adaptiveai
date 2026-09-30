@@ -297,7 +297,7 @@ git push origin ishan --force-with-lease
 1. **Never commit `.env`** — ` .gitignore:1` ignores `*.env`. Use `.env.example` as template. If you need a key, copy: `Copy-Item .env.example .env` and fill locally.
 2. **Never push to `main`** directly: `git push origin main` is blocked by workflow — always PR.
 3. **Only edit your folder:** `frontend/` → Ishika, `intent-engine/` → Kakul, `agents/` → Kartik, `backend/` → Ishan. Shared files (`README.md:1`, `GITHUB.md:1`) via PR + review.
-4. **`VITE_USE_MOCK=false` in `frontend/.env:1`** for real path. `true` only for isolated frontend mock (`frontend/mock-server/server.js:1`).
+4. **No mock mode exists** — the mock server and `mockApi.ts` were deleted; every request hits the real backend. Never reintroduce `VITE_USE_MOCK`.
 5. **Keep commits small** — one feature per commit, prefix with `feat(frontend/intent/agents/backend):`.
 6. **Pull before push** — `git fetch && git rebase origin/main` daily.
 

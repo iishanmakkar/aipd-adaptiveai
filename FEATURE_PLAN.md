@@ -1,10 +1,14 @@
 # AdaptiveAI — Feature Enhancement Plan (from Competitive Analysis)
 
+> **Status 2026-09-23: all four phases implemented** (live proof README §2D;
+> remaining caveats in README §6). Sections below are the original plan,
+> kept for history.
+
 Based on analysis of 7 similar projects: VoxSurf, PhysiologicAILab, AURA, yuktai, Granite Assistant, Google NAI, AdaptAble.
 
 ---
 
-## Phase 1: High-Impact / Low-Effort (Week 1-2)
+## Phase 1: High-Impact / Low-Effort (Week 1-2) — DONE
 
 ### 1.1 Disability Profiles (from Granite Assistant, AURA, PhysiologicAILab)
 **Add to:** `backend/app/schemas/preference.py` + `backend/app/models/preference.py` + `frontend/src/types/accessibility.ts`
@@ -53,7 +57,7 @@ behavior_signals = {
 
 ---
 
-## Phase 2: Core Architecture Enhancements (Week 3-4)
+## Phase 2: Core Architecture Enhancements (Week 3-4) — DONE
 
 ### 2.1 Specialized Agent Orchestrator (from VoxSurf, Google NAI, PhysiologicAILab)
 **Current:** Single `POST /agent/respond` with `agent` literal
@@ -110,7 +114,7 @@ class SessionMemory:
 
 ---
 
-## Phase 3: Accessibility-First Features (Week 5-6)
+## Phase 3: Accessibility-First Features (Week 5-6) — DONE
 
 ### 3.1 Screen Reader Optimization (from all projects)
 - **Frontend:** ARIA live regions for every agent response
@@ -144,7 +148,7 @@ class SessionMemory:
 
 ---
 
-## Phase 4: Advanced / Differentiators (Week 7-8)
+## Phase 4: Advanced / Differentiators (Week 7-8) — DONE
 
 ### 4.1 Offline-First Mode (from yuktai, Granite Assistant)
 - Service Worker caches all static assets

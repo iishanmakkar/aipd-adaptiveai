@@ -17,6 +17,22 @@ services:
       timeout: 5s
       retries: 10
 
+  # Redis: shared session/pending/narration store (Phase 2.3). Services fall
+  # back to in-memory TTL stores when REDIS_URL is unset, so local dev
+  # without redis still boots.
+  redis:
+    restart: unless-stopped
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # Intent & Context Engine (Kakul) - port 8001 - REAL LLM via NIM
   intent-engine:
     restart: unless-stopped
@@ -71,6 +87,8 @@ services:
         condition: service_healthy
       agents:
         condition: service_healthy
+    # DEV ONLY: --reload for local iteration. Production overlay
+    # (docker-compose.prod.yml) overrides this with plain uvicorn.
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./backend/app:/app/app
@@ -80,6 +98,7 @@ services:
       - AGENT_SERVICE_URL=http://agents:8002
       - BROWSER_SERVICE_URL=http://browser-agent:8003
       - SUPABASE_DB_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/adaptiveai
+      - REDIS_URL=redis://redis:6379/0
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
@@ -131,3 +150,4 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:

@@ -3,8 +3,9 @@
 **What it is.** A context-aware accessibility assistant that helps blind and
 low-vision users use forms, documents, websites and educational content
 independently — it answers *what should I do here*, not just reads the page.
-Six services (React frontend · intent engine · 5 task agents + RAG · backend
-orchestration/DB/policy · real-Chromium browser agent · Postgres), running as
+Seven services (React frontend · intent engine · 11 task agents + RAG +
+orchestrator · backend orchestration/DB/policy · real-Chromium browser agent ·
+Postgres · Redis shared store), running as
 one Docker Compose stack on real NVIDIA-NIM LLMs, FAISS retrieval and Postgres.
 
 **How a request flows.** Voice or text → Whisper STT → intent classifier (picks
@@ -14,13 +15,9 @@ reply to the user's stored disability profile, verbosity, and *observed
 behavior* (replays simplify, skips concisely — explicit prefs always win) →
 text-to-speech back. Screenshots are described by a vision model and used as
 context. Forms are filled for real: discover → cache → replay → heal in live
-Chromium (ticket-booking demo included).
-
-**How a request flows.** Voice or text → Whisper STT → intent classifier (picks
-one of form/document/web/education/general) → matching agent answers **grounded
-on retrieved knowledge-base documents** → an adaptive policy engine rewrites the
-reply to the user's stored verbosity preference → text-to-speech back. Screenshots
-are described by a vision model and used as context.
+Chromium (ticket-booking demo included). Round 8 holds one persistent Chromium
+page per chat session behind an explicit confirm gate; Round 9 optionally
+narrates that page's meaningful changes through the same policy engine.
 
 **The most defensible claim for the viva:** *every claim in this repo is backed
 by a command and its real output — including the limitations, and the majority
@@ -51,7 +48,8 @@ code review alone.
 - **Really adaptive**: same question answered step-by-step (blind+concise,
   818 chars) vs technical (detailed, 1088 chars); observed replays/skips reshape
   subsequent answers unless the user stated otherwise (852→346 proven).
-- **218 automated tests** (offline, no API cost) + **15 against real Postgres**
+- **439 automated tests + 1 skipped** (offline, no API cost; see README §5 for
+  the per-service breakdown) + **15 against real Postgres**
   + CI on every push + a fail-closed nightly live-accuracy gate.
 - **Resilience**: DB down → 503 (not 500); upstream down → 502 naming the
   cause; rate limiter sheds load (429) instead of collapsing; backend killed

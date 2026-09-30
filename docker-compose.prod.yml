@@ -2,17 +2,32 @@
 # intent-engine / agents / browser-agent / postgres stay on the internal
 # compose network (the browser-agent drives live Chromium - it must never be
 # reachable by untrusted callers; SSRF guard is the second layer, not the only one).
+# The backend also drops its dev bind-mounts here: prod runs the baked image,
+# not the working tree. Redis stays internal-only (ports reset above); it
+# holds TTL caches only, so add --requirepass + a REDIS_URL credential when
+# the network stops being a single trusted host.
 # Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 services:
   postgres:
+    ports: !reset []
+  redis:
     ports: !reset []
   intent-engine:
     ports: !reset []
   agents:
     ports: !reset []
+    # Prod must not leak the dev FAISS tree in or write prod data to it:
+    # without a mount the service re-seeds its knowledge base on start.
+    volumes: !reset []
   browser-agent:
     ports: !reset []
   backend:
     # No --reload in production: WatchFiles restarts the worker on bind-mount
     # mtime noise (observed as a reload loop refusing connections on WSL2).
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    volumes: !reset []
+    # The production guards in app.main refuse to boot unless these hold:
+    # DEBUG must be False (set in backend/.env), JWT_SECRET a real secret,
+    # FRONTEND_URL the real origin, ALLOWED_HOSTS the served hostnames.
+    environment:
+      - ADAPTIVEAI_PRODUCTION=1

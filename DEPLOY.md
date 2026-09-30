@@ -7,14 +7,16 @@ this machine (no cloud credentials in scope) — that is stated, not hidden.
 
 ## 1. Topology
 
-Five services, one `docker compose` file:
+Seven services, one `docker compose` file:
 
 | Service | Port (host) | Role |
 |---|---|---|
 | postgres | 5433 → 5432 | persistence |
+| redis | 6379 (internal in prod) | TTL shared store (pending/confirms, cursors, share tokens) |
 | intent-engine | 8001 | intent classification (NIM) |
-| agents | 8002 | 5 task agents + FAISS RAG (NIM) |
+| agents | 8002 | 11 task agents + FAISS RAG (NIM) + orchestrator |
 | backend | 8000 | orchestration, DB, policy engine, auth, STT, VLM proxy |
+| browser-agent | 8003 | real Playwright Chromium (internal in prod) |
 | frontend | 5173 | React UI |
 
 ## 2. One-time secrets
@@ -61,8 +63,8 @@ afterthought).
 ## 5. Start / restart / update
 
 ```bash
-docker compose up -d --build      # build + start all five
-docker compose ps                 # all should reach "healthy"
+docker compose up -d --build      # build + start all seven
+docker compose ps                 # all should reach "healthy" (redis has no healthgate dependents)
 docker compose logs -f backend    # JSON access logs, one line per request
 ```
 
