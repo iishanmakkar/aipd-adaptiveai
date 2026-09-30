@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Monitor/session safety events (starts, narrations, rate blocks) are INFO:
 # without this they vanish under uvicorn's WARNING root level, and the logs
@@ -68,6 +68,15 @@ class SessionNavigateRequest(BaseModel):
 
 class SessionInspectRequest(BaseModel):
     target: str = Field(..., min_length=1)
+
+    @field_validator("target")
+    @classmethod
+    def _non_blank_target(cls, value: str) -> str:
+        # min_length=1 lets "   " through; a blank target matches nothing and
+        # would waste a live snapshot + scan on every call.
+        if not value.strip():
+            raise ValueError("target must not be blank")
+        return value
 
 
 class SessionActRequest(BaseModel):
@@ -144,8 +153,14 @@ app = FastAPI(title="AdaptiveAI Browser Agent",
               lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    # Explicit origins, no credentials: the driver API is service-to-service
+    # (browsers reject wildcard + credentials). Covers local dev and docs.
+    allow_origins=[
+        "http://localhost:3000", "http://localhost:5173",
+        "http://127.0.0.1:3000", "http://127.0.0.1:5173",
+        "http://frontend:5173",
+    ],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -426,11 +441,19 @@ async def session_act(session_id: str, req: SessionActRequest, request: Request)
                 session.log("act_refused", label=label, reason=reason,
                             request_id=_request_id(request))
                 raise HTTPException(status_code=403, detail=reason)
+        if req.kind == "select" and str(node.get("tag", "")).lower() != "select":
+            raise HTTPException(status_code=422, detail=(
+                f"select needs a dropdown (select) element, but {label!r} is "
+                f"<{node.get('tag', '?')}> - use kind=fill or kind=click instead"))
         try:
-            if req.kind in ("fill", "select"):
+            if req.kind == "select":
+                result = await session.driver.select(node.get("selector", ""), req.value)
+            elif req.kind == "fill":
                 result = await session.driver.fill(node.get("selector", ""), req.value)
             else:
                 result = await session.driver.click(node.get("selector", ""))
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"act failed: {e}")
         session.touch()
@@ -547,10 +570,6 @@ class MonitorStartRequest(BaseModel):
     landing here via the backend) takes this action for this session."""
     requested_by: str = Field(default="user",
                               description="control used: voice|button|shortcut")
-
-
-class NarrationsQuery(BaseModel):
-    since: int = 0
 
 
 def _monitor_or_404(session):

@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # Empty = TrustedHost middleware skipped with a loud warning (set this in prod).
     allowed_hosts: str = ""
 
+    # Shared store (Phase 2.3): unset = in-memory fallback; compose sets redis.
+    redis_url: str = ""
+
     # Policy engine
     clarifying_threshold: int = 3
     context_window_size: int = 5

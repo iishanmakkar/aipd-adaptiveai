@@ -22,6 +22,14 @@ class AgentResponse:
         self.suggested_action = suggested_action
 
 
+class OrchestrateResponse(AgentResponse):
+    def __init__(self, answer: str, sources_used: list[str],
+                 suggested_action: str, agent: str, plan: list[str]):
+        super().__init__(answer, sources_used, suggested_action)
+        self.agent = agent
+        self.plan = plan
+
+
 def _browser_headers(request_id: str | None) -> dict:
     headers = {}
     if request_id:
@@ -169,3 +177,36 @@ async def get_agent_response(
         response.raise_for_status()
         data = response.json()
         return AgentResponse(**data)
+
+
+async def orchestrate_goal(
+    session_id: str,
+    goal: str,
+    entity: str,
+    extra_context: str,
+    request_id: str | None = None,
+) -> OrchestrateResponse:
+    """Phase 2.1: natural-language goal -> plan + specialist execution."""
+    headers = {}
+    if request_id:
+        headers["X-Request-ID"] = request_id
+    async with httpx.AsyncClient(timeout=settings.agent_timeout_seconds) as client:
+        response = await client.post(
+            f"{settings.agent_service_url}/agent/orchestrate",
+            json={
+                "session_id": session_id,
+                "goal": goal,
+                "entity": entity,
+                "extra_context": extra_context,
+            },
+            headers=headers,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return OrchestrateResponse(
+            answer=data["answer"],
+            sources_used=data.get("sources_used", []),
+            suggested_action=data.get("suggested_action", "none"),
+            agent=data.get("agent", "general_agent"),
+            plan=data.get("plan", []),
+        )

@@ -8,18 +8,33 @@ live page, and failures name the cause.
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.agents.form.form_agent import FormAgent
 from app.api.url_guard import validate_browse_url
 
 router = APIRouter(prefix="/api", tags=["form-fill"])
 
+# Anonymous callers can reach this endpoint: bound the work a single request
+# may demand (each pair becomes live Chromium actions + VLM context).
+MAX_FILL_PAIRS = 100
+MAX_FILL_VALUE_CHARS = 2000
+
 
 class FormFillRequest(BaseModel):
     url: str = Field(..., min_length=1)
     values: Dict[str, str] = Field(default_factory=dict)
     replay: bool = False
+
+    @field_validator("values")
+    @classmethod
+    def _bound_values(cls, values: Dict[str, str]) -> Dict[str, str]:
+        if len(values) > MAX_FILL_PAIRS:
+            raise ValueError(f"too many fill values (max {MAX_FILL_PAIRS})")
+        for key, value in values.items():
+            if len(key) > 200 or len(value) > MAX_FILL_VALUE_CHARS:
+                raise ValueError("fill key/value too long")
+        return values
 
 
 @router.post("/form-fill")

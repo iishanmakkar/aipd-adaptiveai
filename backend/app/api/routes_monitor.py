@@ -22,7 +22,8 @@ import logging
 import time
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,12 +49,14 @@ logger = logging.getLogger("adaptiveai.monitor")
 router = APIRouter(prefix="/api", tags=["monitor"])
 
 # Per-chat delivery cursor into browser-agent's narration event ids, plus
-# monitor liveness, in memory like the held-proposal store: a backend restart
-# forgets the cursor (events may be re-pulled at-least-once) but can never
-# restart monitoring on its own - the safe default.
-_monitor_state: dict[str, dict] = {}
+# monitor liveness. Store-backed (Redis when set, in-memory TTL otherwise)
+# so a backend restart resumes delivery instead of re-pulling everything
+# at-least-once. Read-modify-write only - never mutate a fetched dict.
+from app.services.session_memory import monitor_store, SharedDict
 
 NARRATION_TTL_SECONDS = 3600.0
+
+_monitor_state: SharedDict = SharedDict(monitor_store, default_ttl=NARRATION_TTL_SECONDS)
 
 
 class MonitorRequest(BaseModel):
@@ -61,7 +64,16 @@ class MonitorRequest(BaseModel):
 
 
 def _cursor(chat_id: str) -> dict:
-    return _monitor_state.setdefault(chat_id, {"since": 0, "active": False})
+    state = _monitor_state.get(chat_id)
+    if state is None:
+        state = {"since": 0, "active": False, "created_at": time.time()}
+        _monitor_state[chat_id] = state
+    return state
+
+
+def _save_cursor(chat_id: str, state: dict) -> None:
+    # Preserve absolute expiry: a rewrite must not refresh the full TTL.
+    _monitor_state.save_preserving_ttl(chat_id, state)
 
 
 async def _own_session(db: AsyncSession, session_id: str,
@@ -79,10 +91,17 @@ async def _own_session(db: AsyncSession, session_id: str,
     return session
 
 
+def _browser_status(exc: Exception) -> int | None:
+    """httpx raises HTTPStatusError (status at exc.response.status_code)."""
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+        return exc.response.status_code
+    return getattr(exc, "status_code", None)
+
+
 def _relay_error(exc: Exception, action: str) -> HTTPException:
     """Map a browser-agent failure to an honest user-facing error."""
     detail = getattr(exc, "detail", None) or str(exc)[:200]
-    status = getattr(exc, "status_code", None)
+    status = _browser_status(exc)
     if status in (404, 409):
         return HTTPException(status_code=status, detail=detail)
     return HTTPException(status_code=502,
@@ -94,14 +113,15 @@ async def monitor_start(req: MonitorRequest,
                         current_user: User = Depends(get_current_user_optional),
                         db: AsyncSession = Depends(get_db)):
     await _own_session(db, req.session_id, current_user)
-    import app.api.routes_query as rq
     request_id = f"monitor-start-{req.session_id[:8]}-{int(time.time())}"
     try:
         result = await browser_monitor_start(req.session_id, "voice-or-control",
                                              request_id)
     except Exception as e:
         raise _relay_error(e, "start")
-    _cursor(req.session_id)["active"] = True
+    _start_state = _cursor(req.session_id)
+    _start_state["active"] = True
+    _save_cursor(req.session_id, _start_state)
     logger.info("monitor_started session=%s user=%s", req.session_id,
                 current_user.id)
     return {"active": True, "status": result.get("status", "started"),
@@ -121,12 +141,16 @@ async def monitor_stop(req: MonitorRequest,
     except Exception as e:
         # A 409 (nothing active) is fine for a kill switch: the requested
         # end-state - monitoring off - already holds.
-        status = getattr(e, "status_code", None)
+        status = _browser_status(e)
         if status == 409:
-            _cursor(req.session_id)["active"] = False
+            _stop_state = _cursor(req.session_id)
+            _stop_state["active"] = False
+            _save_cursor(req.session_id, _stop_state)
             return {"active": False, "status": "already_stopped"}
         raise _relay_error(e, "stop")
-    _cursor(req.session_id)["active"] = False
+    _stopped_state = _cursor(req.session_id)
+    _stopped_state["active"] = False
+    _save_cursor(req.session_id, _stopped_state)
     logger.info("monitor_stopped session=%s user=%s nim_calls=%s",
                 req.session_id, current_user.id,
                 result.get("stats", {}).get("counters", {}).get("nim_calls"))
@@ -142,7 +166,7 @@ async def monitor_status(session_id: str,
     try:
         result = await browser_monitor_status(session_id)
     except Exception as e:
-        status = getattr(e, "status_code", None)
+        status = _browser_status(e)
         if status == 404:
             raise HTTPException(status_code=404, detail="No live page session")
         raise _relay_error(e, "status")
@@ -150,35 +174,38 @@ async def monitor_status(session_id: str,
 
 
 @router.get("/monitor/events")
-async def monitor_events(session_id: str, since: int | None = None,
+async def monitor_events(session_id: str,
                          current_user: User = Depends(get_current_user_optional),
                          db: AsyncSession = Depends(get_db)):
     """Poll new narrations. Raw descriptions from browser-agent are policy-
     adapted (same engine as chat), persisted as assistant messages, and
     returned for the frontend to announce + speak. The delivery cursor is
-    owned SERVER-side: a client passing a stale `since` cannot rewind it and
-    re-persist the same narration twice (found live: duplicate messages)."""
-    await _own_session(db, session_id, current_user)
+    owned SERVER-side (there is deliberately no client `since` param: a stale
+    one could rewind delivery and re-persist the same narration twice -
+    found live: duplicate messages)."""
+    session = await _own_session(db, session_id, current_user)
     state = _cursor(session_id)
     cursor = state["since"]
     request_id = f"monitor-events-{session_id[:8]}-{int(time.time())}"
-    session = await _own_session(db, session_id, current_user)
     try:
         pull = await browser_monitor_narrations(session_id, cursor, request_id)
     except Exception as e:
-        status = getattr(e, "status_code", None)
+        status = _browser_status(e)
         if status == 404:
             state["active"] = False
+            _save_cursor(session_id, state)
             return {"active": False, "narrations": [], "cursor": cursor,
                     "stats": {}}
         if status == 409:
             state["active"] = False
+            _save_cursor(session_id, state)
             return {"active": False, "narrations": [], "cursor": cursor,
                     "stats": {}}
         raise _relay_error(e, "narration pull")
 
     if not pull.get("active", False):
         state["active"] = False
+        _save_cursor(session_id, state)
 
     # Load user prefs + behavior once per poll (same inputs chat answers use).
     prefs_result = await db.execute(
@@ -194,8 +221,34 @@ async def monitor_events(session_id: str, since: int | None = None,
         "skip_count": signals.skip_count if signals else 0,
     }
 
+    events = pull.get("events", []) or []
+    seen_ids: set[int] = set()
+    if events:
+        # Cursor TTL expiry (or a restart without Redis) resets `since` to 0
+        # and the browser re-delivers buffered events: skip ids already stored
+        # or the same narration is persisted twice (the duplicate-message class
+        # the server-side cursor exists to prevent).
+        stored = await db.execute(
+            select(Message.meta).where(Message.session_id == session.id,
+                                       Message.agent_used == "browser_agent"))
+        for row in stored.all():
+            meta = row[0] if not isinstance(row, dict) else row.get("meta")
+            if isinstance(meta, dict) and meta.get("kind") == "narration":
+                try:
+                    seen_ids.add(int(meta.get("monitor_event_id", 0)))
+                except (TypeError, ValueError):
+                    pass
+
     narrations = []
-    for event in pull.get("events", []):
+    for event in events:
+        try:
+            event_id = int(event.get("id", 0))
+        except (TypeError, ValueError):
+            event_id = 0
+        state["since"] = max(state["since"], event_id)
+        _save_cursor(session_id, state)
+        if event_id in seen_ids:
+            continue  # already persisted: cursor advanced, nothing re-stored
         raw = str(event.get("raw_description", ""))[:2000]
         try:
             adapted = await adjust_response(
@@ -213,7 +266,6 @@ async def monitor_events(session_id: str, since: int | None = None,
                   "monitor_event_id": event.get("id")},
         )
         db.add(msg)
-        state["since"] = max(state["since"], int(event.get("id", 0)))
         narrations.append({"id": event.get("id"), "ts": event.get("ts"),
                            "text": adapted})
     if narrations:

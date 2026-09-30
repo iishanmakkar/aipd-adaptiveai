@@ -33,18 +33,27 @@ async def page_context(req: PageContextRequest):
     browser = BrowserTool()
     try:
         await browser.start()
+    except RuntimeError as e:
+        # Missing Chromium / misconfiguration is a 503, not a 500 (mirrors
+        # /api/form-fill's honest config errors).
+        raise HTTPException(status_code=503, detail=str(e)[:300])
+    try:
         try:
             nav = await browser.navigate(req.url)
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"page load failed: {type(e).__name__}: {str(e)[:150]}")
-        await browser.wait_for_load()
-        tree = await browser.get_accessibility_tree()
-        fields = [
-            {"label": n.get("label", ""), "type": n.get("role", ""),
-             "required": bool(n.get("required", False))}
-            for n in tree.get("tree", [])
-            if n.get("label")
-        ][:40]
+        try:
+            await browser.wait_for_load()
+            tree = await browser.get_accessibility_tree()
+            fields = [
+                {"label": n.get("label", ""), "type": n.get("role", ""),
+                 "required": bool(n.get("required", False))}
+                for n in tree.get("tree", [])
+                if n.get("label")
+            ][:40]
+            title = await browser.get_title()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"page read failed: {type(e).__name__}: {str(e)[:150]}")
         try:
             vlm = await browser.get_vlm_description(
                 "Describe this web page for a visually impaired user: what site is it, "
@@ -55,7 +64,7 @@ async def page_context(req: PageContextRequest):
             raise HTTPException(status_code=503, detail=str(e)[:200])
         return {
             "url": nav["url"], "http_status": nav.get("http_status"),
-            "title": await browser._page.title(),
+            "title": title,
             "field_count": len(fields), "fields": fields,
             "description": description,
         }

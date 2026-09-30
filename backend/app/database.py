@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 from fastapi import HTTPException
+from fastapi.exceptions import RequestValidationError
 import logging
 
 from app.config import settings
@@ -42,6 +43,11 @@ async def get_db() -> AsyncSession:
         async with async_session_maker() as session:
             yield session
     except HTTPException:
+        raise
+    except RequestValidationError:
+        # Body validation runs inside the yielded session context: without
+        # this, a malformed email surfaces as 503 "Database connection failed"
+        # instead of the honest 422 (seen live with a .local address).
         raise
     except Exception as e:
         # A DB that dies mid-flight raises HERE, at pool checkout inside the

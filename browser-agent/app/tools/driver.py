@@ -143,6 +143,19 @@ class Driver:
         readback = await el.evaluate("(e) => e.value !== undefined ? e.value : e.innerText")
         return {"status": "completed", "selector": selector, "readback": readback}
 
+    async def select(self, selector: str, value: str) -> Dict[str, Any]:
+        """Select a dropdown option; non-select elements are a caller bug."""
+        page = self._require_page()
+        el = await page.query_selector(selector)
+        if el is None:
+            return {"status": "error", "detail": f"no element matches {selector!r}"}
+        tag = await el.evaluate("(e) => e.tagName.toLowerCase()")
+        if tag != "select":
+            raise ValueError(f"select needs a <select> element, got <{tag}> for {selector!r}")
+        await el.select_option(value)
+        readback = await el.evaluate("(e) => e.value !== undefined ? e.value : e.innerText")
+        return {"status": "completed", "selector": selector, "readback": readback}
+
     async def click(self, selector: str) -> Dict[str, Any]:
         page = self._require_page()
         el = await page.query_selector(selector)

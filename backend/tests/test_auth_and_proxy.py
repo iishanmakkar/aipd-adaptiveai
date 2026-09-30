@@ -93,8 +93,21 @@ def test_vlm_forwards_to_nim_with_server_key(client, nim, monkeypatch):
     assert calls[0]["json"]["model"] == "meta/llama-3.2-11b-vision-instruct"
 
 
-def test_vlm_prefers_client_supplied_bearer(client, nim, monkeypatch):
+def test_vlm_server_key_beats_client_supplied_bearer(client, nim, monkeypatch):
+    """A caller-supplied key must never override the operator's server key
+    (a VITE_* key bakes into the public JS bundle)."""
     monkeypatch.setattr(settings, "nim_api_key", "nvapi-server-side")
+    calls = nim()
+    r = client.post("/v1/chat/completions",
+                    json={"messages": []},
+                    headers={"Authorization": "Bearer nvapi-frontend"})
+    assert r.status_code == 200
+    assert calls[0]["headers"]["Authorization"] == "Bearer nvapi-server-side"
+
+
+def test_vlm_client_key_only_used_when_server_unconfigured(client, nim, monkeypatch):
+    monkeypatch.setattr(settings, "nim_api_key", "")
+    monkeypatch.delenv("NIM_API_KEY", raising=False)
     calls = nim()
     r = client.post("/v1/chat/completions",
                     json={"messages": []},

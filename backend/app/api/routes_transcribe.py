@@ -79,15 +79,15 @@ async def transcribe_audio(audio: UploadFile = File(...)):
     api_key = settings.nim_api_key or os.getenv("OPENAI_API_KEY")
     if api_key:
         try:
-            from openai import OpenAI
+            from openai import AsyncOpenAI
             # Use OpenAI's whisper via NIM base if NIM supports audio, else default openai
-            client = OpenAI(api_key=api_key, base_url=settings.nim_base_url if "nvidia" in settings.nim_base_url else "https://api.openai.com/v1")
+            client = AsyncOpenAI(api_key=api_key, base_url=settings.nim_base_url if "nvidia" in settings.nim_base_url else "https://api.openai.com/v1")
             with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp2:
                 tmp2.write(data)
                 tmp2_path = tmp2.name
             try:
                 with open(tmp2_path, "rb") as f:
-                    resp = client.audio.transcriptions.create(model="whisper-1", file=f)
+                    resp = await client.audio.transcriptions.create(model="whisper-1", file=f)
                 return {"transcript": resp.text}
             finally:
                 try:

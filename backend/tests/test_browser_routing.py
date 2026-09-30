@@ -88,3 +88,54 @@ def test_browser_error_mapping_is_honest():
     assert rq._browser_error_detail(err(429))[0] == 429
     code, msg = rq._browser_error_detail(RuntimeError("boom"))
     assert code == 502 and "RuntimeError" in msg
+
+
+def test_browser_404_passes_through_for_expiry_and_reopen():
+    """404 from browser-agent means expired proposal / swept session. Mapping
+    it to 502 deadened the held-confirmation expiry branch and the slot-fill
+    session-reopen in _fill_next_value."""
+    import httpx
+
+    def err(code, detail="gone"):
+        req = httpx.Request("POST", "http://x/")
+        resp = httpx.Response(code, json={"detail": detail}, request=req)
+        return httpx.HTTPStatusError("e", request=req, response=resp)
+
+    assert rq._browser_error_detail(err(404, "no matching pending proposal")) == (
+        404, "no matching pending proposal")
+
+
+async def test_execute_confirmation_expiry_is_honest(monkeypatch):
+    """An expired held submit tells the user to restate it - not a 502."""
+    import httpx
+    from types import SimpleNamespace
+    from uuid import uuid4
+    from tests.conftest import FakeSession
+
+    def gone(*args, **kwargs):
+        req = httpx.Request("POST", "http://x/")
+        resp = httpx.Response(404, json={"detail": "no matching pending proposal"},
+                              request=req)
+        raise httpx.HTTPStatusError("e", request=req, response=resp)
+
+    monkeypatch.setattr(rq, "browser_confirm", gone)
+    seen = {}
+
+    async def fake_finish(*args, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(response_text=kwargs["answer"])
+
+    monkeypatch.setattr(rq, "_finish_turn", fake_finish)
+
+    db = FakeSession()
+    pending = {"kind": "submit", "proposal": {"proposal_id": "p"},
+               "confidence": 0.9, "intent_label": "browser_act"}
+    rq._pending["chat-exp"] = dict(pending)
+    try:
+        await rq._execute_confirmation(
+            db, SimpleNamespace(id=uuid4()), SimpleNamespace(id="u"),
+            uuid4(), "chat-exp", dict(pending), "req-1", 0)
+    finally:
+        rq._pending.pop("chat-exp", None)
+    assert "expired or was used" in seen["answer"]
+    assert seen["suggested_action"] == "none"

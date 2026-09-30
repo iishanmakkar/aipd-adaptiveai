@@ -190,3 +190,33 @@ async def test_monitor_narrations_url_carries_since(capture, monkeypatch):
     calls = capture({"active": True, "events": [], "stats": {}})
     await clients.browser_monitor_narrations("chat-1", 7)
     assert calls[0]["url"].endswith("/session/chat-1/monitor/narrations?since=7")
+
+
+# ---- Phase 2.1 orchestrate client --------------------------------------------
+
+async def test_orchestrate_goal_contract(capture, monkeypatch):
+    monkeypatch.setattr(clients.settings, "agent_service_url", "http://agents:8002")
+    calls = capture({"answer": "planned answer", "sources_used": ["web_x"],
+                     "suggested_action": "adjust_ui",
+                     "agent": "ui_adjuster_agent", "plan": ["route -> ui_adjuster_agent"]})
+
+    result = await clients.orchestrate_goal(
+        session_id="s1", goal="make text bigger", entity="font",
+        extra_context="ctx", request_id="req-o")
+
+    assert calls[0]["url"] == "http://agents:8002/agent/orchestrate"
+    assert calls[0]["json"] == {
+        "session_id": "s1", "goal": "make text bigger",
+        "entity": "font", "extra_context": "ctx",
+    }
+    assert calls[0]["headers"]["X-Request-ID"] == "req-o"
+    assert isinstance(result, clients.OrchestrateResponse)
+    assert result.agent == "ui_adjuster_agent"
+    assert result.plan == ["route -> ui_adjuster_agent"]
+    assert result.answer == "planned answer"
+
+
+def test_autonomous_flag_defaults_off():
+    from app.schemas.query import QueryRequest
+
+    assert QueryRequest(session_id="s", input_text="hi").autonomous is False

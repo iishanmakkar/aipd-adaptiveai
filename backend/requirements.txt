@@ -24,3 +24,5 @@ requests==2.34.2
 # Real browser driver for the form-filler pipeline (headless Chromium).
 # Pinned to the version proven locally with a live Chromium launch.
 playwright==1.62.0
+# Phase 2.3 shared session store (optional: services fall back to in-memory).
+redis==5.2.1

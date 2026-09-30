@@ -19,6 +19,7 @@ from app.services.clients import (
     IntentResponse,
     classify_intent,
     get_agent_response,
+    orchestrate_goal,
     browser_open_session,
     browser_navigate,
     browser_inspect,
@@ -37,11 +38,19 @@ CONFIRM_WORDS = ("yes", "submit", "confirm", "book it", "do it", "go ahead",
 CANCEL_WORDS = ("no", "cancel", "stop", "don't", "dont", "never mind", "abort")
 PENDING_TTL_SECONDS = 300.0
 
-# Held confirmations + known live pages, keyed by chat session id. In-memory
-# with TTL, like the intent engine's session store: a restart drops held
-# confirmations instead of firing stale ones - the safe default.
-_pending: dict[str, dict] = {}
-_live_pages: dict[str, str] = {}
+# Held confirmations + known live pages, keyed by chat session id. Store-backed
+# (Redis when REDIS_URL is set, in-memory TTL otherwise): a restart no longer
+# silently drops held confirmations mid-flow, and replicas share one view.
+# Values are JSON round-tripped on every access - always read-modify-write,
+# never mutate a fetched dict in place.
+from app.services.session_memory import (
+    live_pages_store,
+    pending_store,
+    SharedDict,
+)
+
+_pending: SharedDict = SharedDict(pending_store, default_ttl=PENDING_TTL_SECONDS)
+_live_pages: SharedDict = SharedDict(live_pages_store, default_ttl=3600.0)
 
 
 def _get_pending(chat_id: str) -> dict | None:
@@ -52,6 +61,33 @@ def _get_pending(chat_id: str) -> dict | None:
         _pending.pop(chat_id, None)
         return None
     return pending
+
+
+# Intent engine rejects screen_context over 5000 chars with 400: fused
+# UnifiedContext (up to ~10k flattened) must be capped here, or a rich page
+# context surfaces downstream as a 502 "Intent service error".
+INTENT_SCREEN_CONTEXT_LIMIT = 5000
+INTENT_INPUT_TEXT_LIMIT = 2000
+
+
+def _effective_screen_context(request) -> str | None:
+    """Phase 2.2: fuse UnifiedContext into the legacy screen_ctx string."""
+    base = request.screen_context or ""
+    uc = getattr(request, "unified_context", None)
+    if uc is None:
+        fused = request.screen_context
+    else:
+        try:
+            flat = uc.flattened() if hasattr(uc, "flattened") else ""
+        except Exception:
+            flat = ""
+        if flat:
+            fused = (base + "\n" + flat).strip() if base else flat
+        else:
+            fused = request.screen_context
+    if fused is not None and len(fused) > INTENT_SCREEN_CONTEXT_LIMIT:
+        fused = fused[:INTENT_SCREEN_CONTEXT_LIMIT]
+    return fused
 
 
 def _extract_url(text: str, screen_context: str | None) -> str | None:
@@ -153,6 +189,17 @@ async def _handle_browser_intent(db, session, current_user, session_uuid, reques
                 db, session, current_user, session_uuid,
                 f"I couldn't open that page: {e.detail}",
                 intent_result.intent, "live session open failed",
+                intent_result.confidence, message_count)
+        except Exception as e:
+            # Transport failure reaching browser-agent (connection refused,
+            # timeout): the _maybe_browser_turn opener maps this to an honest
+            # answer, and this path must too - otherwise it escapes
+            # process_query uncaught and misreports as a 500.
+            return await _browser_answer(
+                db, session, current_user, session_uuid,
+                f"My browsing service is unreachable right now: {describe(e)}. "
+                "I can still answer from knowledge - try asking without a link.",
+                intent_result.intent, "browser service unreachable",
                 intent_result.confidence, message_count)
         if isinstance(opened, dict) and opened.get("status") == "needs_confirmation":
             _pending[chat_id] = {
@@ -300,7 +347,10 @@ async def _hold_submit(db, session, current_user, session_uuid, chat_id,
             db, session, current_user, session_uuid,
             f"Unexpected submit state ({held}) - nothing was clicked. Tell me again what to do.",
             "browser_act", "submit hold failed", confidence, message_count)
-    _pending[chat_id]["proposal"] = held["proposal"]
+    # Store-backed: read-modify-write (in-place nested mutation would not persist).
+    _refresh = _pending.get(chat_id) or {}
+    _refresh["proposal"] = held["proposal"]
+    _pending[chat_id] = _refresh
     prefix = f"{filled_summary}\n\n" if filled_summary else ""
     return await _finish_turn(
         db, session, current_user, session_uuid,
@@ -632,6 +682,11 @@ async def _monitor_voice_turn(db, session, current_user, session_uuid, chat_id,
     The explicit consent action lands here for voice users; the button and
     keyboard shortcut land on /api/monitor/start|stop - same door."""
     from app.services.clients import browser_monitor_start, browser_monitor_stop
+    # Same server-side cursor the /api/monitor door owns: a voice start/stop
+    # must leave the same state or the flag drifts (voice stop with a stale
+    # active=True, voice start with a stale False).
+    from app.api.routes_monitor import _cursor as _monitor_cursor
+    from app.api.routes_monitor import _save_cursor as _monitor_save_cursor
     if action == "start":
         try:
             result = await browser_monitor_start(chat_id, "voice", request_id)
@@ -646,6 +701,9 @@ async def _monitor_voice_turn(db, session, current_user, session_uuid, chat_id,
             return await _browser_answer(
                 db, session, current_user, session_uuid, text,
                 "monitor", "monitor start failed", 0.9, message_count)
+        _voice_state = _monitor_cursor(chat_id)
+        _voice_state["active"] = True
+        _monitor_save_cursor(chat_id, _voice_state)
         stats = (result.get("stats") or {}).get("counters", {})
         return await _finish_turn(
             db, session, current_user, session_uuid,
@@ -665,6 +723,9 @@ async def _monitor_voice_turn(db, session, current_user, session_uuid, chat_id,
                    f"{counters.get('nim_calls', 0)} vision calls)")
     except Exception:
         summary = ""  # already stopped / swept: the end state is what matters
+    _voice_state = _monitor_cursor(chat_id)
+    _voice_state["active"] = False
+    _monitor_save_cursor(chat_id, _voice_state)
     return await _finish_turn(
         db, session, current_user, session_uuid,
         answer=f"Stopped watching the page{summary}. Nothing further is "
@@ -683,8 +744,10 @@ async def require_db(db: AsyncSession = Depends(get_db)) -> AsyncSession:
 
 def _browser_error_detail(exc: Exception) -> tuple[int, str]:
     """Map browser-agent HTTP failures to (status, message) for honest answers:
-    423/403/409/429 describe the situation (challenge, forbidden, no page,
-    budget spent) - only 5xx/exceptions are upstream failures (502)."""
+    404/409/422/423/403/429 describe the situation (expired proposal, no page,
+    challenge, forbidden, budget spent) - only 5xx/exceptions are upstream
+    failures (502). 404 must pass through: the held-confirmation expiry branch
+    and the slot-fill session-reopen both key on it."""
     import httpx
     if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
         try:
@@ -692,7 +755,7 @@ def _browser_error_detail(exc: Exception) -> tuple[int, str]:
         except Exception:
             detail = ""
         code = exc.response.status_code
-        if code in (409, 422, 423, 403, 429):
+        if code in (404, 409, 422, 423, 403, 429):
             return code, str(detail)[:300] or f"browser refused ({code})"
     return 502, f"Browser service error: {describe(exc)}"
 
@@ -790,6 +853,11 @@ async def process_query(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found - create one via POST /api/session first")
 
+    # Phase 2.2: fold UnifiedContext into screen_context once, downstream stays unchanged.
+    fused = _effective_screen_context(request)
+    if fused is not None and fused != request.screen_context:
+        request.screen_context = fused
+
     # Get recent history for context
     result = await db.execute(
         select(Message)
@@ -819,6 +887,11 @@ async def process_query(
     )
     if browser_turn is not None:
         return browser_turn
+
+    # The data: URL shrink above already ran: anything still over the intent
+    # engine's 2000-char cap would come back as a 400 misreported as 502.
+    if len(request.input_text) > INTENT_INPUT_TEXT_LIMIT:
+        raise HTTPException(status_code=400, detail="Input text too long (max 2000 chars)")
 
     # Step 1: Call Intent & Context Engine - propagate X-Request-ID for tracing
     try:
@@ -859,32 +932,56 @@ async def process_query(
             if browser_turn is not None:
                 return browser_turn
 
-    # Step 2: Call appropriate Task Agent - propagate X-Request-ID
-    try:
-        agent_result = await get_agent_response(
-            session_id=request.session_id,
-            agent=intent_result.target_agent,
-            query=request.input_text,
-            entity=intent_result.extracted_entity,
-            extra_context=request.screen_context or "",
-            request_id=request_id,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Agent service error: {describe(e)}")
+    # Step 2: Call appropriate Task Agent - propagate X-Request-ID.
+    # Autonomous mode (explicit opt-in per request): let the agents service
+    # plan + route via /agent/orchestrate instead of the classifier's single
+    # target. Browser turns already returned above, so this path only ever
+    # reaches the 9 text specialists - never a click.
+    orchestrate_plan: list[str] = []
+    agent_name = intent_result.target_agent
+    if request.autonomous and intent_result.target_agent != "browser_agent":
+        try:
+            orchestrated = await orchestrate_goal(
+                session_id=request.session_id,
+                goal=request.input_text,
+                entity=intent_result.extracted_entity,
+                extra_context=request.screen_context or "",
+                request_id=request_id,
+            )
+            agent_result = orchestrated
+            agent_name = orchestrated.agent
+            orchestrate_plan = orchestrated.plan
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Agent service error: {describe(e)}")
+    else:
+        try:
+            agent_result = await get_agent_response(
+                session_id=request.session_id,
+                agent=intent_result.target_agent,
+                query=request.input_text,
+                entity=intent_result.extracted_entity,
+                extra_context=request.screen_context or "",
+                request_id=request_id,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Agent service error: {describe(e)}")
 
     # Step 3+4: policy rewrite, persist, respond (shared with browser turns).
     # Confidence is what the intent classifier actually reported for this
     # classification (LLM self-assessment, or keyword-match strength on
     # fallback) - previously this was a hardcoded 0.85 for every answer.
+    _reasoning = intent_result.reasoning
+    if orchestrate_plan:
+        _reasoning = f"{_reasoning} [orchestrated: {' -> '.join(orchestrate_plan)}]"
     return await _finish_turn(
         db, session, current_user, session_uuid,
         answer=agent_result.answer,
-        agent_used=intent_result.target_agent,
+        agent_used=agent_name,
         suggested_action=agent_result.suggested_action,
         sources_used=agent_result.sources_used,
         confidence=intent_result.confidence,
         intent_label=intent_result.intent,
-        reasoning=intent_result.reasoning,
+        reasoning=_reasoning,
         message_count=len(recent_messages),
     )
 
@@ -898,6 +995,18 @@ async def process_query_demo(http_request: Request, request: QueryRequest):
     request_id = getattr(http_request.state, "request_id", None) or http_request.headers.get("X-Request-ID")
     # Demo: create a simple in-memory history (no DB persistence, but services are live)
     history = []  # In production this would come from DB; here we keep it ephemeral
+
+    # Same fusion + guards as /api/query so demo answers match real ones.
+    # Over-long screen context truncates via _effective_screen_context above
+    # (parity with /api/query); only over-long input text 400s on both.
+    fused = _effective_screen_context(request)
+    if fused is not None and fused != request.screen_context:
+        request.screen_context = fused
+    if len(request.input_text) > INTENT_INPUT_TEXT_LIMIT:
+        raise HTTPException(status_code=400, detail="Input text too long (max 2000 chars)")
+    if request.autonomous:
+        # Demo has no orchestration path: fail honestly, not silently ignored.
+        raise HTTPException(status_code=422, detail="autonomous=True is not supported on /query-demo; use /api/query")
 
     # Step 1: Call Intent & Context Engine
     try:

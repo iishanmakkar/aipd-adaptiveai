@@ -14,7 +14,6 @@ ALLOWED_IMAGE_PREFIXES = ("data:image/jpeg", "data:image/png", "data:image/webp"
 
 
 @router.post("/v1/chat/completions")
-@router.post("/v1/chat/completions/")
 async def vlm_proxy(request: Request):
     """
     REAL VLM proxy: forwards vision requests to NVIDIA NIM (meta/llama-3.2-11b-vision-instruct)
@@ -46,15 +45,16 @@ async def vlm_proxy(request: Request):
         if url and not url.startswith(ALLOWED_IMAGE_PREFIXES + ("https://", "http://")):
             raise HTTPException(status_code=415, detail="Unsupported image format: use JPEG, PNG, WebP or GIF")
 
-    # Get API key from frontend header or backend config
-    auth = request.headers.get("authorization", "")
-    api_key = None
-    if auth.lower().startswith("bearer "):
-        api_key = auth[7:].strip()
+    # Server key always wins when configured: a caller-supplied key is only a
+    # fallback for keyless dev, and must never override the operator's key
+    # (a VITE_* key bakes into the public JS bundle - see docker-compose.yml).
+    api_key = settings.nim_api_key or os.getenv("NIM_API_KEY")
     if not api_key:
-        api_key = settings.nim_api_key or os.getenv("NIM_API_KEY")
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            api_key = auth[7:].strip()
     if not api_key:
-        raise HTTPException(status_code=503, detail="VLM not configured: set NIM_API_KEY in backend/.env or VITE_NIM_API_KEY in frontend/.env")
+        raise HTTPException(status_code=503, detail="VLM not configured: set NIM_API_KEY in backend/.env")
 
     # Forward to NVIDIA NIM
     nim_url = f"{settings.nim_base_url.rstrip('/')}/chat/completions"
@@ -72,10 +72,17 @@ async def vlm_proxy(request: Request):
                     "Content-Type": "application/json",
                 }
             )
-            # Return NIM response as-is (including errors)
-            return JSONResponse(status_code=resp.status_code, content=resp.json())
+            # Passthrough: upstream status reaches the caller untouched.
+            try:
+                data = resp.json()
+            except Exception:
+                data = {"upstream_response": resp.text[:2000]}
+            return JSONResponse(status_code=resp.status_code, content=data)
         except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=e.response.status_code, detail=e.response.text[:500])
+            code = e.response.status_code if e.response is not None else 502
+            raise HTTPException(status_code=code, detail=(e.response.text[:500] if e.response is not None else str(e)[:500]))
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"VLM proxy error: {str(e)[:300]}")
 

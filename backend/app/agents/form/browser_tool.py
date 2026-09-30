@@ -91,6 +91,10 @@ class BrowserTool:
     async def go_back(self) -> None:
         await self._require_page().go_back(wait_until="domcontentloaded")
 
+    async def get_title(self) -> str:
+        """Proper accessor for the live page title (no private _page reach-in)."""
+        return await self._require_page().title()
+
     # -- perception --
 
     async def get_accessibility_tree(self) -> Dict[str, Any]:

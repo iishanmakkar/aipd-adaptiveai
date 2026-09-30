@@ -73,7 +73,13 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
 
-    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    try:
+        user_uuid = UUID(user_id)
+    except (ValueError, TypeError):
+        # Valid signature but a garbage subject (e.g. "admin"): no row can
+        # match, and letting UUID() raise would 500 instead of 401.
+        raise credentials_exception
+    result = await db.execute(select(User).where(User.id == user_uuid))
     user = result.scalar_one_or_none()
     if user is None:
         raise credentials_exception
@@ -84,7 +90,10 @@ async def get_current_user_optional(
     token: str = Depends(oauth2_scheme_optional),
     db: AsyncSession = Depends(get_db)
 ):
-    """REAL MODE: if no token, in DEBUG use persistent demo user (real DB row); else require auth."""
+    """No token + DEBUG: persistent demo user (the UI has no login flow, so this
+    is the only way the interface works in dev). Forged/expired/unknown-subject
+    tokens ALWAYS 401, even in DEBUG. Production sets ADAPTIVEAI_PRODUCTION=1,
+    which refuses DEBUG boots entirely (see app.main)."""
     if not token:
         if not settings.debug:
             raise HTTPException(
@@ -126,29 +135,30 @@ async def get_current_user_optional(
         if user_id is None:
             raise HTTPException(status_code=401, detail="Invalid token")
     except JWTError:
-        if settings.debug:
-            return DemoUser()
+        # A forged/expired/malformed token is never accepted, not even in
+        # DEBUG: the UI sends no tokens at all (demo path below), so no
+        # legitimate flow depends on this fallback.
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    # If DB not available, return demo user with id from token
-    if not is_db_available():
-        demo = DemoUser()
-        try:
-            demo.id = UUID(user_id)
-        except Exception:
-            pass
-        return demo
+    try:
+        user_uuid = UUID(user_id)
+    except (ValueError, TypeError):
+        # Valid signature but a non-UUID subject: unknown by definition, and
+        # UUID() raising here would 500 instead of 401.
+        raise HTTPException(status_code=401, detail="Invalid token")
 
-    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    # No-DB demo mode accepts ONLY the no-token path above (the UI sends no
+    # tokens at all). A presented token with a valid signature must 401 here:
+    # minting a demo identity for an attacker-chosen subject would let anyone
+    # impersonate any id.
+    if not is_db_available():
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    result = await db.execute(select(User).where(User.id == user_uuid))
     user = result.scalar_one_or_none()
     if user is None:
-        if settings.debug:
-            demo = DemoUser()
-            try:
-                demo.id = UUID(user_id)
-            except Exception:
-                pass
-            return demo
+        # Unknown subject: 401 in every mode. Minting a demo identity for an
+        # attacker-chosen UUID would let anyone impersonate any id.
         raise HTTPException(status_code=401, detail="User not found")
     return user
 

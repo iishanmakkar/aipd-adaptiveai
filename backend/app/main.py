@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import time
-from collections import deque
+from collections import OrderedDict, deque
 
 from jose import JWTError, jwt
 
@@ -22,6 +22,8 @@ from app.api.routes_behavior import router as behavior_router
 from app.api.routes_formfill import router as formfill_router
 from app.api.routes_pagecontext import router as pagecontext_router
 from app.api.routes_monitor import router as monitor_router
+from app.api.routes_share import router as share_router
+from app.api.routes_alt import router as alt_router
 
 logger = logging.getLogger("adaptiveai.access")
 
@@ -41,6 +43,18 @@ if os.getenv("ADAPTIVEAI_PRODUCTION", "").strip() in ("1", "true", "True") and s
     raise RuntimeError(
         "Refusing to start: ADAPTIVEAI_PRODUCTION is set but DEBUG=True in backend/.env. "
         "DEBUG=True auto-logs every visitor in as the demo user and allows CORS from any origin."
+    )
+
+# Fail closed on a placeholder JWT secret in production: the shipped default is
+# public, so any production boot without a real JWT_SECRET could forge tokens.
+_JWT_PLACEHOLDER = "dev-secret-change-in-production-min-32-chars-long"
+if (
+    os.getenv("ADAPTIVEAI_PRODUCTION", "").strip() in ("1", "true", "True")
+    and settings.jwt_secret.strip() in ("", _JWT_PLACEHOLDER)
+):
+    raise RuntimeError(
+        "Refusing to start: ADAPTIVEAI_PRODUCTION is set but JWT_SECRET is the "
+        "shipped default. Set a random 32+ char JWT_SECRET in backend/.env."
     )
 
 
@@ -74,8 +88,11 @@ def _percentile(p: float) -> float | None:
     return round(ordered[idx], 1)
 
 
-# Rate limiting - simple in-memory store
-_rate_limit_store: dict = {}
+# Rate limiting - bounded in-memory store (evict oldest-idle past the cap:
+# the key falls back to client IP, so unbounded growth is a memory-exhaustion
+# vector - same shape as intent-engine).
+_rate_limit_store: "OrderedDict[str, list[float]]" = OrderedDict()
+_RATE_LIMIT_MAX_KEYS = 5000
 
 
 def check_rate_limit(client_ip: str, max_requests: int = 100, window_sec: int = 60) -> bool:
@@ -83,17 +100,23 @@ def check_rate_limit(client_ip: str, max_requests: int = 100, window_sec: int = 
     now = time.time()
     if client_ip not in _rate_limit_store:
         _rate_limit_store[client_ip] = []
-    
+
     # Remove timestamps outside the window
     _rate_limit_store[client_ip] = [
-        ts for ts in _rate_limit_store[client_ip] 
+        ts for ts in _rate_limit_store[client_ip]
         if now - ts < window_sec
     ]
-    
+    if not _rate_limit_store[client_ip]:
+        _rate_limit_store.pop(client_ip, None)
+        _rate_limit_store[client_ip] = []
+
     if len(_rate_limit_store[client_ip]) >= max_requests:
         return False
-    
+
     _rate_limit_store[client_ip].append(now)
+    _rate_limit_store.move_to_end(client_ip)
+    while len(_rate_limit_store) > _RATE_LIMIT_MAX_KEYS:
+        _rate_limit_store.popitem(last=False)
     return True
 
 
@@ -119,11 +142,16 @@ app = FastAPI(
 )
 
 
+def _parse_allowed_hosts(raw: str) -> list[str]:
+    """Split ALLOWED_HOSTS on commas, dropping blanks (env-driven TrustedHost)."""
+    return [h.strip() for h in raw.split(",") if h.strip()]
+
+
 # Security: TrustedHost middleware - enforced from ALLOWED_HOSTS in production.
 # The old hardcoded placeholder domain is gone: an env you forget is now a
 # loud warning, not a silent misconfiguration.
 if not settings.debug:
-    _allowed = [h.strip() for h in settings.allowed_hosts.split(",") if h.strip()]
+    _allowed = _parse_allowed_hosts(settings.allowed_hosts)
     if _allowed:
         from fastapi.middleware.trustedhost import TrustedHostMiddleware
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed)
@@ -131,9 +159,15 @@ if not settings.debug:
         logger.warning("ALLOWED_HOSTS is empty with DEBUG=False - TrustedHost skipped; set ALLOWED_HOSTS in production")
 
 
-# CORS - restrict in production
+# CORS - explicit origins in every mode (browsers reject wildcard +
+# credentials). Debug list covers local dev + the in-compose frontend
+# hostname proof traffic arrives as; production is locked to FRONTEND_URL.
 if settings.debug:
-    allow_origins = ["*"]
+    allow_origins = [
+        "http://localhost:3000", "http://localhost:5173",
+        "http://127.0.0.1:3000", "http://127.0.0.1:5173",
+        "http://frontend:5173",
+    ]
 else:
     allow_origins = [settings.frontend_url]
 
@@ -185,8 +219,18 @@ async def add_middleware_process_time(request: Request, call_next):
     # buckets via /auth/register to farm the per-user limit. Account
     # creation/login is a rare action for real users, so it gets a tight,
     # separate per-IP budget that does not touch normal traffic.
-    if request.url.path in ("/auth/register", "/auth/login"):
-        auth_key = f"auth:{request.url.path}:{client_ip}"
+    # The same treatment covers the Chromium-driving endpoints: each call
+    # boots headless Chromium (+ a VLM call), so callers get their own small
+    # budget instead of the shared 200/min bucket. Authenticated callers keep
+    # their per-user split here too (same NAT reason as the global bucket);
+    # anonymous callers fall back to per-IP.
+    _HEAVY_BUDGETS = {"/api/form-fill": 10, "/api/page-context": 30}
+    check_global = True
+    # Normalize trailing slashes before budget lookup: "/api/form-fill/"
+    # otherwise bypassed the heavy budget entirely (exact-match miss).
+    path = request.url.path.rstrip("/") or "/"
+    if path in ("/auth/register", "/auth/login"):
+        auth_key = f"auth:{path}:{client_ip}"
         if not check_rate_limit(auth_key, max_requests=10, window_sec=60):
             _record_metrics(429, (time.time() - start_time) * 1000)
             return JSONResponse(
@@ -194,8 +238,24 @@ async def add_middleware_process_time(request: Request, call_next):
                 status_code=429,
                 headers={"X-Rate-Limit-Remaining": "0", "Retry-After": "60"},
             )
+        remaining_key, remaining_max = auth_key, 10
+        check_global = False
+    elif path in _HEAVY_BUDGETS:
+        heavy_max = _HEAVY_BUDGETS[path]
+        heavy_key = f"heavy:{path}:{rate_key}"
+        if not check_rate_limit(heavy_key, max_requests=heavy_max, window_sec=60):
+            _record_metrics(429, (time.time() - start_time) * 1000)
+            return JSONResponse(
+                content={"error": "Too many automated-browsing requests; try again later."},
+                status_code=429,
+                headers={"X-Rate-Limit-Remaining": "0", "Retry-After": "60"},
+            )
+        remaining_key, remaining_max = heavy_key, heavy_max
+        check_global = False
+    else:
+        remaining_key, remaining_max = rate_key, 200
 
-    if not check_rate_limit(rate_key, max_requests=200, window_sec=60):
+    if check_global and not check_rate_limit(rate_key, max_requests=200, window_sec=60):
         _record_metrics(429, (time.time() - start_time) * 1000)
         return JSONResponse(
             content={"error": "Rate limit exceeded"},
@@ -208,7 +268,7 @@ async def add_middleware_process_time(request: Request, call_next):
     response.headers["X-Process-Time"] = str(latency_ms / 1000)
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Rate-Limit-Remaining"] = str(
-        max(0, 200 - len(_rate_limit_store.get(rate_key, [])))
+        max(0, remaining_max - len(_rate_limit_store.get(remaining_key, [])))
     )
 
     # Structured access log: one JSON line per request, correlated on request_id
@@ -252,6 +312,8 @@ app.include_router(behavior_router)
 app.include_router(formfill_router)
 app.include_router(pagecontext_router)
 app.include_router(monitor_router)
+app.include_router(share_router)
+app.include_router(alt_router)
 
 
 @app.get("/health")
