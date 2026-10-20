@@ -47,7 +47,7 @@ function submitG(ev) {
   const v = (id) => document.getElementById(id).value;
   const ack = document.getElementById('ack');
   ack.style.display = 'block';
-  ack.textContent = 'Grievance ' + (v('anon') === 'on' || document.getElementById('anon').checked ? '(anonymous) ' : '') +
+  ack.textContent = 'Grievance ' + (document.getElementById('anon').checked ? '(anonymous) ' : '') +
     'lodged for ' + v('citizen') + ' — department ' + v('dept') + '. Ticket GRV' +
     (Math.abs([...v('details')].reduce((a, c) => a + c.charCodeAt(0), 0) % 90000) + 10000) + '.';
   return false;

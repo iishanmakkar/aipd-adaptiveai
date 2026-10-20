@@ -1,0 +1,6 @@
+# Demo pages are served for the AdaptiveAI live-session flows (see
+# docker-compose.yml, profile "demo"). Allow everything: the browser-agent's
+# robots gate fails CLOSED for acts when robots.txt is unfetchable, which
+# would refuse the documented demo fill/booking flows on this host.
+User-agent: *
+Disallow:

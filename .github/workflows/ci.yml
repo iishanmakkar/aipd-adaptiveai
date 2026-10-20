@@ -11,6 +11,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# PyPI fetches flaked on real runs (a backend job died mid-install on a
+# transient CDN error; local builds hit the same class twice). Retry instead
+# of going red on a network hiccup.
+env:
+  PIP_RETRIES: '5'
+  PIP_TIMEOUT: '60'
+
 jobs:
   intent-engine:
     name: Intent engine (offline unit + API)
@@ -182,7 +189,10 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install pip-audit
-        run: python -m pip install --upgrade pip pip-audit
+        # Pinned: an unpinned scanner version errored (exit >= 2) on a run and
+        # took the job red with rc_total=1; 2.10.1 is verified to report
+        # advisories with exit 1 (non-blocking) on every requirements file.
+        run: python -m pip install --upgrade pip "pip-audit==2.10.1"
       - name: pip-audit each service (fail if the scanner errors)
         run: |
           rc_total=0

@@ -7,6 +7,11 @@ name: Accuracy Nightly (live NIM)
 # NIM_API_KEY secret is a loud error, never a silent green skip. On schedule
 # without a secret the job fails too - a gate that can't run must complain,
 # not pass. The team must add the NIM_API_KEY repo secret for this to run.
+#
+# The same secret is what the stack itself needs: this workflow materializes
+# the gitignored .env files from it BEFORE `docker compose up`, because both
+# gates hit the real services (agents :8002, intent-engine :8001). Without
+# this the stack booted keyless and the gates could never pass.
 
 on:
   schedule:
@@ -17,9 +22,13 @@ concurrency:
   group: accuracy-nightly
   cancel-in-progress: false
 
+env:
+  PIP_RETRIES: '5'
+  PIP_TIMEOUT: '60'
+
 jobs:
-  bare-noun:
-    name: Bare-noun accuracy (B1 live gate, 13/15)
+  live-gates:
+    name: Live gates (bare-noun + intent accuracy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,28 +38,47 @@ jobs:
             echo "::error::NIM_API_KEY repo secret is missing - the live gate cannot run and will NOT be treated as passing. Add the secret or run workflow_dispatch after adding it."
             exit 2
           fi
+      - name: Materialize gitignored .env files for the stack
+        run: |
+          for d in backend intent-engine agents browser-agent; do
+            printf 'NIM_API_KEY=%s\nLLM_API_KEY=%s\n' "$NIM_API_KEY" "$NIM_API_KEY" > "$d/.env"
+          done
+        env:
+          NIM_API_KEY: ${{ secrets.NIM_API_KEY }}
+      - name: Start full stack
+        run: docker compose up -d --build
+      - name: Wait for agents + intent-engine + backend health
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8002/health \
+              && curl -sf http://localhost:8001/health \
+              && curl -sf http://localhost:8000/health \
+              && break
+            sleep 10
+          done
+          curl -sf http://localhost:8002/health
+          curl -sf http://localhost:8001/health
+          curl -sf http://localhost:8000/health
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: pip
-          cache-dependency-path: agents/requirements*.txt
-      - name: Start full stack
-        run: docker compose up -d --build
-      - name: Wait for agents health
-        run: |
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:8002/health && break
-            sleep 10
-          done
-          curl -sf http://localhost:8002/health
-        env:
-          NIM_API_KEY: ${{ secrets.NIM_API_KEY }}
-      - name: Run bare-noun live gate
+          cache-dependency-path: |
+            agents/requirements*.txt
+            intent-engine/requirements*.txt
+      - name: Run bare-noun live gate (agents, 13/15)
         working-directory: agents
         run: |
           pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt -r requirements-dev.txt
           python -m pytest tests/test_bare_noun_live.py -m live -v
+        env:
+          NIM_API_KEY: ${{ secrets.NIM_API_KEY }}
+      - name: Run intent live accuracy gate (48 cases, >=90%)
+        working-directory: intent-engine
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+          python -m pytest tests/test_live_accuracy.py -m live -v
         env:
           NIM_API_KEY: ${{ secrets.NIM_API_KEY }}
       - name: Dump service logs on failure

@@ -83,9 +83,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       intent-engine:
         condition: service_healthy
       agents:
+        condition: service_healthy
+      browser-agent:
         condition: service_healthy
     # DEV ONLY: --reload for local iteration. Production overlay
     # (docker-compose.prod.yml) overrides this with plain uvicorn.
@@ -99,6 +103,11 @@ services:
       - BROWSER_SERVICE_URL=http://browser-agent:8003
       - SUPABASE_DB_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/adaptiveai
       - REDIS_URL=redis://redis:6379/0
+      # Dev/demo only: lets the browser drive pages on the compose network and
+      # the host (the included ticket-booking demo, an intranet form, a replay
+      # test). Cloud metadata stays refused; docker-compose.prod.yml pins this
+      # back to 0 - see app/api/url_guard.py.
+      - ADAPTIVEAI_ALLOW_LOCAL_TARGETS=1
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
@@ -117,6 +126,9 @@ services:
     environment:
       - NIM_BASE_URL=https://integrate.api.nvidia.com/v1
       - NIM_MODEL=meta/llama-3.2-11b-vision-instruct
+      # Must match the backend's setting: the guard is duplicated per image
+      # because these services share no package.
+      - ADAPTIVEAI_ALLOW_LOCAL_TARGETS=1
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
       interval: 15s
@@ -127,7 +139,13 @@ services:
   # Frontend (Ishika) - React + Vite - port 5173 - REAL API (no mocks)
   frontend:
     restart: unless-stopped
-    build: ./frontend
+    build:
+      context: ./frontend
+      # Baked into the bundle at BUILD time (Vite semantics): the default
+      # matches local dev; production passes its real origin via the prod
+      # overlay (which fails fast when it is unset).
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
     ports:
       - "5173:5173"
     depends_on:
@@ -135,6 +153,10 @@ services:
         condition: service_healthy
     environment:
       - VITE_API_BASE_URL=http://localhost:8000
+      # In-container Vite proxy target: localhost here is the frontend
+      # container itself, so proxied /api + /v1 traffic goes to the backend
+      # service (see vite.config.ts). Plain local `npm run dev` ignores this.
+      - VITE_PROXY_TARGET=http://backend:8000
       # No NIM key here on purpose: any VITE_* var is baked into the public JS
       # bundle. Vision requests go through the backend proxy (POST /v1/chat/completions),
       # which authenticates with NIM_API_KEY from backend/.env server-side.
@@ -147,6 +169,22 @@ services:
       timeout: 5s
       retries: 10
       start_period: 40s
+
+  # The demo pages, served over http so a real browser session can be pointed
+  # at them by URL. This is what makes the documented ticket-booking flow work
+  # as written (paste http://demo-forms:8080/book-tickets.html in the chat, or
+  # http://localhost:8080/... from the host) instead of only as a data: URL in a
+  # proof script. Opt-in: `docker compose --profile demo up -d`, and never in
+  # the prod overlay, which pins ADAPTIVEAI_ALLOW_LOCAL_TARGETS=0.
+  demo-forms:
+    image: python:3.11-alpine
+    profiles: ["demo"]
+    restart: unless-stopped
+    command: python -m http.server 8080 --bind 0.0.0.0 --directory /demo
+    volumes:
+      - ./demo:/demo:ro
+    ports:
+      - "8080:8080"
 
 volumes:
   postgres_data:

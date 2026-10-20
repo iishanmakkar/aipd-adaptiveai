@@ -21,6 +21,20 @@ services:
     volumes: !reset []
   browser-agent:
     ports: !reset []
+    # Production never lets the server-side browser reach internal hosts: the
+    # dev file turns this on so the bundled demo/intranet pages are testable.
+    environment:
+      - ADAPTIVEAI_ALLOW_LOCAL_TARGETS=0
+  frontend:
+    # Production serves the static production bundle (built with the real API
+    # origin baked in), never the Vite dev server: HMR, source maps and the
+    # file watcher must not ship. Build with the API origin exported:
+    #   VITE_API_BASE_URL=https://api.example.com docker compose \
+    #     -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+    build:
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:?VITE_API_BASE_URL must be set for production builds}
+    command: sh -c "npm run build && npx vite preview --host 0.0.0.0 --port 5173"
   backend:
     # No --reload in production: WatchFiles restarts the worker on bind-mount
     # mtime noise (observed as a reload loop refusing connections on WSL2).
@@ -31,3 +45,4 @@ services:
     # FRONTEND_URL the real origin, ALLOWED_HOSTS the served hostnames.
     environment:
       - ADAPTIVEAI_PRODUCTION=1
+      - ADAPTIVEAI_ALLOW_LOCAL_TARGETS=0
