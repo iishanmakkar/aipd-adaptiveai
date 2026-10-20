@@ -17,3 +17,8 @@ class ClassifyResponse(BaseModel):
     # Self-assessed by the LLM, or computed from keyword-match strength when
     # the LLM is unreachable. Replaces the old hardcoded 0.85 the backend sent.
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    # The model's own judgment that the input is NOT an actionable request
+    # (gibberish, a fragment, or too vague to help with even with context).
+    # The backend asks one clarifying question instead of guessing. LLM
+    # self-reported confidence is useless for this — it says 0.9 on gibberish.
+    ambiguous: bool = False

@@ -34,6 +34,13 @@ BROWSER_ACT_VERBS = (
     "fill in", "fill this", "fill out", "fill the", "click the", "press the",
     "submit", "book", "type ", "enter ", "select the", "choose ",
 )
+# Bare action verbs (word-boundary matched): "Select option 2" and "Fill my
+# name" carry no "the", and the raw-substring "book" above also fired inside
+# "facebook"/"bookmark".
+BROWSER_ACT_WORDS = (
+    "fill", "click", "select", "type", "enter", "choose", "book", "submit",
+    "press",
+)
 BROWSER_INSPECT_VERBS = (
     "where is", "find", "locate", "what does this", "describe",
     "show me", "which ",
@@ -49,9 +56,11 @@ def _browser_route(text_lower: str, context_lower: str):
     """
     if "live page:" not in context_lower:
         return None
-    if any(v in text_lower for v in BROWSER_INSPECT_VERBS):
+    if any(_kw_in(text_lower, v) for v in BROWSER_INSPECT_VERBS):
         return ("browser_inspect", "browser_agent", "live page element")
-    if any(v in text_lower for v in BROWSER_ACT_VERBS):
+    if any(_kw_in(text_lower, v) for v in BROWSER_ACT_VERBS):
+        return ("browser_act", "browser_agent", "live page element")
+    if any(_kw_in(text_lower, w) for w in BROWSER_ACT_WORDS):
         return ("browser_act", "browser_agent", "live page element")
     return None
 
@@ -72,30 +81,30 @@ def _kw_in(haystack: str, keyword: str) -> bool:
 KEYWORD_RULES = [
     # (keywords, intent, target_agent, entity_hint)
     # Priority order for exact score ties: more common intents first.
-    (["fill", "form", "field", "input", "submit", "application", "register", "signup", "what is this field", "how to fill", "field asking"],
+    (["fill", "form", "field", "fields", "input", "submit", "application", "register", "signup", "what is this field", "how to fill", "field asking"],
      "form_help", "form_agent", "form field"),
     # NOTE: deliberately no bare "terms" - it matched "in simple terms" and
     # hijacked education questions into document_help.
-    (["document", "pdf", "read", "summarize", "summary", "extract", "contract", "agreement", "terms and conditions", "terms of service", "policy", "document content"],
+    (["document", "documents", "pdf", "read", "summarize", "summary", "extract", "contract", "agreement", "terms and conditions", "terms of service", "policy", "document content", "section", "clause", "article", "paragraph"],
      "document_help", "document_agent", "document content"),
     (["explain", "teach", "learn", "study", "concept", "topic", "course", "lesson", "tutorial", "photosynthesis", "what is", "define", "meaning"],
      "education_help", "education_agent", "educational concept"),
-    (["navigate", "website", "page", "click", "button", "link", "menu", "navigation", "find", "where is", "how to get to", "go to"],
+    (["navigate", "website", "webpage", "page", "click", "button", "buttons", "link", "links", "menu", "menus", "navigation", "find", "where is", "how to get to", "go to", "dropdown", "options"],
      "web_navigation_help", "web_agent", "web element"),
     # New specialists sit after the incumbents so best-score ties keep the old
     # winner (existing routing is unchanged); each rule outscores the
     # incumbents only on its own phrasing. Translator precedes profile and
     # scheduler: "translate ... blind ..." and "translate my schedule" tie at
     # one hit each, and the translation request must win the tie.
-    (["translate", "translation", "in hindi", "in tamil", "in telugu", "in spanish"],
+    (["translate", "translation", "in hindi", "in tamil", "in telugu", "in spanish", "to telugu", "to hindi", "to tamil", "telugu", "hindi", "tamil", "spanish", "తెలుగు"],
      "translation_help", "translator_agent", "text to translate"),
     (["profile", "verbosity", "voice speed", "blind", "low vision", "update my profile"],
      "profile_update", "profile_updater_agent", "user profile"),
-    (["go to", "navigate", "checkout", "contact form", "go to checkout", "navigate to checkout"],
+    (["go to", "navigate", "take me to", "take me", "checkout", "contact form", "go to checkout", "navigate to checkout"],
      "navigation_help", "navigation_agent", "navigation target"),
     (["schedule", "scheduled", "remind", "appointment", "calendar", "plan my day"],
      "scheduler_help", "scheduler_agent", "scheduled task"),
-    (["contrast", "font", "bigger text", "layout", "focus", "high contrast", "text size"],
+    (["contrast", "font", "font size", "bigger", "bigger text", "larger", "increase", "text size", "layout", "focus", "high contrast"],
      "ui_help", "ui_adjuster_agent", "display setting"),
     (["simplify", "simply", "what does this say", "in simple terms", "explain this", "easier to understand"],
      "content_explain", "content_explainer_agent", "content to explain"),
@@ -126,11 +135,34 @@ def keyword_classify(text: str, screen_context: str = "") -> Tuple[str, str, str
         return (intent, agent, entity_hint, 0.85,
                 f"Live page open and action/inspect phrasing detected: {intent}")
 
+    # The "Live page:" marker itself contains scoring words ("page",
+    # "dropdown", field labels); strip it before keyword scoring so the
+    # marker cannot vote for an intent - only the user's words and the real
+    # screen description may.
+    context_lower = re.sub(r"live page:.*", "", context_lower)
+
+    # Document words win over explain/simplify phrasing ("Explain this
+    # document in simple terms" is a document request, not content_explain):
+    # the document rule gets a decisive bonus when the INPUT names a
+    # document, so content_explain can only win on screen-pointing phrasing.
+    document_named = any(
+        _kw_in(text_lower, kw)
+        for kw in ("document", "documents", "pdf", "contract", "agreement",
+                   "terms and conditions", "terms of service", "policy",
+                   "section", "clause", "article", "paragraph"))
+    how_do_question = re.search(r"\bhow (do|to|can|should|would)\b", text_lower) is not None
+
     best_score = 0
     best_rule = None
     for keywords, intent, agent, entity_hint in KEYWORD_RULES:
+        # "How do I go to checkout?" asks for guidance (web), it is not an
+        # imperative destination command (navigation).
+        if intent == "navigation_help" and how_do_question:
+            continue
         score = sum(2 for kw in keywords if _kw_in(text_lower, kw))
         score += sum(1 for kw in keywords if _kw_in(context_lower, kw))
+        if intent == "document_help" and document_named:
+            score += 100
         if score > best_score:
             best_score = score
             best_rule = (intent, agent, entity_hint)
@@ -148,20 +180,23 @@ def keyword_classify(text: str, screen_context: str = "") -> Tuple[str, str, str
     # hit, so a single weak screen-context match cannot look certain.
     confidence = min(0.9, round(0.4 + 0.1 * best_score, 2))
 
-    # Try to extract a more specific entity
+    # Try to extract a more specific entity - but only for a routed intent.
+    # On the general-query default these overrides misfired ("birthday card"
+    # -> "Date of Birth field"), dressing an unrouted question as a form one.
     entity = entity_hint
-    if "aadhar" in combined or "aadhaar" in combined:
-        entity = "Aadhaar number field"
-    elif "dob" in combined or "date of birth" in combined or "birth" in combined:
-        entity = "Date of Birth field"
-    elif "permanent address" in combined or "address" in combined:
-        entity = "Permanent Address field"
-    elif "submit" in combined or "button" in combined:
-        entity = "submit button"
-    elif "photosynthesis" in combined:
-        entity = "photosynthesis"
-    elif "machine learning" in combined or " ml " in combined:
-        entity = "machine learning"
+    if intent != "general_query":
+        if "aadhar" in combined or "aadhaar" in combined:
+            entity = "Aadhaar number field"
+        elif "dob" in combined or "date of birth" in combined or "birth" in combined:
+            entity = "Date of Birth field"
+        elif "permanent address" in combined or "address" in combined:
+            entity = "Permanent Address field"
+        elif "submit" in combined or "button" in combined:
+            entity = "submit button"
+        elif "photosynthesis" in combined:
+            entity = "photosynthesis"
+        elif "machine learning" in combined or re.search(r"\bml\b", combined):
+            entity = "machine learning"
 
     reasoning = f"Keyword match for {intent}: detected relevant terms in input"
     return intent, agent, entity, confidence, reasoning
@@ -173,9 +208,9 @@ SYSTEM_PROMPT = """You are an intent classification system for AdaptiveAI, an ac
 Classify the user's input into ONE of these intents and pick the corresponding target agent:
 
 1. form_help -> form_agent: User needs help with a form field (what it means, how to fill, validation)
-2. document_help -> document_agent: User wants to understand, summarize, or extract info from a document/PDF
-3. web_navigation_help -> web_agent: User needs help navigating a website, finding elements, understanding UI
-4. education_help -> education_agent: User wants to learn or understand an educational concept
+2. document_help -> document_agent: User wants to understand, READ, summarize, or extract info from a document/PDF/contract/terms
+3. web_navigation_help -> web_agent: Guidance about a website: finding/understanding pages, links, menus, buttons ("where is X", "find the login link", "what does this menu item do", "how do I navigate to X")
+4. education_help -> education_agent: Learning or explaining an educational CONCEPT, especially named topics (photosynthesis, machine learning, water cycle, Newton's laws, DNA)
 5. general_query -> general_agent: General questions, greetings, or unclear intent
 6. browser_inspect -> browser_agent: User asks about elements ON THE OPEN LIVE PAGE
    (screen context contains a "Live page:" marker) - "where is X", "what does
@@ -193,15 +228,34 @@ Classify the user's input into ONE of these intents and pick the corresponding t
 10. ui_help -> ui_adjuster_agent: User wants display changes (contrast, font size, layout, focus, high contrast)
 11. content_explain -> content_explainer_agent: User wants content simplified or explained in plain words ("explain this", "what does this say", "simplify")
 12. profile_update -> profile_updater_agent: User wants their profile updated (verbosity, voice speed, blind/low-vision settings)
-13. navigation_help -> navigation_agent: User wants to go somewhere in a site/app ("go to checkout", "navigate to ...", "contact form")
+13. navigation_help -> navigation_agent: Imperative destination commands in a site/app ("go to checkout", "navigate to X", "take me to the contact form"). NOT "how do I ..." questions and NOT destination-less phrases ("go there", "click it")
 
-    Hard rule with examples: the "Live page:" marker (a line like
-   "Live page: <title> (<url>)" in the screen context) is the ONLY thing that
-   makes browser_inspect/browser_act legal.
-   - "Where is the submit button on this page?" + screen context "None" (or
-     any context WITHOUT that marker) -> web_navigation_help, NEVER browser_*.
-   - "Fill in my name as Asha" with no marker -> form_help, NEVER browser_act.
-   A missing page means there is nothing real to look at or touch.
+    DISAMBIGUATION RULES (apply in order):
+    1. Live-page marker (hard rule): the "Live page: <title> (<url>)" line in
+       the screen context is the ONLY thing that makes browser_inspect/
+       browser_act legal.
+       - With the marker: "fill in my name as Asha" -> browser_act; "where is
+         the submit button" -> browser_inspect. Ambiguous between looking and
+         doing -> browser_inspect.
+       - WITHOUT the marker: "click it" / "click the X" / "go there" ->
+         web_navigation_help; "fill in my name" / "submit" -> form_help;
+         NEVER browser_*.
+    2. Named academic topic vs text on screen: explaining a NAMED concept
+       (photosynthesis, machine learning, DNA, the water cycle) is
+       education_help even when phrased with "in simple terms" / "simply" /
+       "this concept". content_explain is ONLY for text the user points at on
+       screen ("what does this say", "simplify this paragraph", "explain this
+       page").
+    3. Document words win over reading phrasing: document/PDF/contract/
+       agreement/terms and conditions/terms of service/section/clause ->
+       document_help even when phrased as "read ... to me", "summarize",
+       "explain", or "in simple terms".
+    4. Resolve short anaphoric inputs ("What is this?", "Explain this
+       concept", "Summarize it", "Click it", "Go there", "What about this
+       one?") from the SCREEN CONTEXT:
+       form fields -> form_help; PDF/document/contract/terms -> document_help;
+       textbook/lesson/educational content -> education_help;
+       webpage/menu/link/button -> web_navigation_help.
 
 Also extract the specific entity (field name, document section, web element, concept) the user is asking about.
 
@@ -211,12 +265,19 @@ Return ONLY valid JSON with these exact fields:
   "target_agent": "corresponding_agent",
   "extracted_entity": "specific thing user is asking about",
   "reasoning": "brief explanation of why this classification was chosen",
-  "confidence": 0.85
+  "confidence": 0.85,
+  "ambiguous": false
 }
 
 "confidence" is your own certainty that the intent label is right, as a number
 from 0.0 to 1.0. Use values below 0.5 when the input is ambiguous, mixed, or
-could plausibly belong to two intents."""
+could plausibly belong to two intents.
+
+"ambiguous" is true ONLY when the input is not an actionable request at all:
+gibberish, an unrelated word salad, or so vague that no specialist could help
+even after using the screen context and history. A real question — even a
+short or informal one — is never ambiguous. When ambiguous is true, still
+pick the closest intent so the field is always filled."""
 
 
 async def llm_classify(request: ClassifyRequest) -> ClassifyResponse:
@@ -225,11 +286,16 @@ async def llm_classify(request: ClassifyRequest) -> ClassifyResponse:
     # defaults to a 600s timeout with retries, so a hung NIM call used to blow
     # straight through the fallback window and surface as a 502 upstream. With
     # a bounded client, a NIM hang raises here and the keyword fallback answers.
+    # max_retries=0 (not 1): timeout x (1 + retries) is the worst case, and
+    # 30s x 2 = 60s already exceeds the 45s budget the comment above promises.
     client = AsyncOpenAI(base_url=settings.nim_base_url, api_key=settings.nim_api_key,
-                         timeout=30.0, max_retries=1)
+                         timeout=30.0, max_retries=0)
     
-    # Build context from history
-    history_context = "\n".join(request.history[-settings.max_history_turns:]) if request.history else "No prior conversation."
+    # Build context from history. Session history stores TWO items per turn
+    # (User + System), so the turn-count setting must be doubled to slice
+    # turns; otherwise the prompt gets ~2.5 turns and can start mid-pair with
+    # an orphaned "System:" line whose "User:" line was trimmed off.
+    history_context = "\n".join(request.history[-settings.max_history_turns * 2:]) if request.history else "No prior conversation."
     
     user_prompt = f"""Current user input: "{request.input_text}"
 Screen context: "{request.screen_context or 'None'}"
@@ -256,6 +322,11 @@ Classify this request."""
         if not all(k in result for k in required):
             raise ValueError("Missing required fields in LLM response")
 
+        # The model sometimes emits null/None for extracted_entity on vague
+        # input; a null there must not kill the whole classification.
+        if not isinstance(result.get("extracted_entity"), str):
+            result["extracted_entity"] = str(result.get("extracted_entity") or "unspecified")
+
         # Confidence is self-reported; missing or out-of-range values fall back
         # to a neutral 0.5 rather than failing the whole classification.
         try:
@@ -263,8 +334,10 @@ Classify this request."""
         except (TypeError, ValueError):
             confidence = 0.5
 
-        return ClassifyResponse(**{**result, "confidence": confidence})
-        
+        payload = {**result, "confidence": confidence}
+        payload["ambiguous"] = bool(result.get("ambiguous", False))
+        return ClassifyResponse(**payload)
+
     except Exception as e:
         # Fallback to keyword classifier. NOTE: keyword_classify returns a
         # 5-tuple (with confidence) - unpack all five so the keyword match
@@ -277,6 +350,9 @@ Classify this request."""
             extracted_entity=entity,
             reasoning=reasoning,
             confidence=confidence,
+            # 0.3 is the keyword classifier's explicit no-match default: the
+            # only score low enough to mean "nothing actionable was found".
+            ambiguous=confidence <= 0.3,
         )
 
 

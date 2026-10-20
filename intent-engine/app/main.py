@@ -53,6 +53,9 @@ def check_rate_limit(client_ip: str, max_requests: int = 60, window_sec: int = 6
         _rate_limit_store[client_ip] = []
 
     if len(_rate_limit_store[client_ip]) >= max_requests:
+        # Refresh before rejecting (same reasoning as backend/app/main.py):
+        # a blocked key must not be evicted first under key-flood.
+        _rate_limit_store.move_to_end(client_ip)
         return False
 
     _rate_limit_store[client_ip].append(now)
@@ -166,9 +169,12 @@ async def classify_intent(http_request: Request, request: ClassifyRequest):
     if len(request.screen_context or "") > 5000:
         raise HTTPException(status_code=400, detail="Screen context too long (max 5000 chars)")
     
-    # Include history from session memory
+    # Include history from session memory. The server is authoritative (it
+    # appends every turn after classifying): when it has history, the
+    # client's copy is stale duplicate weight that also pushes real turns
+    # out of the LLM window - use the client's only as a cold-start seed.
     session_history = get_session_history(request.session_id)
-    request.history = session_history + request.history
+    request.history = session_history if session_history else request.history
     
     # Classify with fallback
     try:
@@ -183,6 +189,9 @@ async def classify_intent(http_request: Request, request: ClassifyRequest):
             extracted_entity=entity,
             reasoning=f"LLM failed: {str(e)[:80]}, using keyword fallback: {reasoning}",
             confidence=confidence,
+            # Same contract as the in-classifier fallback: a no-match default
+            # (0.3) is ambiguous, so the backend clarifies instead of guessing.
+            ambiguous=(confidence <= 0.3),
         )
     
     # Update session memory
