@@ -10,6 +10,7 @@ browser-agent/.env
 
 # Tool artifacts
 .mimosa/
+.ruff_cache/
 
 # Python
 __pycache__/
@@ -39,6 +40,11 @@ postgres_data/
 
 # load-test artifacts
 backend/loadtest-*.json
+
+# QA run output (screenshots/logs). Curated evidence lives in docs/qa-assets
+# and docs/screenshots instead - do not commit raw run dumps.
+qa_out/
+frontend/qa_out/
 
 # DB dumps / backups - never commit
 *.sql
