@@ -51,63 +51,122 @@ class FormAgent:
             
         Returns result with status, episode_id, and actions taken.
         """
+        failed_episode_id: Optional[str] = None
         if replay:
-            # Try replay first
             result = await self._try_replay(url, user_values)
-            if result.get("status") in ("success", "partial_success"):
+            # "partial_success" from a replay still means fields on the page were
+            # not operated on - that is a broken cache, not a good enough answer.
+            broke = (result.get("status") in ("failed", "partial_failure")
+                     or result.get("failure_count", 0) > 0)
+            if result.get("status") in ("success", "partial_success") and not broke:
                 return result
-            # If replay failed, fall through to discovery
-        
+
+            # Replay broke. The usual cause is the site re-rendering its markup:
+            # the fields are still there under the same labels, only the stored
+            # selectors are stale. Heal those in place and replay again before
+            # paying for a full re-discovery.
+            episode_id = result.get("episode_id")
+            if episode_id and broke:
+                healed = await self.heal_form(episode_id, url)
+                if healed.get("status") in ("repaired", "re_discovered"):
+                    target = healed.get("new_episode_id") or episode_id
+                    retried = await self.replay_agent.replay_form(target, url, user_values)
+                    if retried.get("status") == "success" and not retried.get("failure_count") and not retried.get("unfilled"):
+                        return {
+                            "status": retried["status"],
+                            "episode_id": target,
+                            "url": url,
+                            "replay_results": retried.get("replay_results", []),
+                            "success_count": retried.get("success_count", 0),
+                            "failure_count": retried.get("failure_count", 0),
+                            "unfilled": retried.get("unfilled", []),
+                            "page_message": retried.get("page_message", ""),
+                            "healed": healed,
+                            "action": "form_filled_after_heal",
+                        }
+                    # The retried replay failed too: the healed selectors were
+                    # wrong (or the page moved on). Remember the episode so the
+                    # fresh discovery below replaces it instead of leaving the
+                    # corrupted episode winning exact-URL replay until TTL.
+                    failed_episode_id = episode_id
+
         # Discovery phase
-        discovery = await self.discovery_agent.discover_form(url)
-        
+        try:
+            discovery = await self.discovery_agent.discover_form(url)
+        except Exception as e:
+            return {"status": "failed", "reason": f"discovery failed: {type(e).__name__}",
+                    "episode_id": None, "url": url, "success_count": 0,
+                    "failure_count": 0, "unfilled": [], "page_message": "",
+                    "action": "discover_failed"}
+        if any("captcha" in str(f.get("label", "")).casefold() or "recaptcha" in str(f.get("label", "")).casefold()
+               for f in discovery.get("fields", [])):
+            return {"status": "failed", "reason": "captcha challenge present: will not evade; sighted help needed",
+                    "episode_id": None, "discovery_id": discovery.get("discovery_id"),
+                    "url": url, "success_count": 0, "failure_count": 0,
+                    "unfilled": [f.get("label") for f in discovery.get("fields", [])],
+                    "page_message": "", "action": "captcha_refused"}
+        if not discovery.get("fields"):
+            # Honest empty: caching this would make every later replay
+            # "succeed" with zero fills.
+            return {
+                "status": "no_fields",
+                "episode_id": None,
+                "discovery_id": discovery.get("discovery_id"),
+                "url": url,
+                "success_count": 0,
+                "failure_count": 0,
+                "unfilled": [],
+                "page_message": discovery.get("vlm_description", ""),
+                "action": "no_fillable_fields",
+            }
+
         # Cache the discovery
         episode_id = await self.cache_agent.cache_discovery(discovery, "form_fill")
+        if failed_episode_id and failed_episode_id != episode_id:
+            try:
+                await self.memory.delete_episode(failed_episode_id)
+            except Exception:
+                pass
         
         # Replay the form
-        replay_result = await self.replay_agent.replay_form(episode_id, url, user_values)
+        try:
+            replay_result = await self.replay_agent.replay_form(episode_id, url, user_values)
+        except Exception as e:
+            return {"status": "failed", "reason": f"replay failed: {type(e).__name__}",
+                    "episode_id": episode_id, "discovery_id": discovery.get("discovery_id"),
+                    "url": url, "success_count": 0, "failure_count": 0,
+                    "unfilled": [], "page_message": "", "action": "replay_failed"}
         
         # Combine results
         return {
-            "status": replay_result.get("status", "success"),
+            "status": replay_result.get("status", "failed"),
             "episode_id": episode_id,
             "discovery_id": discovery.get("discovery_id"),
             "url": url,
             "replay_results": replay_result.get("replay_results", []),
             "success_count": replay_result.get("success_count", 0),
             "failure_count": replay_result.get("failure_count", 0),
+            "unfilled": replay_result.get("unfilled", []),
+            "page_message": replay_result.get("page_message", ""),
             "action": "form_filled",
             "new_episode": replay_result.get("status", "") in ("failed", "expired"),
         }
     
     async def _try_replay(self, url: str, user_values: Dict[str, str] = None) -> Dict[str, Any]:
-        """Try to replay from cached episodes.
-        
-        Looks for the most relevant cached episode for this URL/task type.
-        """
-        # Find similar episodes for this URL/domain
-        domain = self.cache_agent._get_domain(url)
-        similar = await self.memory.find_similar(
+        """Replay the cached episode that actually corresponds to this page."""
+        episode, _score = await self.memory.find_replay_candidate(
             task_type="form_fill",
-            query_embedding=[],  # Would use actual embedding in production
-            site_domain=domain,
-            min_relevance=0.5,
+            url=url,
+            requested_fields=list(user_values or []),
         )
-        
-        if not similar:
-            return {"status": "no_cache", "reason": "No cached episodes found", "action": "discover"}
-        
-        # Use the most relevant episode
-        best_episode, _ = similar[0]
-        episode_id = best_episode.episode_id
-        
-        # Access to refresh relevance
-        episode = await self.memory.access_episode(episode_id)
         if episode is None:
-            return {"status": "no_cache", "reason": "Could not access episode", "action": "discover"}
-        
-        # Attempt replay
-        return await self.replay_agent.replay_form(episode_id, url, user_values)
+            return {"status": "no_cache", "reason": "No cached episodes found", "action": "discover"}
+
+        result = await self.replay_agent.replay_form(episode.episode_id, url, user_values)
+        # Carry the episode id through so a failed replay can be healed rather
+        # than thrown away.
+        result.setdefault("episode_id", episode.episode_id)
+        return result
     
     async def heal_form(self, episode_id: str, current_url: str) -> Dict[str, Any]:
         """Attempt to heal a broken form replay.

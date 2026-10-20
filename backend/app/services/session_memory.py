@@ -8,21 +8,38 @@ and work across replicas.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import time
 from collections import OrderedDict
 
-_REDIS_URL = os.getenv("REDIS_URL", "")
+logger = logging.getLogger(__name__)
+
+def _redis_url() -> str:
+    try:
+        from app.config import settings as _s
+        return _s.redis_url or os.getenv("REDIS_URL", "")
+    except Exception:
+        return os.getenv("REDIS_URL", "")
+
+_REDIS_URL = _redis_url()
 _client = None
 
 if _REDIS_URL:
     try:
         import redis  # type: ignore
 
-        _client = redis.Redis.from_url(_REDIS_URL, decode_responses=True)
+        # Bounded sockets: without timeouts a dead Redis stalls every request
+        # path (and the import-time ping below) instead of failing fast to
+        # the in-memory fallback.
+        _client = redis.Redis.from_url(
+            _REDIS_URL, decode_responses=True,
+            socket_connect_timeout=2.0, socket_timeout=2.0,
+        )
         _client.ping()
-    except Exception:
+    except Exception as e:
+        logger.warning("redis unavailable (%s) - using in-memory TTL fallback", e)
         _client = None
 
 
@@ -39,6 +56,11 @@ class SharedStore:
 
     def set(self, key: str, value: dict | str, ttl_seconds: float | None = None) -> None:
         payload = value if isinstance(value, str) else json.dumps(value)
+        if ttl_seconds is not None and ttl_seconds <= 0:
+            # Zero/negative TTL means "already expired", not "persist forever"
+            # (the old falsy check stored such keys with no expiry at all).
+            self.delete(key)
+            return
         if _client is not None:
             try:
                 if ttl_seconds:
@@ -47,8 +69,8 @@ class SharedStore:
                     _client.setex(self._key(key), max(1, math.ceil(ttl_seconds)), payload)
                 else:
                     _client.set(self._key(key), payload)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("redis set failed, local fallback only: %s", e)
         # Write-through: the local fallback is refreshed on every set, even
         # when Redis succeeded. Without this, a Redis-only write goes stale
         # locally and resurrects after the Redis key expires (get falls back
@@ -68,8 +90,8 @@ class SharedStore:
                 # Redis miss: a write during an outage went to the local
                 # fallback below, so keep reading there instead of reporting
                 # the outage-window value as lost now that Redis is back.
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("redis get failed, local fallback only: %s", e)
         entry = self._local.get(key)
         if entry is None:
             return None
@@ -84,9 +106,39 @@ class SharedStore:
         if _client is not None:
             try:
                 _client.delete(self._key(key))
+            except Exception as e:
+                logger.warning("redis delete failed, local fallback only: %s", e)
+        self._local.pop(key, None)
+
+    def _expiry_state(self, key: str):
+        """Tri-state expiry: "missing" | "no_expiry" | remaining-seconds.
+
+        ttl_remaining() conflates "stored with no expiry" and "gone" as None;
+        callers that must not resurrect dead keys (save_preserving_ttl) need
+        the distinction. Any Redis error falls back to the local copy.
+        """
+        if _client is not None:
+            try:
+                ttl = _client.ttl(self._key(key))
+                if ttl is not None and ttl > 0:
+                    return float(ttl)
+                if ttl == -1:
+                    return "no_expiry"
+                # ttl 0/-2 (expiring this second or gone): fall through to the
+                # local fallback, which reports None for missing/expired keys.
             except Exception:
                 pass
-        self._local.pop(key, None)
+        entry = self._local.get(key)
+        if entry is None:
+            return "missing"
+        _, _, exp = entry
+        if exp is None:
+            return "no_expiry"
+        remaining = exp - time.time()
+        if remaining <= 0:
+            self._local.pop(key, None)
+            return "missing"
+        return remaining
 
     def ttl_remaining(self, key: str) -> float | None:
         """Seconds left on key's absolute expiry, None if no expiry set."""
@@ -152,10 +204,16 @@ class SharedDict:
 
     def save_preserving_ttl(self, key: str, value) -> None:
         """Rewrite without refreshing the absolute expiry (no sliding TTL)."""
-        remaining = self._store.ttl_remaining(key)
-        # `is not None`: an exactly-expired key reads 0.0, which is falsy -
-        # the old truthiness check resurrected it with a full default TTL.
-        ttl = remaining if remaining is not None else self._ttl
+        state = self._store._expiry_state(key)
+        if state == "missing":
+            # Expired (or deleted) between read and rewrite: recreating it
+            # here would resurrect dead state (e.g. an expired share link)
+            # with a fresh TTL.
+            raise KeyError(key)
+        # "no_expiry" persists without expiry; a float refreshes nothing -
+        # the new write carries the same remaining lifetime, never the full
+        # default TTL again.
+        ttl = None if state == "no_expiry" else state
         self._store.set(key, json.dumps(value), ttl_seconds=ttl)
 
     def __delitem__(self, key: str) -> None:
@@ -186,5 +244,5 @@ class SharedDict:
         try:
             return self[key]
         except KeyError:
-            self[key] = default if default is not None else {}
+            self[key] = {} if default is None else default
             return self[key]

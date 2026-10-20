@@ -7,6 +7,7 @@ No write access to preferences, auth, or browser control.
 """
 from __future__ import annotations
 
+import re
 import secrets
 import time
 from uuid import UUID
@@ -44,9 +45,20 @@ def _get_share(token: str) -> dict:
     share = _SHARES.get(token)
     if share is None:
         raise HTTPException(status_code=404, detail="Share link not found or expired")
-    # A malformed record (missing timestamp) is treated as expired: reading
-    # share["created_at"] directly would KeyError into a 500.
-    if not isinstance(share, dict) or time.time() - share.get("created_at", 0) > SHARE_TTL_SECONDS:
+    # A malformed record (missing/non-numeric timestamp, missing session) is
+    # treated as expired: direct attribute access would KeyError/TypeError
+    # into a 500 on corrupted store data.
+    if not isinstance(share, dict):
+        _SHARES.pop(token, None)
+        raise HTTPException(status_code=404, detail="Share link expired")
+    created_at = share.get("created_at", 0)
+    if not isinstance(created_at, (int, float)):
+        _SHARES.pop(token, None)
+        raise HTTPException(status_code=404, detail="Share link expired")
+    if time.time() - created_at > SHARE_TTL_SECONDS:
+        _SHARES.pop(token, None)
+        raise HTTPException(status_code=404, detail="Share link expired")
+    if not share.get("session_id"):
         _SHARES.pop(token, None)
         raise HTTPException(status_code=404, detail="Share link expired")
     share.setdefault("annotations", [])
@@ -91,9 +103,26 @@ async def annotate_shared(token: str, payload: AnnotateRequest, db: AsyncSession
         raise HTTPException(status_code=422, detail="text is required")
     if len(share["annotations"]) >= MAX_ANNOTATIONS_PER_SHARE:
         raise HTTPException(status_code=429, detail="Annotation limit reached for this share link")
+    # The note is persisted as an assistant message and read aloud to the
+    # owner: strip markup (a leaked token + crafted HTML/script would
+    # otherwise voice-phish or inject into the transcript rendering).
+    text = re.sub(r"<[^>]*>", "", text)
+    text = re.sub(r"[ \t\xa0]+", " ", text).strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="text is required")
     annotation = {"text": text, "ts": time.time()}
     share["annotations"].append(annotation)
-    _SHARES.save_preserving_ttl(token, share)  # no sliding TTL: absolute 24h expiry holds
+    # NOTE: get->append->save has no await between the steps, so it is
+    # atomic on this process's event loop. Across multiple backend replicas
+    # sharing one Redis, two simultaneous annotates could last-writer-win;
+    # both notes still land as Message rows below (the durable truth the
+    # owner hears), so at most the shared-view list lags one note.
+    try:
+        _SHARES.save_preserving_ttl(token, share)  # no sliding TTL: absolute 24h expiry holds
+    except KeyError:
+        # Expired between the read above and this rewrite: do not resurrect
+        # it with a fresh TTL.
+        raise HTTPException(status_code=404, detail="Share link expired")
     try:
         session_uuid = UUID(str(share["session_id"]))
         # MessageRole has no SYSTEM member (user/assistant only): the old
@@ -105,4 +134,9 @@ async def annotate_shared(token: str, payload: AnnotateRequest, db: AsyncSession
         await db.commit()
     except Exception:
         await db.rollback()
+        # Swallowing this returned "annotated" while the owner's voice-announced
+        # note never landed — the helper thinks help arrived, the user hears
+        # nothing. Surface the failure instead.
+        raise HTTPException(status_code=502,
+                            detail="The note was saved to the shared view but could not be delivered to the user. Ask them to check the screen.")
     return {"status": "annotated", "total": len(share["annotations"])}

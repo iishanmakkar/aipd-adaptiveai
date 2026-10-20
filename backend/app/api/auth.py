@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID, uuid4
 
@@ -8,6 +8,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -30,7 +31,7 @@ def _password_bytes(password: str) -> bytes:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
         return bcrypt.checkpw(_password_bytes(plain_password), hashed_password.encode("utf-8"))
-    except ValueError:
+    except (ValueError, TypeError, AttributeError):
         # Malformed/truncated hash in the DB must read as "not authenticated".
         return False
 
@@ -46,11 +47,11 @@ oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
+    to_encode.update({"exp": expire, "iat": datetime.now(timezone.utc)})
+    encoded_jwt = jwt.encode(to_encode, settings.jwt_secret, algorithm="HS256")
     return encoded_jwt
 
 
@@ -66,7 +67,12 @@ async def get_current_user(
     if not token:
         raise credentials_exception
     try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        # options require exp: a correctly signed token with no expiry would
+        # otherwise be accepted forever. Every token this service mints
+        # carries exp (create_access_token), so this only rejects forgeries.
+        payload = jwt.decode(token, settings.jwt_secret,
+                             algorithms=["HS256"],
+                             options={"require": ["exp"]})
         user_id: str = payload.get("sub")
         if user_id is None:
             raise credentials_exception
@@ -112,7 +118,17 @@ async def get_current_user_optional(
             # Create persistent demo user
             demo_user = User(email="demo@adaptiveai.io", hashed_password=get_password_hash("demo123"))
             db.add(demo_user)
-            await db.flush()
+            try:
+                await db.flush()
+            except IntegrityError:
+                # Two concurrent first touches both missed the row; use the
+                # winner's row instead of a random ephemeral identity.
+                await db.rollback()
+                result = await db.execute(select(User).where(User.email == "demo@adaptiveai.io"))
+                demo_user = result.scalar_one_or_none()
+                if demo_user:
+                    return demo_user
+                raise
             # Ensure preference row exists
             from app.models.preference import Preference
             pref = Preference(user_id=demo_user.id)
@@ -130,7 +146,9 @@ async def get_current_user_optional(
                 pass
             return DemoUser()
     try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        payload = jwt.decode(token, settings.jwt_secret,
+                             algorithms=["HS256"],
+                             options={"require": ["exp"]})
         user_id: str = payload.get("sub")
         if user_id is None:
             raise HTTPException(status_code=401, detail="Invalid token")

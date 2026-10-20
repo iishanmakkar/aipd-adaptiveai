@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 import json
 import logging
 import os
+import re
 import time
 from collections import OrderedDict, deque
 
@@ -48,12 +49,10 @@ if os.getenv("ADAPTIVEAI_PRODUCTION", "").strip() in ("1", "true", "True") and s
 # Fail closed on a placeholder JWT secret in production: the shipped default is
 # public, so any production boot without a real JWT_SECRET could forge tokens.
 _JWT_PLACEHOLDER = "dev-secret-change-in-production-min-32-chars-long"
-if (
-    os.getenv("ADAPTIVEAI_PRODUCTION", "").strip() in ("1", "true", "True")
-    and settings.jwt_secret.strip() in ("", _JWT_PLACEHOLDER)
-):
+_prod = os.getenv("ADAPTIVEAI_PRODUCTION", "").strip() in ("1", "true", "True")
+if (_prod or not settings.debug) and settings.jwt_secret.strip() in ("", _JWT_PLACEHOLDER):
     raise RuntimeError(
-        "Refusing to start: ADAPTIVEAI_PRODUCTION is set but JWT_SECRET is the "
+        "Refusing to start: DEBUG=False but JWT_SECRET is missing or the "
         "shipped default. Set a random 32+ char JWT_SECRET in backend/.env."
     )
 
@@ -71,8 +70,10 @@ _LATENCIES: deque[float] = deque(maxlen=1000)
 
 def _record_metrics(status_code: int, latency_ms: float) -> None:
     _METRICS["total_requests"] += 1
-    if status_code < 400:
+    if 200 <= status_code < 300:
         _METRICS["total_2xx"] += 1
+    elif status_code < 400:
+        _METRICS["total_3xx"] = _METRICS.get("total_3xx", 0) + 1
     elif status_code < 500:
         _METRICS["total_4xx"] += 1
     else:
@@ -111,6 +112,9 @@ def check_rate_limit(client_ip: str, max_requests: int = 100, window_sec: int = 
         _rate_limit_store[client_ip] = []
 
     if len(_rate_limit_store[client_ip]) >= max_requests:
+        # Refresh before rejecting: under key-flood the hottest (blocked) key
+        # must not be the first one evicted, or the quota resets itself.
+        _rate_limit_store.move_to_end(client_ip)
         return False
 
     _rate_limit_store[client_ip].append(now)
@@ -129,8 +133,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Database connection failed (demo mode): {e}")
     yield
-    # Shutdown - cleanup rate limit store
+    # Shutdown - cleanup rate limit store + release pooled DB connections
+    # (without dispose, worker restarts warn about pending connections).
     _rate_limit_store.clear()
+    try:
+        from app.database import engine as _engine
+        if _engine is not None:
+            await _engine.dispose()
+    except Exception as e:
+        logger.warning(f"engine dispose failed on shutdown: {e}")
 
 
 app = FastAPI(
@@ -193,7 +204,7 @@ def _rate_limit_key(request: Request) -> str:
     if auth.lower().startswith("bearer "):
         try:
             payload = jwt.decode(auth[7:].strip(), settings.jwt_secret,
-                                 algorithms=[settings.jwt_algorithm])
+                                 algorithms=["HS256"], options={"require": ["exp"]})
             sub = payload.get("sub")
             if sub:
                 return f"user:{sub}"
@@ -205,8 +216,10 @@ def _rate_limit_key(request: Request) -> str:
 @app.middleware("http")
 async def add_middleware_process_time(request: Request, call_next):
     start_time = time.time()
-    # Generate request ID
-    request_id = request.headers.get("X-Request-ID") or f"{id(request)}-{int(start_time)}"
+    # Request ID: client-supplied values are sanitized (alphanumeric/dash,
+    # capped) so a hostile X-Request-ID cannot inject log lines or headers.
+    raw_request_id = request.headers.get("X-Request-ID") or f"{id(request)}-{int(start_time)}"
+    request_id = re.sub(r"[^A-Za-z0-9-]", "", raw_request_id)[:64] or f"{id(request)}-{int(start_time)}"
     request.state.request_id = request_id
 
     # Rate limiting - real 429 (fixed bug: was Response with dict -> 500)
@@ -229,41 +242,63 @@ async def add_middleware_process_time(request: Request, call_next):
     # Normalize trailing slashes before budget lookup: "/api/form-fill/"
     # otherwise bypassed the heavy budget entirely (exact-match miss).
     path = request.url.path.rstrip("/") or "/"
+
+    def _rate_limited(message: str) -> JSONResponse:
+        # Every 429 carries the same correlation surface as a normal request:
+        # X-Request-ID header + access-log line (a silent 429 with no trace
+        # is undebuggable across the backend->engine->agents chain).
+        _record_metrics(429, (time.time() - start_time) * 1000)
+        logger.info(json.dumps({
+            "event": "request",
+            "request_id": request_id,
+            "method": request.method,
+            "path": _redact_path(path),
+            "status": 429,
+            "latency_ms": round((time.time() - start_time) * 1000, 1),
+            "client": client_ip,
+        }))
+        return JSONResponse(
+            content={"error": message},
+            status_code=429,
+            headers={"X-Request-ID": request_id,
+                     "X-Rate-Limit-Remaining": "0", "Retry-After": "60"},
+        )
+
     if path in ("/auth/register", "/auth/login"):
         auth_key = f"auth:{path}:{client_ip}"
         if not check_rate_limit(auth_key, max_requests=10, window_sec=60):
-            _record_metrics(429, (time.time() - start_time) * 1000)
-            return JSONResponse(
-                content={"error": "Too many authentication attempts; try again later."},
-                status_code=429,
-                headers={"X-Rate-Limit-Remaining": "0", "Retry-After": "60"},
-            )
+            return _rate_limited("Too many authentication attempts; try again later.")
         remaining_key, remaining_max = auth_key, 10
         check_global = False
     elif path in _HEAVY_BUDGETS:
         heavy_max = _HEAVY_BUDGETS[path]
         heavy_key = f"heavy:{path}:{rate_key}"
         if not check_rate_limit(heavy_key, max_requests=heavy_max, window_sec=60):
-            _record_metrics(429, (time.time() - start_time) * 1000)
-            return JSONResponse(
-                content={"error": "Too many automated-browsing requests; try again later."},
-                status_code=429,
-                headers={"X-Rate-Limit-Remaining": "0", "Retry-After": "60"},
-            )
+            return _rate_limited("Too many automated-browsing requests; try again later.")
         remaining_key, remaining_max = heavy_key, heavy_max
         check_global = False
     else:
         remaining_key, remaining_max = rate_key, 200
 
     if check_global and not check_rate_limit(rate_key, max_requests=200, window_sec=60):
-        _record_metrics(429, (time.time() - start_time) * 1000)
-        return JSONResponse(
-            content={"error": "Rate limit exceeded"},
-            status_code=429,
-            headers={"X-Rate-Limit-Remaining": "0", "Retry-After": "60"}
-        )
+        return _rate_limited("Rate limit exceeded")
 
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        # An unhandled route 500 must still be counted and logged (previously
+        # ServerErrorMiddleware swallowed it past the metrics entirely).
+        _record_metrics(500, (time.time() - start_time) * 1000)
+        logger.info(json.dumps({
+            "event": "request",
+            "request_id": request_id,
+            "method": request.method,
+            "path": _redact_path(path),
+            "status": 500,
+            "latency_ms": round((time.time() - start_time) * 1000, 1),
+            "client": client_ip,
+        }))
+        raise
     latency_ms = round((time.time() - start_time) * 1000, 1)
     response.headers["X-Process-Time"] = str(latency_ms / 1000)
     response.headers["X-Request-ID"] = request_id
@@ -273,18 +308,27 @@ async def add_middleware_process_time(request: Request, call_next):
 
     # Structured access log: one JSON line per request, correlated on request_id
     # across backend -> intent-engine -> agents (each service logs the same id).
+    # Share links carry a bearer-grade token in the path: redact the token so
+    # access logs (and any proxy logs) never store the secret.
     _record_metrics(response.status_code, latency_ms)
     logger.info(json.dumps({
         "event": "request",
         "request_id": request_id,
         "method": request.method,
-        "path": request.url.path,
+        "path": _redact_path(path),
         "status": response.status_code,
         "latency_ms": latency_ms,
         "client": client_ip,
     }))
 
     return response
+
+
+def _redact_path(path: str) -> str:
+    """Bearer-grade tokens must never land in logs: /api/share/<token>."""
+    if path.startswith("/api/share/"):
+        return "/api/share/[redacted]"
+    return path
 
 
 @app.get("/api/metrics")

@@ -7,25 +7,59 @@ answers.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user_optional
 from app.database import get_db, is_db_available
-from app.models.preference import Preference
+from app.models.preference import (
+    Preference,
+    VerbosityLevel,
+    DisabilityProfile,
+    LanguageComplexity,
+)
 from app.models.user import User
 from app.schemas.preference import PreferenceUpdate, PreferenceResponse
 
 router = APIRouter(prefix="/api", tags=["preferences"])
 
 
+_PREFERENCE_DEFAULTS = {
+    "verbosity_level": VerbosityLevel.standard,
+    "voice_speed": 1.0,
+    "disability_profile": DisabilityProfile.none,
+    "language_complexity": LanguageComplexity.standard,
+}
+
+
+def _heal_nulls(pref: Preference) -> Preference:
+    """Legacy rows (or pre-flush objects) can carry None where the response
+    contract requires a value. Fill defaults so reads never 500."""
+    for field, default in _PREFERENCE_DEFAULTS.items():
+        if getattr(pref, field, None) is None:
+            setattr(pref, field, default)
+    return pref
+
+
 async def _get_or_create_preference(db: AsyncSession, user: User) -> Preference:
     result = await db.execute(select(Preference).where(Preference.user_id == user.id))
     pref = result.scalar_one_or_none()
     if pref is None:
-        pref = Preference(user_id=user.id)
+        # Explicit values, not flush-fired column defaults: attributes must be
+        # present immediately (reads happen before any flush).
+        pref = Preference(user_id=user.id, **_PREFERENCE_DEFAULTS)
         db.add(pref)
-        await db.flush()
-    return pref
+        try:
+            await db.flush()
+        except IntegrityError:
+            # Two concurrent first touches both missed the row; the winner's
+            # row is the one to use - never 503 this.
+            await db.rollback()
+            result = await db.execute(select(Preference).where(Preference.user_id == user.id))
+            pref = result.scalar_one_or_none()
+            if pref is None:
+                raise
+    return _heal_nulls(pref)
 
 
 def _require_db() -> None:
@@ -62,10 +96,14 @@ async def update_preferences(
     _require_db()
     try:
         pref = await _get_or_create_preference(db, current_user)
-        pref.verbosity_level = update.verbosity_level
-        pref.voice_speed = update.voice_speed
-        pref.disability_profile = update.disability_profile
-        pref.language_complexity = update.language_complexity
+        if update.verbosity_level is not None:
+            pref.verbosity_level = update.verbosity_level
+        if update.voice_speed is not None:
+            pref.voice_speed = update.voice_speed
+        if update.disability_profile is not None:
+            pref.disability_profile = update.disability_profile
+        if update.language_complexity is not None:
+            pref.language_complexity = update.language_complexity
         await db.commit()
         await db.refresh(pref)
     except Exception as e:

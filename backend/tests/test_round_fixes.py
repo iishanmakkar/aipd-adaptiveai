@@ -17,6 +17,61 @@ def test_relay_error_passes_browser_404_409():
     assert _relay_error(_http_status_error(500, "boom"), "start").status_code == 502
 
 
+async def test_form_browser_interceptor_aborts_ssrf_redirect(monkeypatch):
+    """Same guarantee as the browser-agent driver: the form filler's Chromium
+    re-validates every in-page request (302-to-metadata, rebinding), because
+    the entry-URL guard alone admits both."""
+    from types import SimpleNamespace
+    from app.agents.form.browser_tool import BrowserTool
+    import app.api.url_guard as guard
+
+    def fake_resolve(host):
+        # Mirror real DNS for IP literals (no lookup happens); only
+        # hostnames resolve to the canned public address.
+        import ipaddress
+        try:
+            ipaddress.ip_address(host)
+            return [(2, 1, 6, "", (host, 0))]
+        except ValueError:
+            return [(2, 1, 6, "", ("93.184.216.34", 0))]  # public, no network
+
+    monkeypatch.setattr(guard, "_resolve", fake_resolve)
+    # Pin the local-targets opt-in OFF (compose sets it ON): this test locks
+    # the interception mechanism under the default policy.
+    monkeypatch.setenv(guard.LOCAL_TARGETS_ENV, "0")
+    seen = {}
+
+    class FakeRoute:
+        def __init__(self, url):
+            self.request = SimpleNamespace(url=url)
+            self.verdict = None
+
+        async def abort(self):
+            self.verdict = "abort"
+
+        async def continue_(self):
+            self.verdict = "continue"
+
+    class FakePage:
+        async def route(self, pattern, handler):
+            seen["pattern"] = pattern
+            seen["handler"] = handler
+
+    tool = BrowserTool.__new__(BrowserTool)
+    tool._page = FakePage()
+    await tool._guard_requests()
+    assert seen["pattern"] == "**/*"
+    for url, want in [
+        ("https://example.com/app.css", "continue"),
+        ("http://169.254.169.254/latest/meta-data", "abort"),
+        ("http://10.9.9.9/admin", "abort"),
+        ("wss://example.com/sock", "continue"),
+    ]:
+        route = FakeRoute(url)
+        await seen["handler"](route)
+        assert route.verdict == want, url
+
+
 def test_monitor_stop_409_shortcircuits_without_browser():
     # _browser_status is the single reader monitors use; 409 must be visible.
     from app.api.routes_monitor import _browser_status
@@ -46,7 +101,13 @@ def test_vlm_non_json_upstream_does_not_500(client, monkeypatch):
             return _Resp()
 
     monkeypatch.setattr(routes_vlm.httpx, "AsyncClient", lambda **kw: _Client())
-    r = client.post("/v1/chat/completions", json={"messages": []})
+    # The proxy is vision-only now (model allowlist + image requirement), so
+    # the passthrough scenario must carry an image part to reach upstream.
+    r = client.post("/v1/chat/completions", json={"messages": [
+        {"role": "user", "content": [
+            {"type": "text", "text": "describe"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}},
+        ]}]})
     assert r.status_code == 200
     assert "upstream_response" in r.json()
 
@@ -89,7 +150,10 @@ def test_shared_dict_rewrite_preserves_absolute_expiry():
     first_exp = store._local["k"][2]
     time.sleep(0.02)
     d.save_preserving_ttl("k", {"v": 2})
-    assert store._local["k"][2] == first_exp
+    # Recomputing the expiry (now + remaining) drifts by the microseconds spent
+    # in between - exact float equality only held on coarse OS timers (Windows
+    # ~15ms) and failed on Linux/CI. Assert the expiry was not refreshed.
+    assert abs(store._local["k"][2] - first_exp) < 0.01
     assert store.ttl_remaining("k") is not None
 
 

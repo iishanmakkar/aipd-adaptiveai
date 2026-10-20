@@ -1,4 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.orm import DeclarativeBase
 from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -18,7 +19,12 @@ if not settings.supabase_db_url or settings.supabase_db_url.strip() == "":
     _db_available = False
 else:
     try:
-        engine = create_async_engine(settings.supabase_db_url, echo=False, pool_pre_ping=True)
+        engine = create_async_engine(
+            settings.supabase_db_url, echo=False, pool_pre_ping=True, pool_recycle=1800,
+            # asyncpg takes connect args differently: a connect timeout via the
+            # pool is `pool_recycle` + a bounded `timeout` kwarg on connect.
+            connect_args={"timeout": 5},
+        )
         async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         _db_available = True
     except Exception as e:
@@ -49,7 +55,9 @@ async def get_db() -> AsyncSession:
         # this, a malformed email surfaces as 503 "Database connection failed"
         # instead of the honest 422 (seen live with a .local address).
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise
+    except (SQLAlchemyError, OSError, ConnectionError) as e:
         # A DB that dies mid-flight raises HERE, at pool checkout inside the
         # dependency - before any route's own try/except can run. Without this
         # wrapper, a postgres restart produced 500s (seen in the Round-4
@@ -58,6 +66,11 @@ async def get_db() -> AsyncSession:
             status_code=503,
             detail=f"Database connection failed: {str(e)[:200]}",
         )
+    except Exception:
+        # A route bug (KeyError, None-attribute, ...) thrown back into the
+        # dependency must stay a 500: relabeling it 503 sends operators to
+        # debug postgres for a code bug, and the retry never clears.
+        raise
 
 
 async def init_db() -> None:

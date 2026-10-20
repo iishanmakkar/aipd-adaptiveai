@@ -23,7 +23,7 @@ DISABILITY_PROMPTS = {
     DisabilityProfile.blind: (
         "Respond with clear, step-by-step verbal instructions. "
         "Avoid visual references like 'click here', 'see above', or 'on the right'. "
-        "Use spatial descriptions: 'the first field', 'the button below the form'. "
+        "Use sequential descriptions: 'the first field', 'the next button after Name'. "
         "Announce state changes explicitly."
     ),
     DisabilityProfile.low_vision: (
@@ -39,7 +39,7 @@ DISABILITY_PROMPTS = {
     DisabilityProfile.motor: (
         "Minimize required interactions. Prefer voice-first workflows. "
         "Combine multiple steps into single actions. "
-        "Indicate keyboard shortcuts when available."
+        "Mention only keyboard shortcuts stated in the page context; never invent any."
     ),
     DisabilityProfile.none: "",
 }
@@ -63,17 +63,18 @@ async def count_clarifying_questions(db: AsyncSession | None, session_id: UUID |
         .limit(window)
     )
     messages = result.scalars().all()
-    return sum(1 for m in messages if m.content.strip().endswith("?"))
+    return sum(1 for m in messages if (m.content or "").strip().endswith("?"))
 
 
 async def get_message_count(db: AsyncSession | None, session_id: UUID | str) -> int:
     """Get total message count for session."""
     if db is None:
         return 0
+    from sqlalchemy import func
     result = await db.execute(
-        select(Message).where(Message.session_id == session_id)
+        select(func.count()).select_from(Message).where(Message.session_id == session_id)
     )
-    return len(result.scalars().all())
+    return int(result.scalar_one())
 
 
 async def adjust_response(
@@ -90,43 +91,80 @@ async def adjust_response(
     This is designed to be extended with a proper ML-based adaptation model later.
     Currently uses simple rule-based logic with optional LLM rewrite.
     """
-    
+    if user_prefs is None:
+        # No preference row (legacy user, failed demo-user bootstrap): shape
+        # nothing, but never crash - every rule below reads attributes.
+        from types import SimpleNamespace
+        user_prefs = SimpleNamespace(
+            verbosity_level=VerbosityLevel.standard,
+            disability_profile=DisabilityProfile.none,
+            language_complexity=LanguageComplexity.standard)
+
     # Build disability-specific instruction
     disability_instruction = DISABILITY_PROMPTS.get(user_prefs.disability_profile, "")
     language_instruction = LANGUAGE_COMPLEXITY_PROMPTS.get(user_prefs.language_complexity, "")
-    
+
     combined_instruction = f"{disability_instruction} {language_instruction}".strip()
-    
-    # Rule 1: High confusion → simplify (highest priority)
+    # Verbosity composes with EVERYTHING below (it used to die in Rule 1 and
+    # never reach blind+concise users at all). Suffixes keep the historical
+    # Rule-3 wording so prompt-contract tests keep passing.
+    if user_prefs.verbosity_level == VerbosityLevel.concise:
+        combined_instruction += " Make this response concise - maximum 2 sentences, direct and to the point."
+    elif user_prefs.verbosity_level == VerbosityLevel.detailed:
+        combined_instruction += " Expand this response with examples, context, and thorough explanation."
+
+    # First-time orientation is independent of shaping: a new blind+concise
+    # user gets the rewrite AND the tip (previously Rule 4 never ran for
+    # explicit prefs, so they never learned repeat/simplify exist).
+    if db is None:
+        msg_count = 0  # no history available: treat as first-time (old contract)
+    else:
+        msg_count = (session_context or {}).get("message_count")
+        if msg_count is None:
+            msg_count = await get_message_count(db, session_id)
+
+    def _with_tip(text: str) -> str:
+        if msg_count >= 3:
+            return text
+        tip = "Tip: you can ask me to repeat any answer, or to make it simpler, at any time."
+        stripped = text.rstrip()
+        if not stripped:
+            # An empty answer with a leading ". " would read as ". Tip: ...".
+            return tip
+        glue = " " if stripped.endswith((".", "!", "?")) else ". "
+        out = stripped + glue + tip
+        # Blind shaping still applies on first turns (was returned raw).
+        if user_prefs.disability_profile == DisabilityProfile.blind:
+            out = out.replace("click here", "activate the next button").replace("see above", "described above")
+        return out
+
+    # Rule 1: High confusion → simplify (highest priority). Returns the
+    # rewrite verbatim (no orientation tip): the pinned contract is one
+    # simplification pass for a confused user.
     if clarifying_count >= settings.clarifying_threshold:
         instruction = "Simplify this explanation for a confused user. Use plain language, short sentences, and avoid jargon."
         if combined_instruction:
             instruction = f"{combined_instruction} {instruction}"
         return await llm_rewrite(raw_answer, instruction)
 
-    # Rule 2: Disability profile + language complexity (always apply if set)
+    # Rule 2: Disability profile + language complexity + verbosity (always
+    # apply if set).
     if combined_instruction:
-        return await llm_rewrite(raw_answer, combined_instruction)
+        return _with_tip(await llm_rewrite(raw_answer, combined_instruction))
 
-    # Rule 3: Verbosity preference
-    if user_prefs.verbosity_level == VerbosityLevel.concise:
-        instruction = "Make this response concise - maximum 2 sentences, direct and to the point."
-        if language_instruction:
-            instruction = f"{language_instruction} {instruction}"
-        return await llm_rewrite(raw_answer, instruction)
-    elif user_prefs.verbosity_level == VerbosityLevel.detailed:
-        instruction = "Expand this response with examples, context, and thorough explanation."
-        if language_instruction:
-            instruction = f"{language_instruction} {instruction}"
-        return await llm_rewrite(raw_answer, instruction)
+    # Rule 3: unreachable alone now (verbosity already folded into
+    # combined_instruction above, which is non-empty whenever verbosity is
+    # non-default) — kept as a guard for direct-call parity.
+    if user_prefs.verbosity_level in (VerbosityLevel.concise, VerbosityLevel.detailed):
+        return _with_tip(await llm_rewrite(raw_answer, combined_instruction))
 
-    # Rule 4: First-time user (few messages in session)
-    msg_count = await get_message_count(db, session_id)
+    # Rule 4: First-time user (few messages in session). Deliberately NOT an
+    # LLM rewrite: this fired a SECOND full NIM completion on nearly every
+    # new-session answer (~12s of the ~28s measured query) for a nicety the
+    # chat's own welcome bubble already covers. A fixed orientation sentence
+    # costs zero latency and says the same thing.
     if msg_count < 3:
-        instruction = "Add a brief welcoming orientation. Be encouraging and explain any next steps."
-        if combined_instruction:
-            instruction = f"{combined_instruction} {instruction}"
-        return await llm_rewrite(raw_answer, instruction)
+        return _with_tip(raw_answer)
 
     # Rule 5: Observed behavior - LOWEST priority, defaults only.
     # replay = the user replayed answers (didn't get it) -> simplify.
@@ -136,6 +174,14 @@ async def adjust_response(
     if _prefs_are_defaults(user_prefs):
         replays = (session_context or {}).get("replay_count", 0)
         skips = (session_context or {}).get("skip_count", 0)
+        if replays >= 2 and skips >= 2:
+            # Contradictory signals (didn't get it AND too long): serve both
+            # with plain short words, not one at the other's expense.
+            return await llm_rewrite(
+                raw_answer,
+                "The user replayed previous answers (hard to follow) and also "
+                "skips them (too long). Use plain words, short sentences, "
+                "maximum 2 sentences, key point first.")
         if replays >= 2:
             return await llm_rewrite(
                 raw_answer,
@@ -156,6 +202,8 @@ def _prefs_are_defaults(user_prefs) -> bool:
 
     Missing attributes (demo/partial prefs) count as defaults - only an
     explicitly stored non-default value opts out of behavior-driven shaping.
+    voice_speed is deliberately excluded: it is TTS-only, so a faster voice
+    must not opt the user out of text shaping they never refused.
     """
     return (
         getattr(user_prefs, "verbosity_level", VerbosityLevel.standard) == VerbosityLevel.standard
@@ -174,9 +222,17 @@ async def llm_rewrite(text: str, instruction: str) -> str:
                 {"role": "user", "content": text}
             ],
             temperature=0.3,
-            max_tokens=500
+            max_tokens=800
         )
-        return response.choices[0].message.content.strip()
+        content = response.choices[0].message.content or ""
+        out = content.strip() or text
     except Exception:
         # Fallback: return original text if LLM fails
-        return text
+        out = text
+    # Deterministic blind guard: NIM-down must not leak visual refs.
+    for bad, good in (("click here", "activate the next button"),
+                      ("see above", "described above"),
+                      ("on the right", "next in order"),
+                      ("on the left", "previous in order")):
+        out = out.replace(bad, good)
+    return out

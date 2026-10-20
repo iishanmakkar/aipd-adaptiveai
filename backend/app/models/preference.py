@@ -1,6 +1,6 @@
 import uuid
 from typing import TYPE_CHECKING
-from sqlalchemy import String, ForeignKey, Enum as SQLEnum
+from sqlalchemy import String, ForeignKey, Enum as SQLEnum, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
@@ -36,9 +36,9 @@ class Preference(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
-    verbosity_level: Mapped[VerbosityLevel] = mapped_column(SQLEnum(VerbosityLevel), default=VerbosityLevel.standard, nullable=False)
-    voice_speed: Mapped[float] = mapped_column(default=1.0, nullable=False)
-    disability_profile: Mapped[DisabilityProfile] = mapped_column(SQLEnum(DisabilityProfile), default=DisabilityProfile.none, nullable=False)
-    language_complexity: Mapped[LanguageComplexity] = mapped_column(SQLEnum(LanguageComplexity), default=LanguageComplexity.standard, nullable=False)
+    verbosity_level: Mapped[VerbosityLevel] = mapped_column(SQLEnum(VerbosityLevel), default=VerbosityLevel.standard, server_default="standard", nullable=False)
+    voice_speed: Mapped[float] = mapped_column(default=1.0, server_default="1.0", nullable=False)
+    disability_profile: Mapped[DisabilityProfile] = mapped_column(SQLEnum(DisabilityProfile), default=DisabilityProfile.none, server_default="none", nullable=False)
+    language_complexity: Mapped[LanguageComplexity] = mapped_column(SQLEnum(LanguageComplexity), default=LanguageComplexity.standard, server_default="standard", nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="preferences")

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import create_access_token, get_password_hash, verify_password, get_current_user
@@ -28,7 +29,15 @@ async def register(user_data: UserRegister, db: AsyncSession = Depends(require_d
     hashed_password = get_password_hash(user_data.password)
     user = User(email=user_data.email, hashed_password=hashed_password)
     db.add(user)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Two concurrent registers with the same email both passed the select
+        # above; the loser's unique-constraint violation used to escape as a
+        # 503 "database connection failed" — telling a client to retry an
+        # input that can never succeed.
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Email already registered")
 
     # Create default preferences
     pref = Preference(user_id=user.id)
@@ -67,13 +76,15 @@ async def delete_account(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(require_db),
 ):
-    """Delete the account and every related row: messages, sessions, preferences.
+    """Delete the account and every related row: messages, behavior signals,
+    sessions, preferences.
 
     All FKs are ON DELETE CASCADE, but the deletes run explicitly in child-first
     order anyway so the outcome does not depend on how the database was created.
     There is no soft-delete: after 204 the data is gone from Postgres.
     """
     from sqlalchemy import delete as sa_delete
+    from app.models.behavior import BehaviorSignal
     from app.models.message import Message
     from app.models.session import Session
 
@@ -81,6 +92,11 @@ async def delete_account(
         await db.execute(
             sa_delete(Message).where(
                 Message.session_id.in_(select(Session.id).where(Session.user_id == current_user.id))
+            )
+        )
+        await db.execute(
+            sa_delete(BehaviorSignal).where(
+                BehaviorSignal.session_id.in_(select(Session.id).where(Session.user_id == current_user.id))
             )
         )
         await db.execute(sa_delete(Session).where(Session.user_id == current_user.id))

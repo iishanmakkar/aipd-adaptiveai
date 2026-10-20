@@ -87,7 +87,24 @@ def test_browser_error_mapping_is_honest():
     assert rq._browser_error_detail(err(423, "captcha here")) == (423, "captcha here")
     assert rq._browser_error_detail(err(429))[0] == 429
     code, msg = rq._browser_error_detail(RuntimeError("boom"))
-    assert code == 502 and "RuntimeError" in msg
+    # Spoken answers must stay honest WITHOUT leaking exception names or URLs:
+    # the frontend reads this text aloud to blind users, so it must be one
+    # speakable sentence that still says the failure is upstream's (502).
+    assert code == 502
+    assert "RuntimeError" not in msg and "boom" not in msg
+    assert msg == "the browsing service had a problem"
+
+
+def test_speakable_browser_error_leaks_nothing():
+    """Every spoken answer must be one clean sentence: no exception class
+    names, no URLs, no status codes — that garbage was read aloud to a blind
+    user when the browsing service refused a repeat page-open."""
+    import httpx
+    req = httpx.Request("POST", "http://browser-agent:8003/session/open")
+    resp = httpx.Response(422, json={"detail": "x"}, request=req)
+    msg = rq._speakable_browser_error(httpx.HTTPStatusError("e", request=req, response=resp))
+    assert "422" not in msg and "browser-agent" not in msg and "HTTPStatusError" not in msg
+    assert msg == "the browsing service refused that request - it may not allow that address right now"
 
 
 def test_browser_404_passes_through_for_expiry_and_reopen():

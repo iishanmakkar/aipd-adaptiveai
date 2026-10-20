@@ -22,13 +22,15 @@ MAX_FILL_VALUE_CHARS = 2000
 
 
 class FormFillRequest(BaseModel):
-    url: str = Field(..., min_length=1)
+    url: str = Field(..., min_length=1, max_length=2000)
     values: Dict[str, str] = Field(default_factory=dict)
     replay: bool = False
 
     @field_validator("values")
     @classmethod
     def _bound_values(cls, values: Dict[str, str]) -> Dict[str, str]:
+        if not values:
+            raise ValueError("fields must not be empty")
         if len(values) > MAX_FILL_PAIRS:
             raise ValueError(f"too many fill values (max {MAX_FILL_PAIRS})")
         for key, value in values.items():
@@ -43,11 +45,10 @@ async def form_fill(req: FormFillRequest):
         validate_browse_url(req.url)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    if not req.values:
-        raise HTTPException(status_code=422, detail="values must not be empty")
     try:
+        import asyncio as _aio
         agent = FormAgent()
-        return await agent.fill_form(req.url, replay=req.replay, user_values=req.values)
+        return await _aio.wait_for(agent.fill_form(req.url, replay=req.replay, user_values=req.values), timeout=180)
     except RuntimeError as e:
         # Honest configuration errors (no browser, no VLM key): 503, not 500.
         raise HTTPException(status_code=503, detail=str(e)[:300])

@@ -60,12 +60,18 @@ async def test_detailed_preference_expands(rewrites):
 
 
 async def test_first_time_user_gets_welcome(rewrites):
-    await adjust_response(
+    """Rule 4 is deliberately NOT an LLM rewrite: it fired a second full NIM
+    completion (~12s measured) on nearly every new-session answer. The
+    orientation must be a fixed sentence appended with zero latency, and no
+    rewrite call may be made."""
+    out = await adjust_response(
         raw_answer="Long text", user_prefs=_prefs(VerbosityLevel.standard),
         clarifying_count=0, session_context={"message_count": 1},
         db=None, session_id="s",
     )
-    assert "welcoming" in rewrites[0].lower()
+    assert out.startswith("Long text")
+    assert "repeat" in out.lower() or "simpler" in out.lower()
+    assert rewrites == []
 
 
 async def test_established_standard_user_is_untouched(rewrites):
@@ -82,12 +88,16 @@ async def test_established_standard_user_is_untouched(rewrites):
 
 
 async def test_no_db_is_treated_as_first_time_user(rewrites):
-    await adjust_response(
+    out = await adjust_response(
         raw_answer="t", user_prefs=_prefs(VerbosityLevel.standard),
         clarifying_count=0, session_context={"message_count": 10},
         db=None, session_id="s",
     )
-    assert rewrites, "db=None must be read as an empty session, not 'unknown'"
+    # db=None must be read as an empty session, not 'unknown' — but Rule 4 no
+    # longer buys that with an LLM rewrite (~12s measured): it appends the
+    # fixed orientation tip with zero upstream calls.
+    assert "repeat" in out.lower() or "simpler" in out.lower()
+    assert rewrites == []
 
 
 async def test_confusion_rule_wins_over_verbosity(rewrites):
@@ -197,3 +207,54 @@ async def test_explicit_profile_beats_inferred_replays(rewrites):
     )
     assert len(rewrites) == 1
     assert "step-by-step" in rewrites[0]
+
+
+async def test_profile_and_verbosity_compose(rewrites):
+    """Rule 2 no longer swallows an explicit verbosity: blind+concise gets
+    both the step-by-step shaping and the conciseness instruction."""
+    from app.models.preference import DisabilityProfile as DP
+    p = _prefs(VerbosityLevel.concise)
+    p.disability_profile = DP.blind
+    await adjust_response(
+        raw_answer="Long text", user_prefs=p,
+        clarifying_count=0,
+        session_context={"message_count": 10, "replay_count": 0, "skip_count": 0},
+        db=_established_db(), session_id="s",
+    )
+    assert len(rewrites) == 1
+    assert "step-by-step" in rewrites[0]
+    assert "concise" in rewrites[0].lower()
+
+
+async def test_replay_and_skip_together_get_plain_and_short(rewrites):
+    """Contradictory signals must not resolve by ignoring one of them."""
+    await adjust_response(
+        raw_answer="Long text", user_prefs=_prefs(VerbosityLevel.standard),
+        clarifying_count=0,
+        session_context={"message_count": 10, "replay_count": 2, "skip_count": 2},
+        db=_established_db(), session_id="s",
+    )
+    assert len(rewrites) == 1
+    assert "2 sentences" in rewrites[0]
+
+
+async def test_empty_answer_gets_tip_without_leading_period(rewrites):
+    out = await adjust_response(
+        raw_answer="   ", user_prefs=_prefs(VerbosityLevel.standard),
+        clarifying_count=0, session_context={"message_count": 1},
+        db=None, session_id="s",
+    )
+    assert not out.startswith(".")
+    assert rewrites == []
+
+
+async def test_missing_prefs_row_never_crashes(rewrites):
+    """A user without a preference row (legacy, demo fallback) gets default
+    shaping instead of a 500 from attribute access on None."""
+    out = await adjust_response(
+        raw_answer="Plain answer", user_prefs=None,
+        clarifying_count=0, session_context={"message_count": 10},
+        db=_established_db(), session_id="s",
+    )
+    assert out == "Plain answer"
+    assert rewrites == []

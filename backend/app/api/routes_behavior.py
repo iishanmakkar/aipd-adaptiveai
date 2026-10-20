@@ -17,6 +17,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user_optional
@@ -33,7 +35,7 @@ router = APIRouter(prefix="/api", tags=["behavior"])
 class BehaviorEvent(BaseModel):
     session_id: str = Field(..., min_length=1)
     event_type: Literal["replay", "skip", "listen"]
-    listen_time: Optional[float] = Field(default=None, ge=0)
+    listen_time: Optional[float] = Field(default=None, ge=0, le=86400)
 
 
 @router.post("/behavior-event")
@@ -45,6 +47,8 @@ async def record_behavior_event(
 ):
     if not is_db_available():
         raise HTTPException(status_code=503, detail="Database not available - ensure postgres is running")
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     session_uuid: UUID = parse_session_uuid(event.session_id)
     try:
         result = await db.execute(
@@ -54,34 +58,36 @@ async def record_behavior_event(
         raise HTTPException(status_code=503, detail=f"Database connection failed: {str(e)[:200]}")
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Session not found - create one via POST /api/session first")
+    # Atomic increment-or-insert: a single statement, so two concurrent first
+    # events (or two increments) cannot lose one to a read-modify-write race.
+    # The old select-then-insert + IntegrityError-retry path is gone.
+    if event.event_type == "replay":
+        inc = {"replay_count": BehaviorSignal.replay_count + 1}
+    elif event.event_type == "skip":
+        inc = {"skip_count": BehaviorSignal.skip_count + 1}
+    else:
+        inc = {"listen_count": BehaviorSignal.listen_count + 1,
+               "listen_seconds": (BehaviorSignal.listen_seconds
+                                  + (event.listen_time or 0.0))}
+    stmt = (
+        pg_insert(BehaviorSignal)
+        .values(session_id=session_uuid, replay_count=0, skip_count=0,
+                listen_count=0, listen_seconds=0.0)
+        .on_conflict_do_update(index_elements=["session_id"], set_=inc)
+        .returning(BehaviorSignal)
+    )
     try:
-        result = await db.execute(
-            select(BehaviorSignal).where(BehaviorSignal.session_id == session_uuid)
-        )
-        signals = result.scalar_one_or_none()
-        if signals is None:
-            # Explicit zeros: SQLAlchemy column/server defaults only apply at
-            # INSERT, so a fresh object holds None until flushed - and None + 1
-            # would 503 the very first event of every session.
-            signals = BehaviorSignal(
-                session_id=session_uuid, replay_count=0, skip_count=0,
-                listen_count=0, listen_seconds=0.0,
-            )
-            db.add(signals)
-        if event.event_type == "replay":
-            signals.replay_count += 1
-        elif event.event_type == "skip":
-            signals.skip_count += 1
-        else:
-            signals.listen_count += 1
-            signals.listen_seconds += event.listen_time or 0.0
+        result = await db.execute(stmt)
         await db.commit()
-        await db.refresh(signals)
-    except HTTPException:
-        raise
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail="Session not found - create one via POST /api/session first")
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=503, detail=f"Database connection failed: {str(e)[:200]}")
+    signals = result.scalar_one_or_none()
+    if signals is None:  # unreachable on Postgres (RETURNING always yields the row)
+        raise HTTPException(status_code=503, detail="Behavior signal row could not be created")
     logger.info(
         "behavior_event session_id=%s event=%s replay=%d skip=%d request_id=%s",
         event.session_id, event.event_type,

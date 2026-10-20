@@ -56,12 +56,19 @@ async def list_sessions(
     current_user = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db),
     limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ):
     """The user's sessions, newest first, with message counts - powers the
     history panel in the UI."""
     if not is_db_available():
         raise HTTPException(status_code=503, detail="Database not available - ensure postgres is running")
     try:
+        # Real total for the user's sessions — the old `total=len(rows)` was
+        # the page size, so a 51st session silently misreported "50".
+        total_result = await db.execute(
+            select(func.count(Session.id)).where(Session.user_id == current_user.id)
+        )
+        total = total_result.scalar_one()
         result = await db.execute(
             select(
                 Session.id,
@@ -73,6 +80,7 @@ async def list_sessions(
             .group_by(Session.id, Session.created_at)
             .order_by(Session.created_at.desc())
             .limit(limit)
+            .offset(offset)
         )
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Database connection failed: {str(e)[:200]}")
@@ -87,7 +95,7 @@ async def list_sessions(
             )
             for row in rows
         ],
-        total=len(rows),
+        total=total,
     )
 
 

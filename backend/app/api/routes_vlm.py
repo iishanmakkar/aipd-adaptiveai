@@ -29,6 +29,11 @@ async def vlm_proxy(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
+    if not isinstance(body, dict):
+        # A JSON array/string body would TypeError on body["model"] below
+        # into a 500; it is a malformed request (422-class).
+        raise HTTPException(status_code=422, detail="Request body must be a JSON object")
+
     if len(json.dumps(body)) > MAX_VLM_PAYLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Payload too large: screenshots are capped at 15MB including base64 encoding")
 
@@ -42,7 +47,7 @@ async def vlm_proxy(request: Request):
     if len(images) > 4:
         raise HTTPException(status_code=413, detail="Too many images in one request (max 4)")
     for url in images:
-        if url and not url.startswith(ALLOWED_IMAGE_PREFIXES + ("https://", "http://")):
+        if url and not url.startswith(ALLOWED_IMAGE_PREFIXES):
             raise HTTPException(status_code=415, detail="Unsupported image format: use JPEG, PNG, WebP or GIF")
 
     # Server key always wins when configured: a caller-supplied key is only a
@@ -61,6 +66,18 @@ async def vlm_proxy(request: Request):
     # Ensure vision model is used if not specified
     if "model" not in body or not body["model"]:
         body["model"] = "meta/llama-3.2-11b-vision-instruct"
+    # Model allowlist: without it this endpoint is an unauthenticated OPEN
+    # completion relay — any anonymous client could pick any NIM-hosted model
+    # (or send pure-text chats) and burn the operator's server-side key.
+    _ALLOWED_MODELS = {"meta/llama-3.2-11b-vision-instruct", settings.nim_model}
+    if body["model"] not in _ALLOWED_MODELS:
+        raise HTTPException(status_code=400,
+                            detail="model not allowed on this proxy (vision models only)")
+    # ...and require at least one image part: this is a VISION proxy, not a
+    # general chat relay.
+    if not images:
+        raise HTTPException(status_code=400,
+                            detail="this proxy only accepts vision requests with images")
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:

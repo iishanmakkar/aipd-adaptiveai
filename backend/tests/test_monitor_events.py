@@ -19,11 +19,13 @@ def _session_ns():
     return SimpleNamespace(id=uuid.UUID(SID), user_id=USER_ID)
 
 
-def _results(dedupe_rows=None):
+def _results(dedupe_rows=None, message_count=10):
     return FakeSession([
         FakeResult([_session_ns()]),  # _own_session
         FakeResult([]),  # prefs
         FakeResult([]),  # behavior signals
+        FakeResult([message_count]),  # history depth (get_message_count -> scalar_one -> int)
+        FakeResult([SimpleNamespace(content="q?")] * message_count),  # clarifying-question scan
         FakeResult(list(dedupe_rows or [])),  # stored narration metas
     ])
 

@@ -18,6 +18,7 @@ beyond the internal browser-agent pull (per user poll, request-id traced);
 the only external traffic is browser-agent -> NIM, bounded by the monitor's
 hard rate ceiling, max-duration auto-stop, and the session idle sweep.
 """
+import asyncio
 import logging
 import time
 from uuid import UUID
@@ -42,7 +43,7 @@ from app.services.clients import (
     browser_monitor_status,
     browser_monitor_narrations,
 )
-from app.services.policy_engine import adjust_response
+from app.services.policy_engine import adjust_response, count_clarifying_questions, get_message_count
 
 logger = logging.getLogger("adaptiveai.monitor")
 
@@ -57,6 +58,36 @@ from app.services.session_memory import monitor_store, SharedDict
 NARRATION_TTL_SECONDS = 3600.0
 
 _monitor_state: SharedDict = SharedDict(monitor_store, default_ttl=NARRATION_TTL_SECONDS)
+
+
+# Per-chat delivery locks: two concurrent /monitor/events polls for one chat
+# would both read `since`, both pull the same events, both pass the dedup
+# SELECT (neither has committed yet) and both persist - duplicate narrations.
+# The lock serializes pull+persist+cursor per chat. Bounded with LRU sweep so
+# the registry cannot grow without bound over the process lifetime.
+_monitor_locks: dict[str, asyncio.Lock] = {}
+_monitor_locks_used: dict[str, float] = {}
+
+
+def _monitor_lock(chat_id: str) -> asyncio.Lock:
+    lock = _monitor_locks.get(chat_id)
+    if lock is None:
+        if len(_monitor_locks) > 2000:
+            for old in sorted(_monitor_locks_used,
+                              key=_monitor_locks_used.__getitem__)[:500]:
+                _monitor_locks.pop(old, None)
+                _monitor_locks_used.pop(old, None)
+        lock = asyncio.Lock()
+        _monitor_locks[chat_id] = lock
+    _monitor_locks_used[chat_id] = time.time()
+    return lock
+
+
+def _translate_stats(stats, active: bool) -> dict:
+    """Browser-agent stats() speaks `enabled`; the API contract is `active`."""
+    s = dict(stats or {})
+    s["active"] = bool(s.pop("enabled", s.get("active", active)))
+    return s
 
 
 class MonitorRequest(BaseModel):
@@ -118,9 +149,24 @@ async def monitor_start(req: MonitorRequest,
         result = await browser_monitor_start(req.session_id, "voice-or-control",
                                              request_id)
     except Exception as e:
+        # The most common first-click failure by far: nothing is open to watch.
+        # Relay that as actionable guidance (what to do next) instead of the
+        # browser-agent's bare "No live page session", which read as "broken".
+        if _browser_status(e) == 404:
+            raise HTTPException(
+                status_code=404,
+                detail=("Nothing is open to watch yet. First ask me to open a "
+                        "website or form — paste its link in the chat — then "
+                        "press Watch my screen."))
         raise _relay_error(e, "start")
     _start_state = _cursor(req.session_id)
     _start_state["active"] = True
+    # Narration ids restart at 1 for every new browser-side monitor run (a new
+    # PageMonitor per start). A cursor surviving from a previous run would
+    # filter every new event server-side (id <= since) and the user would hear
+    # silence. Reset to 0; already-persisted events are still skipped by the
+    # stored-id dedup in /monitor/events.
+    _start_state["since"] = 0
     _save_cursor(req.session_id, _start_state)
     logger.info("monitor_started session=%s user=%s", req.session_id,
                 current_user.id)
@@ -139,10 +185,13 @@ async def monitor_stop(req: MonitorRequest,
     try:
         result = await browser_monitor_stop(req.session_id, request_id)
     except Exception as e:
-        # A 409 (nothing active) is fine for a kill switch: the requested
-        # end-state - monitoring off - already holds.
+        # 409 (nothing active) is fine for a kill switch: the requested
+        # end-state - monitoring off - already holds. 404 (no live page
+        # session at all) means the same thing from the user's side - there
+        # is nothing to stop - so it clears local state too instead of
+        # erroring while the UI still shows "watching".
         status = _browser_status(e)
-        if status == 409:
+        if status in (404, 409):
             _stop_state = _cursor(req.session_id)
             _stop_state["active"] = False
             _save_cursor(req.session_id, _stop_state)
@@ -155,7 +204,7 @@ async def monitor_stop(req: MonitorRequest,
                 req.session_id, current_user.id,
                 result.get("stats", {}).get("counters", {}).get("nim_calls"))
     return {"active": False, "status": "stopped",
-            "stats": result.get("stats", {})}
+            "stats": _translate_stats(result.get("stats"), False)}
 
 
 @router.get("/monitor/status")
@@ -184,23 +233,28 @@ async def monitor_events(session_id: str,
     one could rewind delivery and re-persist the same narration twice -
     found live: duplicate messages)."""
     session = await _own_session(db, session_id, current_user)
+    request_id = f"monitor-events-{session_id[:8]}-{int(time.time())}"
+    # Serialized per chat (see _monitor_lock): without this, two overlapping
+    # polls read the same cursor, pull the same events, both pass dedup, and
+    # both persist - duplicate narrations.
+    async with _monitor_lock(session_id):
+        return await _pull_and_persist_events(db, session, current_user,
+                                              session_id, request_id)
+
+
+async def _pull_and_persist_events(db, session, current_user,
+                                   session_id: str, request_id: str):
     state = _cursor(session_id)
     cursor = state["since"]
-    request_id = f"monitor-events-{session_id[:8]}-{int(time.time())}"
     try:
         pull = await browser_monitor_narrations(session_id, cursor, request_id)
     except Exception as e:
         status = _browser_status(e)
-        if status == 404:
+        if status in (404, 409):
             state["active"] = False
             _save_cursor(session_id, state)
             return {"active": False, "narrations": [], "cursor": cursor,
-                    "stats": {}}
-        if status == 409:
-            state["active"] = False
-            _save_cursor(session_id, state)
-            return {"active": False, "narrations": [], "cursor": cursor,
-                    "stats": {}}
+                    "stats": _translate_stats(None, False)}
         raise _relay_error(e, "narration pull")
 
     if not pull.get("active", False):
@@ -215,8 +269,13 @@ async def monitor_events(session_id: str,
     sig_result = await db.execute(
         select(BehaviorSignal).where(BehaviorSignal.session_id == uuid_session))
     signals = sig_result.scalar_one_or_none()
+    # Real history depth and confusion level - NOT hardcoded zeros. Zeros made
+    # every narration look like a first-time message, so the orientation tip
+    # was appended to each one and behavior Rule 5 could never fire here.
+    message_count = await get_message_count(db, uuid_session)
+    clarifying_count = await count_clarifying_questions(db, uuid_session)
     session_context = {
-        "message_count": 0,
+        "message_count": message_count,
         "replay_count": signals.replay_count if signals else 0,
         "skip_count": signals.skip_count if signals else 0,
     }
@@ -245,15 +304,22 @@ async def monitor_events(session_id: str,
             event_id = int(event.get("id", 0))
         except (TypeError, ValueError):
             event_id = 0
-        state["since"] = max(state["since"], event_id)
-        _save_cursor(session_id, state)
         if event_id in seen_ids:
-            continue  # already persisted: cursor advanced, nothing re-stored
+            # Already persisted (stored on an earlier poll, or twice inside
+            # this same pull): advance the cursor past it, persist nothing.
+            if pull.get("active", False):
+                state["since"] = max(state["since"], event_id)
+            continue
+        seen_ids.add(event_id)
+        if pull.get("active", False):
+            # Advance the delivery cursor only from a live monitor: persisting
+            # the high-water mark of a dead run would skip that run's tail.
+            state["since"] = max(state["since"], event_id)
         raw = str(event.get("raw_description", ""))[:2000]
         try:
             adapted = await adjust_response(
                 raw_answer=raw, user_prefs=prefs,
-                clarifying_count=0, session_context=session_context,
+                clarifying_count=clarifying_count, session_context=session_context,
                 db=db, session_id=uuid_session)
         except Exception:
             adapted = raw  # narration must not die with a policy hiccup
@@ -269,6 +335,12 @@ async def monitor_events(session_id: str,
         narrations.append({"id": event.get("id"), "ts": event.get("ts"),
                            "text": adapted})
     if narrations:
+        # Commit BEFORE advancing the persisted cursor: a failed commit with
+        # an already-saved cursor would lose those narrations forever (never
+        # stored, never re-delivered, never spoken).
         await db.commit()
+    # ponytail: persist cursor whenever since advanced (dup-filtered ids too)
+    _save_cursor(session_id, state)
     return {"active": pull.get("active", False), "narrations": narrations,
-            "cursor": state["since"], "stats": pull.get("stats", {})}
+            "cursor": state["since"],
+            "stats": _translate_stats(pull.get("stats"), pull.get("active", False))}

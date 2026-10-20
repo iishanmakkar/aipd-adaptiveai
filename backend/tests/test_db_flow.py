@@ -122,7 +122,11 @@ def test_query_persists_both_messages(client):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["agent_used"] == "form_agent"
-    assert body["response_text"] == "Enter your address as printed on your ID."
+    # The stored text is what this endpoint returns: the policy engine may
+    # append its fixed first-session orientation tip (Rule 4), which is an
+    # LLM-independent, deterministic suffix. Assert the grounded answer is
+    # present verbatim; the tip is not part of the retrieval contract.
+    assert "Enter your address as printed on your ID." in body["response_text"]
 
     history = client.get(f"/api/history/{session_id}", headers=hdr).json()
     assert history["total"] == 2
@@ -130,7 +134,7 @@ def test_query_persists_both_messages(client):
     assert roles == ["user", "assistant"]
     assistant = history["messages"][1]
     assert assistant["agent_used"] == "form_agent"
-    assert assistant["content"] == "Enter your address as printed on your ID."
+    assert "Enter your address as printed on your ID." in assistant["content"]
 
 
 def test_history_pagination(client):
@@ -259,9 +263,10 @@ def test_account_delete_removes_every_row(client):
     r = client.request("DELETE", "/auth/account", headers=hdr)
     assert r.status_code == 204
 
-    # the token is dead, the session is gone, the user is unknown
+    # the token is dead (unknown user -> 401, per the auth hardening), the
+    # session is gone, the user is unknown
     assert client.get("/auth/me", headers=hdr).status_code == 401
-    assert client.get(f"/api/history/{session_id}", headers=hdr).status_code == 404
+    assert client.get(f"/api/history/{session_id}", headers=hdr).status_code == 401
 
     # logging in again must fail: the credential row is deleted
     assert client.post("/auth/login", json={"email": email, "password": password}).status_code == 401

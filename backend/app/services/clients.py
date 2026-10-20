@@ -5,7 +5,7 @@ from app.schemas.query import QueryRequest
 
 class IntentResponse:
     def __init__(self, intent: str, target_agent: str, extracted_entity: str, reasoning: str,
-                 confidence: float = 0.5):
+                 confidence: float = 0.5, ambiguous: bool = False):
         self.intent = intent
         self.target_agent = target_agent
         self.extracted_entity = extracted_entity
@@ -13,6 +13,10 @@ class IntentResponse:
         # Classifier-reported certainty (LLM self-assessment or keyword-match
         # strength). The API used to send a hardcoded 0.85 for every answer.
         self.confidence = confidence
+        # The classifier's own judgment that the input is not an actionable
+        # request. LLM self-confidence is useless here (it reports 0.9 on
+        # gibberish), so ambiguity travels as its own field.
+        self.ambiguous = bool(ambiguous)
 
 
 class AgentResponse:
@@ -40,9 +44,11 @@ def _browser_headers(request_id: str | None) -> dict:
 async def _browser_post(path: str, payload: dict, request_id: str | None = None):
     """POST to the browser-agent session API. HTTP errors propagate so the
     route can report honest 502/409/423/429 statuses to the user."""
+    from urllib.parse import quote
+    # ponytail: quote session ids in path at call sites; base slash-strip here
     async with httpx.AsyncClient(timeout=settings.browser_timeout_seconds) as client:
         response = await client.post(
-            f"{settings.browser_service_url}{path}",
+            f"{settings.browser_service_url.rstrip('/')}{path}",
             json=payload,
             headers=_browser_headers(request_id),
         )
@@ -53,7 +59,7 @@ async def _browser_post(path: str, payload: dict, request_id: str | None = None)
 async def _browser_get(path: str, request_id: str | None = None):
     async with httpx.AsyncClient(timeout=settings.browser_timeout_seconds) as client:
         response = await client.get(
-            f"{settings.browser_service_url}{path}",
+            f"{settings.browser_service_url.rstrip('/')}{path}",
             headers=_browser_headers(request_id),
         )
         response.raise_for_status()
@@ -136,7 +142,7 @@ async def classify_intent(
         headers["X-Request-ID"] = request_id
     async with httpx.AsyncClient(timeout=settings.intent_timeout_seconds) as client:
         response = await client.post(
-            f"{settings.intent_service_url}/intent/classify",
+            f"{settings.intent_service_url.rstrip('/')}/intent/classify",
             json={
                 "session_id": session_id,
                 "input_text": input_text,
@@ -147,7 +153,14 @@ async def classify_intent(
         )
         response.raise_for_status()
         data = response.json()
-        return IntentResponse(**data)
+        return IntentResponse(
+            intent=data.get("intent", "general_query"),
+            target_agent=data.get("target_agent", "general_agent"),
+            extracted_entity=data.get("extracted_entity", ""),
+            reasoning=data.get("reasoning", ""),
+            confidence=data.get("confidence", 0.5) or 0.5,
+            ambiguous=bool(data.get("ambiguous", False)),
+        )
 
 
 async def get_agent_response(
@@ -164,7 +177,7 @@ async def get_agent_response(
         headers["X-Request-ID"] = request_id
     async with httpx.AsyncClient(timeout=settings.agent_timeout_seconds) as client:
         response = await client.post(
-            f"{settings.agent_service_url}/agent/respond",
+            f"{settings.agent_service_url.rstrip('/')}/agent/respond",
             json={
                 "session_id": session_id,
                 "agent": agent,
@@ -176,7 +189,11 @@ async def get_agent_response(
         )
         response.raise_for_status()
         data = response.json()
-        return AgentResponse(**data)
+        return AgentResponse(
+            answer=data.get("answer", ""),
+            sources_used=data.get("sources_used", []),
+            suggested_action=data.get("suggested_action", "none"),
+        )
 
 
 async def orchestrate_goal(
@@ -192,7 +209,7 @@ async def orchestrate_goal(
         headers["X-Request-ID"] = request_id
     async with httpx.AsyncClient(timeout=settings.agent_timeout_seconds) as client:
         response = await client.post(
-            f"{settings.agent_service_url}/agent/orchestrate",
+            f"{settings.agent_service_url.rstrip('/')}/agent/orchestrate",
             json={
                 "session_id": session_id,
                 "goal": goal,
@@ -204,7 +221,7 @@ async def orchestrate_goal(
         response.raise_for_status()
         data = response.json()
         return OrchestrateResponse(
-            answer=data["answer"],
+            answer=data.get("answer") or "",
             sources_used=data.get("sources_used", []),
             suggested_action=data.get("suggested_action", "none"),
             agent=data.get("agent", "general_agent"),

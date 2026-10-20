@@ -63,6 +63,30 @@ def test_put_preferences_rejects_bad_values(client, fake_user):
         client.app.dependency_overrides.pop(get_db, None)
 
 
+def test_put_preferences_partial_keeps_other_fields(client, fake_user):
+    """A partial PUT must not reset the fields it omits (an explicitly stored
+    disability profile used to be silently wiped to 'none')."""
+    from types import SimpleNamespace
+
+    existing = SimpleNamespace(
+        user_id="x", verbosity_level="standard", voice_speed=1.0,
+        disability_profile="blind", language_complexity="standard")
+
+    async def fake_db():
+        return FakeSession([FakeResult([existing])])
+
+    client.app.dependency_overrides[get_db] = fake_db
+    try:
+        r = client.put("/api/preferences", json={"verbosity_level": "concise"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["verbosity_level"] == "concise"
+        assert body["disability_profile"] == "blind"
+        assert body["voice_speed"] == 1.0
+    finally:
+        client.app.dependency_overrides.pop(get_db, None)
+
+
 async def fake_db_override():
     return FakeSession([FakeResult([])])
 
@@ -76,7 +100,7 @@ def test_get_sessions_returns_rows_with_counts(client, fake_user):
     ]
 
     async def fake_db():
-        return FakeSession([FakeResult(rows)])
+        return FakeSession([FakeResult([2]), FakeResult(rows)])
 
     client.app.dependency_overrides[get_db] = fake_db
     try:
@@ -93,7 +117,8 @@ def test_get_sessions_returns_rows_with_counts(client, fake_user):
 
 def test_get_sessions_empty_for_new_user(client, fake_user):
     async def fake_db():
-        return FakeSession([FakeResult([])])
+        # Two queries now: the real total count + the page rows.
+        return FakeSession([FakeResult([0]), FakeResult([])])
 
     client.app.dependency_overrides[get_db] = fake_db
     try:

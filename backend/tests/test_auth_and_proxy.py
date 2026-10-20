@@ -84,7 +84,7 @@ def test_vlm_forwards_to_nim_with_server_key(client, nim, monkeypatch):
     calls = nim()
 
     body = {"model": "meta/llama-3.2-11b-vision-instruct",
-            "messages": [{"role": "user", "content": "describe"}]}
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "describe"}, {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}}]}]}
     r = client.post("/v1/chat/completions", json=body)
 
     assert r.status_code == 200
@@ -99,7 +99,7 @@ def test_vlm_server_key_beats_client_supplied_bearer(client, nim, monkeypatch):
     monkeypatch.setattr(settings, "nim_api_key", "nvapi-server-side")
     calls = nim()
     r = client.post("/v1/chat/completions",
-                    json={"messages": []},
+                    json={"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}}]}]},
                     headers={"Authorization": "Bearer nvapi-frontend"})
     assert r.status_code == 200
     assert calls[0]["headers"]["Authorization"] == "Bearer nvapi-server-side"
@@ -110,7 +110,7 @@ def test_vlm_client_key_only_used_when_server_unconfigured(client, nim, monkeypa
     monkeypatch.delenv("NIM_API_KEY", raising=False)
     calls = nim()
     r = client.post("/v1/chat/completions",
-                    json={"messages": []},
+                    json={"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}}]}]},
                     headers={"Authorization": "Bearer nvapi-frontend"})
     assert r.status_code == 200
     assert calls[0]["headers"]["Authorization"] == "Bearer nvapi-frontend"
@@ -119,14 +119,14 @@ def test_vlm_client_key_only_used_when_server_unconfigured(client, nim, monkeypa
 def test_vlm_defaults_the_model_when_omitted(client, nim, monkeypatch):
     monkeypatch.setattr(settings, "nim_api_key", "k")
     calls = nim()
-    client.post("/v1/chat/completions", json={"messages": []})
+    client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}}]}]})
     assert calls[0]["json"]["model"] == "meta/llama-3.2-11b-vision-instruct"
 
 
 def test_vlm_without_any_key_is_503(client, monkeypatch):
     monkeypatch.setattr(settings, "nim_api_key", "")
     monkeypatch.delenv("NIM_API_KEY", raising=False)
-    r = client.post("/v1/chat/completions", json={"messages": []})
+    r = client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}}]}]})
     assert r.status_code == 503
 
 
@@ -141,7 +141,7 @@ def test_vlm_passes_upstream_status_through(client, nim, monkeypatch):
     """A 401/404 from NIM must reach the caller untouched, not become a 200."""
     monkeypatch.setattr(settings, "nim_api_key", "k")
     nim(status=401, payload={"error": "Unauthorized"})
-    r = client.post("/v1/chat/completions", json={"messages": []})
+    r = client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}}]}]})
     assert r.status_code == 401
 
 

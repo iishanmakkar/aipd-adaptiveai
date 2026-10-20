@@ -29,6 +29,10 @@ def test_ftp_and_empty_refused():
 
 
 def test_loopback_private_linklocal_metadata_refused(monkeypatch):
+    # Pin the opt-in OFF: compose sets ADAPTIVEAI_ALLOW_LOCAL_TARGETS=1 for the
+    # bundled demo pages, and without this the test would assert the wrong
+    # policy whenever it runs inside the compose environment.
+    monkeypatch.setenv(guard.LOCAL_TARGETS_ENV, "0")
     for ip in ["127.0.0.1", "10.0.0.5", "172.16.0.1", "192.168.1.1",
                "169.254.169.254", "0.0.0.0", "::1"]:
         monkeypatch.setattr(guard, "_resolve", fake_resolve(ip))
@@ -61,3 +65,26 @@ def test_form_fill_route_uses_guard(client):
                     json={"url": "file:///etc/passwd", "values": {"a": "b"}})
     assert r.status_code == 422
     assert "filesystem" in r.json()["detail"]
+
+
+def test_local_targets_opt_in_allows_internal_but_never_metadata(monkeypatch):
+    """ADAPTIVEAI_ALLOW_LOCAL_TARGETS=1 is what makes the bundled demo pages and
+    a self-hosted intranet form fillable. It must not become an open door into
+    the cloud metadata endpoint or the server's own filesystem."""
+    monkeypatch.setenv(guard.LOCAL_TARGETS_ENV, "1")
+    for ip in ["127.0.0.1", "::1", "10.0.0.5", "172.17.0.3", "192.168.1.1"]:
+        monkeypatch.setattr(guard, "_resolve", fake_resolve(ip))
+        assert validate_browse_url("http://internal-host.test/page"), ip
+
+    for ip in ["169.254.169.254", "0.0.0.0", "224.0.0.1"]:
+        monkeypatch.setattr(guard, "_resolve", fake_resolve(ip))
+        with pytest.raises(ValueError):
+            validate_browse_url("http://internal-host.test/latest/meta-data")
+
+    with pytest.raises(ValueError, match="filesystem"):
+        validate_browse_url("file:///etc/passwd")
+
+    monkeypatch.setenv(guard.LOCAL_TARGETS_ENV, "0")
+    monkeypatch.setattr(guard, "_resolve", fake_resolve("10.0.0.5"))
+    with pytest.raises(ValueError, match="non-public"):
+        validate_browse_url("http://internal.example/x")

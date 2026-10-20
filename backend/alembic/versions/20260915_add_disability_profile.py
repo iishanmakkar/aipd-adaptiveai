@@ -20,16 +20,19 @@ def upgrade() -> None:
     # Create new enum types
     op.execute("CREATE TYPE disabilityprofile AS ENUM ('none', 'blind', 'low_vision', 'cognitive', 'motor')")
     op.execute("CREATE TYPE languagecomplexity AS ENUM ('simple', 'standard', 'technical')")
-    
-    # Add columns to preferences table
+
+    # Add columns to preferences table. create_type=False: the types above
+    # already exist, and sa.Enum would otherwise issue its own CREATE TYPE
+    # for the same name (native_enum defaults True) - DuplicateObject on a
+    # fresh database, halting the whole migration chain.
     op.add_column(
         'preferences',
-        sa.Column('disability_profile', sa.Enum('none', 'blind', 'low_vision', 'cognitive', 'motor', name='disabilityprofile'), 
+        sa.Column('disability_profile', sa.Enum('none', 'blind', 'low_vision', 'cognitive', 'motor', name='disabilityprofile', create_type=False),
                   server_default='none', nullable=False)
     )
     op.add_column(
         'preferences',
-        sa.Column('language_complexity', sa.Enum('simple', 'standard', 'technical', name='languagecomplexity'),
+        sa.Column('language_complexity', sa.Enum('simple', 'standard', 'technical', name='languagecomplexity', create_type=False),
                   server_default='standard', nullable=False)
     )
 

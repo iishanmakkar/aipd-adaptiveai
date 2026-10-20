@@ -8,11 +8,10 @@ ARIA snapshot embedding. Automatic PII filtering.
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import logging
 import math
-import random
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -94,6 +93,52 @@ class MemoryEntry:
         self.relevance_score = relevance_score
 
 
+# --- Field-identity embedding ---
+
+_WORD_SPLIT = re.compile(r"[^a-z0-9]+")
+
+
+def _words(text: Any) -> List[str]:
+    """Lowercased word tokens of one field-identity string."""
+    return [w for w in _WORD_SPLIT.split(str(text or "").lower()) if len(w) > 1]
+
+
+def _selector_words(selector: Any) -> List[str]:
+    """Identity part of a css selector: '#pnr' / 'input#pnr' -> 'pnr'. Tag names
+    and structural noise are dropped so a re-rendered page still matches."""
+    return _words(re.sub(r"[.#:>\[\]\"'=|()\s]+", " ", str(selector or "")))
+
+
+def episode_field_tokens(actions: List[Dict[str, Any]]) -> List[str]:
+    """Words that identify the FIELDS of a form - never the values typed into
+    them, so an episode's vector carries no user data."""
+    tokens: List[str] = []
+    for action in actions or []:
+        tokens += _words(action.get("label"))
+        tokens += _words(action.get("placeholder"))
+        tokens += _selector_words(action.get("selector"))
+    return tokens
+
+
+def embed_tokens(tokens: List[str], dim: int = 384) -> List[float]:
+    """Signed feature hashing (the 'hashing trick'): each distinct token is
+    placed in one of `dim` buckets with a hash-derived sign, then L2-normalised.
+
+    This is the whole trick behind replay matching, and it is why no model or
+    API call is needed to answer 'is this the form we already mapped?': the
+    same form yields identical token sets, so cosine ~1.0; a different form on
+    the same host yields little overlap. Dependency-free on purpose - the
+    backend image has no torch, and a browser-side assistant must not need one.
+    """
+    vec = [0.0] * dim
+    for token in set(tokens):
+        digest = hashlib.sha256(token.encode()).digest()
+        bucket = int.from_bytes(digest[:4], "big") % dim
+        vec[bucket] += 1.0 if digest[4] & 1 else -1.0
+    norm = math.sqrt(sum(v * v for v in vec))
+    return [v / norm for v in vec] if norm else vec
+
+
 # --- Memory Service ---
 
 class EpisodicMemory:
@@ -132,8 +177,10 @@ class EpisodicMemory:
     
     async def store_episode(self, episode: Episode) -> str:
         """Store a new episode, evicting if necessary."""
-        # PII filter check
-        if not self._has_pii(episode.actions):
+        # PII filter check: episodes whose actions carry PII are the ones that
+        # get stamped pii_filtered (the inverted check labeled clean episodes
+        # as filtered and stored PII-bearing ones as clean).
+        if self._has_pii(episode.actions):
             episode = Episode(
                 **{**episode.to_dict(), "pii_filtered": True}
             )
@@ -155,11 +202,13 @@ class EpisodicMemory:
         # Store
         self._episodes[episode.episode_id] = entry
         
-        # Index by domain
+        # Index by domain (deduplicated: re-storing an id must not leave a
+        # stale twin behind for eviction to trip over later).
         if episode.site_domain:
             if episode.site_domain not in self._site_index:
                 self._site_index[episode.site_domain] = []
-            self._site_index[episode.site_domain].append(episode.episode_id)
+            if episode.episode_id not in self._site_index[episode.site_domain]:
+                self._site_index[episode.site_domain].append(episode.episode_id)
         
         # LRU eviction if over capacity
         if len(self._episodes) > self.max_episodes:
@@ -167,6 +216,19 @@ class EpisodicMemory:
         
         logger.info(f"Stored episode {episode.episode_id} (task_type={episode.task_type})")
         return episode.episode_id
+
+    async def delete_episode(self, episode_id: str) -> bool:
+        """Drop one episode (corrupted heals, replaced discoveries). Returns
+        whether anything was removed."""
+        entry = self._episodes.pop(episode_id, None)
+        if entry is None:
+            return False
+        domain = entry.episode.site_domain
+        if domain and episode_id in self._site_index.get(domain, []):
+            self._site_index[domain].remove(episode_id)
+            if not self._site_index[domain]:
+                del self._site_index[domain]
+        return True
     
     async def access_episode(self, episode_id: str) -> Optional[Episode]:
         """Mark an episode as accessed (for relevance scoring)."""
@@ -175,13 +237,12 @@ class EpisodicMemory:
             return None
         
         entry.access_count += 1
-        entry.last_accessed = time.time()
         
-        # Decay relevance if not accessed recently
-        time_since_access = time.time() - entry.last_accessed
-        if time_since_access > self.ttl_seconds:
-            # TTL expired - will be cleaned on next access
-            pass
+        # TTL is age-based (created_at), not idle-based.
+        if time.time() - entry.episode.created_at > self.ttl_seconds:
+            await self.delete_episode(episode_id)
+            return None
+        entry.last_accessed = time.time()
         
         # Boost relevance for recently accessed
         entry.relevance_score = min(1.0, entry.relevance_score + 0.1)
@@ -190,90 +251,96 @@ class EpisodicMemory:
     
     # --- Retrieval ---
     
-    async def find_similar(
+    async def find_replay_candidate(
         self,
         task_type: str,
-        query_embedding: List[float],
-        site_domain: Optional[str] = None,
-        min_relevance: float = 0.0,
-    ) -> List[Tuple[Episode, float]]:
-        """Find similar episodes using vector similarity.
-        
-        Returns list of (episode, similarity_score) tuples.
+        url: str,
+        requested_fields: Optional[List[str]] = None,
+        min_coverage: float = 0.5,
+    ) -> Tuple[Optional[Episode], float]:
+        """Which cached episode should replay for this URL - or None.
+
+        Ordered by what the caller actually means:
+          1. the same page we already mapped (exact recorded URL);
+          2. a form on the same host whose field identity CONTAINS the fields we
+             were asked to fill (a re-keyed URL, e.g. ?form=7, is still the same
+             form), ranked by coverage then by structural cosine.
+
+        Coverage rather than plain cosine, because a request names 3 fields and a
+        cached form knows 40: cosine of those sets is small even when the cached
+        form is exactly right. min_coverage rejects a partial match instead of
+        silently filling the wrong form.
         """
-        # Pure-stdlib cosine similarity (no numpy: backend/requirements.txt is
-        # deliberately lean; numpy only arrived transitively via faster-whisper).
-        query_emb = [float(x) for x in (query_embedding or [])]
-        
-        candidates: List[Tuple[str, float]] = []  # (episode_id, similarity)
-        
-        # Index search by domain
-        domain_ids = self._site_index.get(site_domain, []) if site_domain else []
-        
-        # Check relevant episodes
-        episode_ids_to_check = set()
-        if site_domain:
-            episode_ids_to_check.update(domain_ids)
-        # Also check all episodes for better matches
-        episode_ids_to_check.update(self._episodes.keys())
-        
-        for eid in episode_ids_to_check:
-            entry = self._episodes.get(eid)
-            if entry is None:
+        from urllib.parse import urlparse
+
+        host = urlparse(url).netloc or url
+        cutoff = time.time() - self.ttl_seconds
+        query_words: set[str] = set()
+        for name in requested_fields or []:
+            query_words.update(_words(name))
+        query_vec = embed_tokens(sorted(query_words), self.embedding_dim)
+
+        scored: List[Tuple[Episode, float]] = []
+        for entry in self._episodes.values():
+            episode = entry.episode
+            if episode.task_type != task_type:
                 continue
-            
-            # Check TTL
-            age = time.time() - entry.episode.created_at
-            if age > self.ttl_seconds:
+            if episode.created_at < cutoff:
                 continue
-            
-            # Check relevance
-            if entry.relevance_score < min_relevance:
+            if episode.site_domain != host:
                 continue
-            
-            # Skip if same episode
-            if entry.episode.task_type != task_type:
+            if episode.metadata.get("url") == url:
+                await self.access_episode(episode.episode_id)
+                return episode, 1.0
+            if not query_words:
                 continue
-            
-            # Cosine similarity
-            ep_emb = [float(x) for x in (entry.episode.embedding or [])]
-            if len(ep_emb) == 0 or len(query_emb) == 0:
-                similarity = 0.0
-            else:
-                dim = min(len(ep_emb), len(query_emb))
-                dot = sum(query_emb[i] * ep_emb[i] for i in range(dim))
-                norm_q = math.sqrt(sum(x * x for x in query_emb))
-                norm_e = math.sqrt(sum(x * x for x in ep_emb))
-                norms = norm_q * norm_e
-                similarity = dot / norms if norms > 0 else 0.0
-            
-            if similarity >= self.similarity_threshold:
-                candidates.append((entry.episode, similarity))
-        
-        # Sort by similarity (highest first)
-        candidates.sort(key=lambda x: x[1], reverse=True)
-        
-        # Update access counts for returned episodes
-        for episode, _ in candidates[:5]:  # Top 5
-            await self.access_episode(episode.episode_id)
-        
-        return candidates
+            field_words = set(episode_field_tokens(episode.actions))
+            coverage = len(query_words & field_words) / len(query_words)
+            if coverage < min_coverage:
+                continue
+            ep_vec = [float(x) for x in (episode.embedding or [])]
+            cosine = (sum(query_vec[i] * ep_vec[i] for i in range(len(query_vec)))
+                      if len(ep_vec) == len(query_vec) else 0.0)
+            scored.append((episode, coverage + 0.1 * cosine))
+
+        if not scored:
+            return None, 0.0
+        scored.sort(key=lambda item: item[1], reverse=True)
+        best, score = scored[0]
+        await self.access_episode(best.episode_id)
+        return best, score
+
+    async def update_episode_actions(self, episode_id: str,
+                                     actions: List[Dict[str, Any]]) -> bool:
+        """Replace a healed episode's action list and recompute its structural
+        vector, so the next replay uses the repaired selectors."""
+        entry = self._episodes.get(episode_id)
+        if entry is None:
+            return False
+        entry.episode.actions = actions
+        entry.episode.embedding = embed_tokens(
+            episode_field_tokens(actions), self.embedding_dim)
+        return True
     
     # --- PII Filtering ---
     
     def _has_pii(self, actions: List[Dict[str, Any]]) -> bool:
         """Check if actions contain PII that should be filtered."""
-        pii_patterns = [
-            "credit.card", "ssn", "social.security", "password", "bank.account",
-            "cvv", "pin", "account.number", "routing.number"
-        ]
-        
+        # Short tokens match on word boundaries only ("pin" must not fire on
+        # "spinning"); multi-word phrases match as normalized substrings.
+        short = re.compile(r"\b(ssn|cvv|pin)\b")
+        phrases = (
+            "credit card", "social security", "password", "bank account",
+            "account number", "routing number",
+        )
         text_content = " ".join(
-            str(a.get("description", "")) + " " + str(a.get("value", "")) 
+            str(a.get("description", "")) + " " + str(a.get("value", ""))
             for a in actions
         ).lower()
-        
-        return any(pattern in text_content for pattern in pii_patterns)
+        normalized = re.sub(r"[^a-z0-9]+", " ", text_content)
+        if short.search(normalized):
+            return True
+        return any(phrase in f" {normalized} " for phrase in phrases)
     
     # --- Reflection & Consolidation ---
     
@@ -359,36 +426,19 @@ class EpisodicMemory:
         return adjustments
     
     # --- Embedding Generation ---
-    
+
     async def _generate_embedding(self, episode: Episode) -> List[float]:
-        """Generate sentence-transformers embedding for the episode.
-        
-        In production would use: SentenceTransformers('all-MiniLM-L6-v2')
-        Here we use a hash-based mock embedding for demo purposes.
-        """
-        # Create a deterministic embedding from episode data
-        # In production: model.encode(f"{episode.task_type}|{len(episode.actions)}|{episode.outcome}")
-        hash_input = f"{episode.task_type}|{len(episode.actions)}|{episode.outcome}|{episode.site_domain or ''}"
-        hash_val = int(hashlib.sha256(hash_input.encode()).hexdigest()[:16], 16)
-        
-        # Generate pseudo-random but deterministic embedding
-        # (random.Random accepts arbitrarily large seeds, unlike np.random.seed
-        # which rejects values >= 2**32 - and sha256 gives up to 2**64-1.)
-        rng = random.Random(hash_val)
-        embedding = [rng.gauss(0.0, 1.0) for _ in range(self.embedding_dim)]
-        
-        # Normalize
-        norm = sum(x*x for x in embedding) ** 0.5
-        if norm > 0:
-            embedding = [x/norm for x in embedding]
-        
-        return embedding
+        """Structural vector for the episode: signed feature hashing over the
+        field identity recorded at discovery (labels, placeholders, selector
+        names). See embed_tokens()."""
+        return embed_tokens(episode_field_tokens(episode.actions), self.embedding_dim)
     
     # --- Eviction ---
     
     def _evict_episodes(self) -> None:
         """Evict least relevant episodes (LRU + relevance scoring)."""
-        # Sort by (last_accessed old, relevance low, access count low)
+        # Sort key negates every field, so ascending order puts the stalest,
+        # least relevant, least accessed entries LAST - evict from the tail.
         scored = []
         for eid, entry in self._episodes.items():
             score = (
@@ -400,9 +450,12 @@ class EpisodicMemory:
         
         scored.sort()
         
-        # Evict bottom 10%
+        # Evict bottom 10%. The sort is ascending and the score negates every
+        # field, so the LARGEST scores (stalest, least relevant, least used)
+        # sit at the TAIL - evict from there. (Evicting the head removed the
+        # hottest episodes first.)
         evict_count = max(1, len(self._episodes) // 10)
-        for _, eid in scored[:evict_count]:
+        for _, eid in scored[-evict_count:]:
             episode = self._episodes.pop(eid).episode
             if episode.site_domain and eid in self._site_index.get(episode.site_domain, []):
                 self._site_index[episode.site_domain].remove(eid)

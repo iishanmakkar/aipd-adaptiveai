@@ -11,7 +11,10 @@ class Settings(BaseSettings):
     # JWT - default for demo mode
     jwt_secret: str = "dev-secret-change-in-production-min-32-chars-long"
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    # 120 min: an in-person accessibility demo (a blindfolded user booking
+    # tickets) easily outlives 30 minutes, and a mid-demo expiry bounces the
+    # user to the sign-in screen. Still short enough to rotate regularly.
+    access_token_expire_minutes: int = 120
 
     # NVIDIA NIM
     nim_base_url: str = "https://integrate.api.nvidia.com/v1"
@@ -48,6 +51,11 @@ class Settings(BaseSettings):
     # Policy engine
     clarifying_threshold: int = 3
     context_window_size: int = 5
+    # Adaptive behavior: below this self-reported intent confidence the backend
+    # asks ONE clarifying question instead of guessing. Keyword matches always
+    # score >= 0.5, so only the explicit no-match default (0.3) and genuinely
+    # unsure LLM classifications trigger it.
+    clarify_confidence_threshold: float = 0.45
 
 
 settings = Settings()

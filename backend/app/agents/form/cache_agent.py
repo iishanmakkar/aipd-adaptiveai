@@ -41,6 +41,10 @@ class CacheAgent:
         # Extract field information
         fields = discovery.get("fields", [])
         url = discovery.get("url", "")
+        if not fields:
+            # An empty discovery (unrendered SPA, non-form page) must never be
+            # cached: replaying it "succeeds" with zero fills until TTL.
+            raise ValueError(f"refusing to cache empty discovery for {url}")
         
         # Generate ARIA snapshot b64 from tree
         tree_snapshot = discovery.get("tree_snapshot", [])
@@ -48,7 +52,7 @@ class CacheAgent:
         
         # Create episode
         episode = Episode(
-            episode_id=discovery.get("discovery_id", hashlib.sha256(url.encode()).hexdigest()[:16]),
+            episode_id=discovery.get("discovery_id") or hashlib.sha256(json.dumps([(f.get("label"), f.get("selector")) for f in fields], sort_keys=True).encode()).hexdigest()[:16],
             task_type=task_type,
             aria_snapshot_b64=aria_b64,
             actions=self._actions_from_fields(fields),
@@ -73,7 +77,7 @@ class CacheAgent:
                 "role": node.get("role", ""),
                 "label": node.get("label", "")[:50] if node.get("label") else "",
             })
-        json_str = json_str = json.dumps(simplified, ensure_ascii=False)
+        json_str = json.dumps(simplified, ensure_ascii=False)
         return base64.b64encode(json_str.encode()).decode()
     
     def _actions_from_fields(self, fields: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -84,9 +88,11 @@ class CacheAgent:
         internal field_id hash (which exists nowhere in the page).
         """
         actions = []
+        if len(fields) > 200:
+            raise ValueError("too many fields to cache (max 200)")
         for i, field in enumerate(fields):
-            ftype = field["type"]
-            if ftype in ("button", "submit", "radio", "checkbox"):
+            ftype = field.get("type", "")
+            if ftype in ("button", "submit", "reset", "link", "radio", "checkbox", "switch"):
                 atype = "click"
             elif ftype in ("combobox", "listbox", "select"):
                 atype = "select"
@@ -94,10 +100,12 @@ class CacheAgent:
                 atype = "focus_and_type"
             action = {
                 "type": atype,
-                "field_id": field["field_id"],
+                "field_id": field.get("field_id", f"field_{i}"),
                 "selector": field.get("selector", ""),
                 "label": field.get("label", ""),
                 "placeholder": field.get("placeholder", ""),
+                "group": field.get("group", ""),
+                "is_action_button": bool(field.get("is_action_button", False)),
                 "description": field.get("description", ""),
                 "status": "success",
                 "order": i,

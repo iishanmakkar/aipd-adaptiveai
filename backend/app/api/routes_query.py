@@ -2,7 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
+import logging
 import re
+import secrets
 import time
 
 from app.api.auth import get_current_user, get_current_user_optional
@@ -34,8 +36,15 @@ router = APIRouter(prefix="/api", tags=["query"])
 URL_RE = re.compile(r"https?://[^\s)]+|data:[^\s]+", re.IGNORECASE)
 LIVE_MARKER_RE = re.compile(r"live page:[^(]*\((https?://[^)\s]+)\)", re.IGNORECASE)
 CONFIRM_WORDS = ("yes", "submit", "confirm", "book it", "do it", "go ahead",
-                 "proceed", "ok", "okay", "confirm submit")
+                 "proceed", "ok", "okay", "confirm submit",
+                 # The held-navigate prompt tells the user to reply
+                 # 'yes, open it' - that exact phrase must confirm.
+                 "yes, open it", "yes open it")
 CANCEL_WORDS = ("no", "cancel", "stop", "don't", "dont", "never mind", "abort")
+# Bare "no" cancels a held submit/navigate, but must NEVER cancel a slot-fill:
+# "No" is a legitimate field value ("Do you have a licence?" -> "No").
+_FILL_CANCEL_SINGLE = ("cancel", "stop", "don't", "dont", "never mind",
+                       "nevermind", "abort")
 PENDING_TTL_SECONDS = 300.0
 
 # Held confirmations + known live pages, keyed by chat session id. Store-backed
@@ -80,6 +89,9 @@ def _effective_screen_context(request) -> str | None:
         try:
             flat = uc.flattened() if hasattr(uc, "flattened") else ""
         except Exception:
+            # A supplied-but-broken UnifiedContext must not silently drop
+            # the fused page context: log it and fall back to screen_context.
+            logger.warning("unified context flatten failed; continuing with screen_context")
             flat = ""
         if flat:
             fused = (base + "\n" + flat).strip() if base else flat
@@ -106,12 +118,15 @@ def _extract_url(text: str, screen_context: str | None) -> str | None:
     return None
 
 
+logger = logging.getLogger(__name__)
+
+
 def _is_confirm(text: str) -> bool:
     """Single words only count on exact match ("yes please tell me more" must
     NOT confirm a held submit); multi-word phrases may lead the message."""
     lowered = text.strip().lower()
     for words in CONFIRM_WORDS:
-        if " " in words:
+        if " " in words or "," in words:
             if lowered.startswith(words):
                 return True
         elif lowered == words:
@@ -120,19 +135,31 @@ def _is_confirm(text: str) -> bool:
 
 
 def _is_cancel(text: str) -> bool:
+    """Cancel check for held submit/navigate proposals. Multi-word phrases
+    match as substrings; single words match on word boundaries only, so
+    "notebook", "know" or "not sure yet" don't cancel a held click (bare
+    "no" still cancels here - "no, cancel that" must work)."""
     lowered = text.strip().lower()
-    return any(w in lowered for w in CANCEL_WORDS)
+    for w in CANCEL_WORDS:
+        if " " in w or "'" in w:
+            if w in lowered:
+                return True
+        elif re.search(r"\b" + re.escape(w) + r"\b", lowered):
+            return True
+    return False
 
 
 def _is_exact_cancel(text: str) -> bool:
     """The WHOLE message is a cancel phrase - used while a slot-fill waits for
     a value, where free text like 'Street light not working' is field data,
-    not a command (found live: the substring check ate such values)."""
+    not a command (found live: the substring check ate such values). Bare
+    "no" is deliberately NOT a fill cancel: it is a legitimate answer
+    ("Do you have a licence?" -> "No")."""
     lowered = text.strip().lower().strip(".,!?;:")
-    if lowered in CANCEL_WORDS:
+    if lowered in _FILL_CANCEL_SINGLE:
         return True
     return lowered in ("cancel that", "cancel it", "no cancel", "stop that",
-                       "stop it", "never mind", "nevermind", "abort")
+                       "stop it")
 
 
 # Round 9: voice commands for the page monitor. They must NOT collide with
@@ -197,7 +224,7 @@ async def _handle_browser_intent(db, session, current_user, session_uuid, reques
             # process_query uncaught and misreports as a 500.
             return await _browser_answer(
                 db, session, current_user, session_uuid,
-                f"My browsing service is unreachable right now: {describe(e)}. "
+                f"My browsing service is unreachable right now: {_speakable_browser_error(e)}. "
                 "I can still answer from knowledge - try asking without a link.",
                 intent_result.intent, "browser service unreachable",
                 intent_result.confidence, message_count)
@@ -275,23 +302,31 @@ async def _handle_browser_intent(db, session, current_user, session_uuid, reques
         seen = "\n".join(f"- {label}" for label in labels if label) or "(no labelled elements)"
         return await _browser_answer(
             db, session, current_user, session_uuid,
-            f"I have the page '{snap.get('title', '')}' open, but I can't see "
-            f"any fillable text fields on it. What I do see:\n{seen}",
+            f"I have the page '{snap.get('title', '')}' open, but I found "
+            f"no fillable text fields on it. What I found:\n{seen}",
             "browser_act", "no fillable fields",
             intent_result.confidence, message_count)
-    remaining = [{"label": f.get("label"), "selector": f.get("selector")}
+    remaining = [{"label": f.get("label"), "selector": f.get("selector"),
+                  "choice": bool(f.get("choice"))}
                  for f in fields]
     _pending[chat_id] = {
         "kind": "fill_next", "remaining": remaining, "filled": [],
         "url": live_url,
         "intent_label": "browser_act", "confidence": intent_result.confidence,
         "created_at": time.time(),
+        # Identity token so a later turn can tell whether THIS pending is
+        # still current after awaits (stale-write guard in _fill_next_value).
+        "nonce": secrets.token_hex(8),
     }
     first = remaining[0]["label"]
+    first_is_choice = bool(remaining[0].get("choice"))
     return await _browser_answer(
         db, session, current_user, session_uuid,
         f"I have '{snap.get('title', 'the page')}' open with {len(remaining)} "
-        f"fields to fill. What should go in '{first}'? (or say 'skip')",
+        f"fields to fill. " + (
+            f"Should I select '{first}'? (say yes, no, or skip)"
+            if first_is_choice else
+            f"What should go in '{first}'? (or say 'skip')"),
         "browser_act", "slot fill started",
         intent_result.confidence, message_count)
 
@@ -322,11 +357,14 @@ async def _hold_submit(db, session, current_user, session_uuid, chat_id,
                        confidence: float, message_count: int,
                        request_id) -> QueryResponse:
     """Shared submit gate: hold the click as a single-use proposal."""
+    placeholder_nonce = secrets.token_hex(8)
     _pending[chat_id] = {
         "kind": "submit",
         "proposal": {"proposal_id": "", "payload": {"selector": selector}},
         "intent_label": "browser_act", "confidence": confidence,
         "created_at": time.time(),
+        "nonce": placeholder_nonce,
+        "url": _live_pages.get(chat_id),
     }
     # Ask the browser-agent for the real proposal object (single-use id) via
     # a dry act call: submit-class targets always come back held.
@@ -348,7 +386,16 @@ async def _hold_submit(db, session, current_user, session_uuid, chat_id,
             f"Unexpected submit state ({held}) - nothing was clicked. Tell me again what to do.",
             "browser_act", "submit hold failed", confidence, message_count)
     # Store-backed: read-modify-write (in-place nested mutation would not persist).
+    # Guard against the mid-flight race: a fast "yes"/"cancel" may have
+    # consumed or replaced this placeholder while browser_act was in flight.
+    # Writing the stale held proposal back would resurrect it (double-submit).
     _refresh = _pending.get(chat_id) or {}
+    if _refresh.get("nonce") != placeholder_nonce:
+        return await _browser_answer(
+            db, session, current_user, session_uuid,
+            "Something changed while I was holding that button - tell me "
+            "again what to do. Nothing was submitted.",
+            "browser_act", "submit hold superseded", confidence, message_count)
     _refresh["proposal"] = held["proposal"]
     _pending[chat_id] = _refresh
     prefix = f"{filled_summary}\n\n" if filled_summary else ""
@@ -406,9 +453,36 @@ async def _direct_click_turn(db, session, current_user, session_uuid, chat_id,
             f"I found '{top.get('label')}' but the click failed: {detail}.",
             "browser_act", "click failed",
             intent_result.confidence, message_count)
+    # Per-action truth: the result MUST be read. browser-agent can still come
+    # back held (its own submit-class text check is independent of the local
+    # one) or with an in-200 error (element vanished between snapshot and
+    # click) — claiming "Clicked" without reading it once lied to a blind user.
+    status = str(result.get("status", ""))
+    label = str(result.get("label") or top.get("label") or target)
+    if status == "needs_confirmation":
+        held = result.get("proposal") or {}
+        _pending[chat_id] = {
+            "kind": "submit", "proposal": held,
+            "intent_label": "browser_act", "confidence": intent_result.confidence,
+            "created_at": time.time(),
+        }
+        return await _browser_answer(
+            db, session, current_user, session_uuid,
+            f"'{label}' is a submit button - I'm holding before it. Say 'submit' "
+            "to actually click it, or 'cancel'. Nothing has been submitted yet.",
+            "browser_act", "submit held for explicit confirmation",
+            intent_result.confidence, message_count)
+    if status != "completed":
+        detail = str((result.get("detail") or {}).get("detail")
+                     or result.get("detail") or status)
+        return await _browser_answer(
+            db, session, current_user, session_uuid,
+            f"I found '{label}' but the click did not go through: {detail}.",
+            "browser_act", "click not completed",
+            intent_result.confidence, message_count)
     return await _browser_answer(
         db, session, current_user, session_uuid,
-        f"Clicked '{top.get('label')}' ({top.get('position', 'on the page')}).",
+        f"Clicked '{label}' ({top.get('position', 'on the page')}).",
         "browser_act", "routine click executed",
         intent_result.confidence, message_count)
 
@@ -428,9 +502,9 @@ async def _browser_answer(db, session, current_user, session_uuid, text: str,
 
 
 def _fill_targets(nodes: list) -> list:
-    """Fillable controls in page order (text-likes + dropdowns). Radios,
-    checkboxes, buttons and hidden inputs are out of scope for slot-fill v1:
-    the proposal names anything left untouched instead of guessing."""
+    """Fillable TEXT controls in page order (text inputs, textareas, selects).
+    Buttons, hidden inputs, and choice controls (radio/checkbox/switch) stay
+    out: they are handled as click actions elsewhere in the pipeline."""
     targets = []
     for node in nodes:
         tag = str(node.get("tag", "")).lower()
@@ -507,6 +581,14 @@ async def _maybe_browser_turn(db, session, current_user, session_uuid, request,
     # only opener: RAG output and guesses can never open pages.
     url = _extract_url(text, request.screen_context)
     if url is not None and _live_pages.get(chat_id) != url:
+        # A held proposal belongs to the OLD page: leaving it armed would let
+        # a later "submit"/"yes" misfire against the new page (the browser
+        # side 404s unknown proposal ids, but the UX is still a confusing
+        # dead confirmation). Void it here, loudly in the logs.
+        voided = _pending.pop(chat_id, None)
+        if voided is not None:
+            logger.info("voided held %s for chat %s: live page re-pointed",
+                        voided.get("kind"), chat_id)
         try:
             opened = await _ensure_live_session(chat_id, url, request_id)
         except HTTPException as e:
@@ -523,7 +605,7 @@ async def _maybe_browser_turn(db, session, current_user, session_uuid, request,
             # connection attempts failed" for a browser-agent outage).
             return await _browser_answer(
                 db, session, current_user, session_uuid,
-                f"My browsing service is unreachable right now: {describe(e)}. "
+                f"My browsing service is unreachable right now: {_speakable_browser_error(e)}. "
                 "I can still answer from knowledge - try asking without a link.",
                 "browser_inspect", "browser service unreachable",
                 0.9, message_count)
@@ -574,6 +656,19 @@ async def _execute_confirmation(db, session, current_user, session_uuid, chat_id
     """Run a held navigate/submit proposal exactly once (single-use ids)."""
     _pending.pop(chat_id, None)
     kind = pending.get("kind")
+    if kind == "submit":
+        # The page may have been re-pointed since the hold (a new URL voids
+        # the old proposal server-side): executing it now would click the
+        # wrong page's button. _hold_submit stamps the live page URL.
+        held_url = pending.get("url")
+        live_now = _live_pages.get(chat_id)
+        if held_url and live_now is not None and live_now != held_url:
+            return await _browser_answer(
+                db, session, current_user, session_uuid,
+                "The page changed since I held that button, so I voided it "
+                "rather than click the wrong thing. Tell me again what to do.",
+                "browser_act", "held submit voided by page change",
+                pending.get("confidence", 0.9), message_count)
     try:
         if kind == "navigate":
             result = await browser_confirm(chat_id, pending["proposal"]["proposal_id"],
@@ -585,10 +680,21 @@ async def _execute_confirmation(db, session, current_user, session_uuid, chat_id
         else:
             result = await browser_confirm(chat_id, pending["proposal"]["proposal_id"],
                                            request_id)
-            after = result.get("page_title_after") or ""
-            text = (f"Submitted — clicked '{result.get('label')}' on the live page."
-                    + (f" The page now shows: {after}." if after else ""))
-            action = "submitted"
+            # browser_confirm can return HTTP 200 with an in-body error (the
+            # element vanished between proposal and confirm): driver.click
+            # reports {"status": "error", ...} instead of raising. Claiming
+            # "Submitted" without reading it once told a blind user a lie.
+            inner = (result.get("detail") or {})
+            if str(inner.get("status", result.get("status", ""))) == "error":
+                text = (f"The button is no longer on the page - nothing was "
+                        f"submitted ({inner.get('detail', 'click failed')}). "
+                        "Tell me again what to do.")
+                action = "none"
+            else:
+                after = result.get("page_title_after") or ""
+                text = (f"Submitted — clicked '{result.get('label')}' on the live page."
+                        + (f" The page now shows: {after}." if after else ""))
+                action = "submitted"
     except Exception as e:
         code, detail = _browser_error_detail(e)
         if code == 404:
@@ -610,9 +716,56 @@ async def _fill_next_value(db, session, current_user, session_uuid, chat_id,
                            pending, text: str, request_id,
                            message_count) -> QueryResponse:
     """One slot-fill turn: fill the current field, ask the next (or propose)."""
+    if len(text) > INTENT_INPUT_TEXT_LIMIT and text.strip().lower() != "skip":
+        # Same 2000-char cap as the intent engine and /api/form-fill: a pasted
+        # document must not be typed into a field (or sent upstream raw).
+        first_label = ((pending.get("remaining", []) or [{}])[0].get("label")
+                       or "this field")
+        return await _browser_answer(
+            db, session, current_user, session_uuid,
+            f"That value is too long to fill (over {INTENT_INPUT_TEXT_LIMIT} "
+            f"characters). Give me a shorter value for '{first_label}', or "
+            "say 'skip'.",
+            "browser_act", "slot fill value too long", 0.9, message_count)
     if text.strip().lower() == "skip":
         remaining = pending.get("remaining", [])[1:]
         filled = pending.get("filled", [])
+    elif (pending.get("remaining", []) or [{}])[0].get("choice"):
+        current = (pending.get("remaining", []) or [{}])[0]
+        say = text.strip().casefold()
+        lab = str(current.get("label", "")).strip().casefold()
+        if say in ("no", "off", "false", "0"):
+            remaining = pending.get("remaining", [])[1:]
+            filled = pending.get("filled", []) + [
+                {"label": current.get("label"), "value": "not selected"}]
+        elif say in ("yes", "on", "true", "1") or (say and (say in lab or lab in say)):
+            try:
+                result = await browser_act(
+                    chat_id, "click", label=current.get("label"),
+                    selector=current.get("selector"), request_id=request_id)
+            except Exception as e:
+                code, detail = _browser_error_detail(e)
+                return await _browser_answer(
+                    db, session, current_user, session_uuid,
+                    f"I couldn't select '{current.get('label')}': {detail}. "
+                    "Say yes to retry, or skip.",
+                    "browser_act", "slot fill failed", 0.9, message_count)
+            if str(result.get("status", "")) != "completed":
+                detail = str((result.get("detail") or {}).get("detail")
+                             or result.get("detail") or "the option could not be selected")
+                return await _browser_answer(
+                    db, session, current_user, session_uuid,
+                    f"I couldn't select '{current.get('label')}': {detail}. "
+                    "Say yes to retry, or skip.",
+                    "browser_act", "slot fill failed", 0.9, message_count)
+            filled = pending.get("filled", []) + [
+                {"label": current.get("label"), "value": "selected"}]
+            remaining = pending.get("remaining", [])[1:]
+        else:
+            return await _browser_answer(
+                db, session, current_user, session_uuid,
+                f"Should I select '{current.get('label')}'? Say yes, no, or skip.",
+                "browser_act", "slot fill in progress", 0.9, message_count)
     else:
         current = (pending.get("remaining", []) or [{}])[0]
         try:
@@ -622,27 +775,66 @@ async def _fill_next_value(db, session, current_user, session_uuid, chat_id,
         except Exception as e:
             code, detail = _browser_error_detail(e)
             if code == 404 and pending.get("url"):
-                await _ensure_live_session(chat_id, pending["url"], request_id)
-                result = await browser_act(
-                    chat_id, "fill", label=current.get("label"),
-                    selector=current.get("selector"), value=text, request_id=request_id)
+                try:
+                    await _ensure_live_session(chat_id, pending["url"], request_id)
+                    result = await browser_act(
+                        chat_id, "fill", label=current.get("label"),
+                        selector=current.get("selector"), value=text, request_id=request_id)
+                except Exception as e2:
+                    # An exception raised inside the except block above used to
+                    # escape process_query and surface as a bogus 503 "database
+                    # connection failed" (documented misreport class).
+                    _, detail2 = _browser_error_detail(e2)
+                    return await _browser_answer(
+                        db, session, current_user, session_uuid,
+                        f"I couldn't re-open the page to fill "
+                        f"'{current.get('label')}': {detail2}.",
+                        "browser_act", "slot fill failed", 0.9, message_count)
             else:
                 return await _browser_answer(
                     db, session, current_user, session_uuid,
                     f"I couldn't fill '{current.get('label')}': {detail}.",
                     "browser_act", "slot fill failed", 0.9, message_count)
+        # Per-action truth: a 200 fill can still carry in-body error status
+        # (the field vanished in an SPA re-render between snapshot and reply).
+        # Counting it as filled submitted half-filled forms.
+        if str(result.get("status", "")) != "completed":
+            detail = str((result.get("detail") or {}).get("detail")
+                         or result.get("detail") or "the field could not be filled")
+            return await _browser_answer(
+                db, session, current_user, session_uuid,
+                f"I couldn't fill '{current.get('label')}': {detail}. "
+                "Say the value again and I'll retry.",
+                "browser_act", "slot fill failed", 0.9, message_count)
         readback = (result.get("detail") or {}).get("readback", "")
         filled = pending.get("filled", []) + [
             {"label": current.get("label"), "value": readback or text}]
         remaining = pending.get("remaining", [])[1:]
     if remaining:
+        # The browser_act awaits above yield to other turns: a fast "cancel"
+        # (or a new message) may have consumed or replaced this pending in
+        # the meantime. Writing the stale snapshot back would resurrect a
+        # dead flow or cross two fills - abort honestly instead.
+        fresh = _pending.get(chat_id)
+        if fresh is None or fresh.get("nonce") != pending.get("nonce"):
+            return await _browser_answer(
+                db, session, current_user, session_uuid,
+                "Something changed while I was filling that - tell me again "
+                "what to do.",
+                "browser_act", "slot fill superseded", 0.9, message_count)
         _pending[chat_id] = {**pending, "remaining": remaining, "filled": filled,
                              "created_at": time.time()}
         nxt = remaining[0].get("label")
+        nxt_is_choice = bool(remaining[0].get("choice"))
+        # "skip" as the very first answer leaves `filled` empty: filled[-1]
+        # would IndexError into a 500 here.
+        ack = (f"Got it: {filled[-1]['label']} = '{filled[-1]['value']}'. "
+               if filled else "Skipped that one. ")
+        nxt_q = (f"Should I select '{nxt}'? (say yes, no, or skip)"
+                 if nxt_is_choice else f"What should go in '{nxt}'? (or say 'skip')")
         return await _browser_answer(
             db, session, current_user, session_uuid,
-            f"Got it: {filled[-1]['label']} = '{filled[-1]['value']}'. "
-            f"What should go in '{nxt}'? (or say 'skip')",
+            ack + nxt_q,
             "browser_act", "slot fill in progress", 0.9, message_count)
     # All slots filled: locate the real submit control on the live page and
     # hold it - never guess a label, never click yet.
@@ -704,7 +896,6 @@ async def _monitor_voice_turn(db, session, current_user, session_uuid, chat_id,
         _voice_state = _monitor_cursor(chat_id)
         _voice_state["active"] = True
         _monitor_save_cursor(chat_id, _voice_state)
-        stats = (result.get("stats") or {}).get("counters", {})
         return await _finish_turn(
             db, session, current_user, session_uuid,
             answer=("Now watching the live page. I'll tell you when something "
@@ -742,6 +933,38 @@ async def require_db(db: AsyncSession = Depends(get_db)) -> AsyncSession:
     return db
 
 
+def _agent_error(exc: Exception) -> HTTPException:
+    """Honest agent-service errors: a 422 from the agents service (bad entity/
+    query for the agent) stays a 422 instead of masquerading as a 502
+    outage that retries forever."""
+    import httpx
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+        code = exc.response.status_code
+        if code in (400, 422, 429, 503):
+            try:
+                detail = exc.response.json().get("detail", "")
+            except Exception:
+                detail = ""
+            return HTTPException(status_code=code,
+                                 detail=str(detail)[:300] or "Agent service rejected the request")
+    return HTTPException(status_code=502, detail=f"Agent service error: {describe(exc)}")
+
+
+def _speakable_browser_error(exc: Exception) -> str:
+    """One spoken sentence for a browsing failure — no exception names, no
+    URLs, no status codes. Every answer here is read aloud by the frontend's
+    TTS, and 'HTTPStatusError: Client error 422 for url http://...' is
+    worthless (and embarrassing) read out loud to a blind user."""
+    import httpx
+    if isinstance(exc, httpx.HTTPStatusError):
+        return "the browsing service refused that request - it may not allow that address right now"
+    if isinstance(exc, httpx.TimeoutException):
+        return "the browsing service did not respond in time"
+    if isinstance(exc, httpx.HTTPError):
+        return "the browsing service could not be reached"
+    return "the browsing service had a problem"
+
+
 def _browser_error_detail(exc: Exception) -> tuple[int, str]:
     """Map browser-agent HTTP failures to (status, message) for honest answers:
     404/409/422/423/403/429 describe the situation (expired proposal, no page,
@@ -757,7 +980,9 @@ def _browser_error_detail(exc: Exception) -> tuple[int, str]:
         code = exc.response.status_code
         if code in (404, 409, 422, 423, 403, 429):
             return code, str(detail)[:300] or f"browser refused ({code})"
-    return 502, f"Browser service error: {describe(exc)}"
+        if code >= 500:
+            return code, str(detail)[:300] or _speakable_browser_error(exc)
+    return 502, _speakable_browser_error(exc)
 
 
 async def _ensure_live_session(chat_id: str, url: str,
@@ -777,12 +1002,73 @@ async def _ensure_live_session(chat_id: str, url: str,
     return result
 
 
+def _should_clarify(request: QueryRequest, intent_result) -> bool:
+    """Adaptive behavior: when the classifier says the input is not an
+    actionable request, asking ONE short clarifying question beats guessing
+    on behalf of a blind user.
+
+    Two signals, both from the classifier (never inferred again here):
+    - `ambiguous`: the model's own judgment that the input is gibberish or
+      too vague to act on (LLM self-confidence is useless for this — it
+      reports 0.9 on word salad).
+    - confidence below `clarify_confidence_threshold`: catches the keyword
+      fallback's explicit no-match default (0.3) and genuinely unsure
+      LLM classifications.
+    Autonomous mode opts out: an orchestrated plan already says what the
+    user wants. A live-browser turn is decided before this ever runs.
+    """
+    return (
+        not request.autonomous
+        and intent_result.target_agent != "browser_agent"
+        and (getattr(intent_result, "ambiguous", False)
+             or (intent_result.confidence if isinstance(intent_result.confidence, (int, float)) else 0) < settings.clarify_confidence_threshold)
+    )
+
+
+def _demote_browser_intent(intent_result, page_present: bool):
+    """Shared by /api/query and /query-demo: a browser_* intent with no open
+    page demotes to its informational equivalent instead of 502ing against
+    the agents service (whose registry has no browser_agent). The ambiguity
+    signal survives so the clarifier can still fire on word salad."""
+    if intent_result.target_agent == "browser_agent" and not page_present:
+        fallback = {
+            "browser_inspect": ("web_navigation_help", "web_agent"),
+            "browser_act": ("form_help", "form_agent"),
+        }.get(intent_result.intent, ("web_navigation_help", "web_agent"))
+        return IntentResponse(
+            intent=fallback[0], target_agent=fallback[1],
+            extracted_entity=intent_result.extracted_entity,
+            reasoning=intent_result.reasoning + " [demoted: no live page open]",
+            confidence=intent_result.confidence,
+            ambiguous=intent_result.ambiguous,
+        )
+    return intent_result
+
+
 async def _finish_turn(db: AsyncSession, session, current_user, session_uuid: UUID,
                        answer: str, agent_used: str, suggested_action: str | None,
                        sources_used: list, confidence: float,
                        intent_label: str, reasoning: str,
                        message_count: int) -> QueryResponse:
     """Shared tail: policy rewrite, persist both messages, respond."""
+    if agent_used == "clarifier":
+        # ponytail: fixed string needs no NIM rewrite or tip append
+        assistant_msg = Message(
+            session_id=session.id,
+            role=MessageRole.assistant,
+            content=answer,
+            agent_used=agent_used,
+            meta={"intent": intent_label, "reasoning": reasoning,
+                  "sources_used": sources_used, "suggested_action": suggested_action,
+                  "clarifying_count": 0},
+        )
+        db.add(assistant_msg)
+        await db.commit()
+        return QueryResponse(
+            response_text=answer, agent_used=agent_used,
+            suggested_action=suggested_action, confidence=confidence,
+            sources_used=sources_used,
+        )
     result = await db.execute(select(Preference).where(Preference.user_id == current_user.id))
     prefs = result.scalar_one_or_none()
 
@@ -866,7 +1152,16 @@ async def process_query(
         .limit(10)
     )
     recent_messages = list(reversed(result.scalars().all()))
-    history = [f"{m.role.value}: {m.content}" for m in recent_messages]
+    history = [f"{m.role.value}: {(m.content or '')[:500]}" for m in recent_messages]
+    if sum(len(h) for h in history) > 4000:
+        # ponytail: cap classify payload, keep tail
+        buf, total = [], 0
+        for h in reversed(history):
+            if total + len(h) > 4000:
+                break
+            buf.append(h)
+            total += len(h)
+        history = list(reversed(buf))
 
     # Save user message
     user_msg = Message(
@@ -883,7 +1178,9 @@ async def process_query(
     request_id = getattr(http_request.state, "request_id", None) or http_request.headers.get("X-Request-ID")
     browser_turn = await _maybe_browser_turn(
         db, session, current_user, session_uuid, request, request_id,
-        message_count=len(recent_messages),
+        # +1: recent_messages was read before this turn's user message was
+        # added, so the bare length is one turn stale for Rule 4/Rule 5.
+        message_count=len(recent_messages) + 1,
     )
     if browser_turn is not None:
         return browser_turn
@@ -903,40 +1200,52 @@ async def process_query(
             request_id=request_id,
         )
     except Exception as e:
+        import httpx as _httpx
+        if isinstance(e, _httpx.HTTPStatusError) and e.response is not None and e.response.status_code in (400, 422, 429):
+            raise HTTPException(status_code=e.response.status_code, detail=str(e.response.text)[:300])
         raise HTTPException(status_code=502, detail=f"Intent service error: {describe(e)}")
 
     # Guardrail: the model may jump to browser_* with no page anywhere (no live
     # session, no URL in this turn). Demote deterministically to the
     # informational equivalent instead of failing or hallucinating a page.
-    if intent_result.target_agent == "browser_agent":
-        page_present = (
+    intent_result = _demote_browser_intent(
+        intent_result,
+        page_present=(
             _live_pages.get(request.session_id) is not None
             or _extract_url(request.input_text, request.screen_context) is not None
+        ),
+    )
+    if intent_result.target_agent == "browser_agent":
+        browser_turn = await _handle_browser_intent(
+            db, session, current_user, session_uuid, request,
+            intent_result, request_id, message_count=len(recent_messages) + 1,
         )
-        if not page_present:
-            fallback = {
-                "browser_inspect": ("web_navigation_help", "web_agent"),
-                "browser_act": ("form_help", "form_agent"),
-            }.get(intent_result.intent, ("web_navigation_help", "web_agent"))
-            intent_result = IntentResponse(
-                intent=fallback[0], target_agent=fallback[1],
-                extracted_entity=intent_result.extracted_entity,
-                reasoning=intent_result.reasoning + " [demoted: no live page open]",
-                confidence=intent_result.confidence,
-            )
-        else:
-            browser_turn = await _handle_browser_intent(
-                db, session, current_user, session_uuid, request,
-                intent_result, request_id, message_count=len(recent_messages),
-            )
-            if browser_turn is not None:
-                return browser_turn
+        if browser_turn is not None:
+            return browser_turn
+
+    # Adaptive behavior 1/2: see _should_clarify — unsure intent means we ask
+    # instead of guessing.
+    if _should_clarify(request, intent_result):
+        return await _finish_turn(
+            db, session, current_user, session_uuid,
+            answer=(
+                "I'm not sure I understood that. Could you rephrase? It helps to "
+                "mention the topic, the page you are on, or what you'd like me to do."
+            ),
+            agent_used="clarifier",
+            suggested_action="clarify",
+            sources_used=[],
+            confidence=intent_result.confidence,
+            intent_label=intent_result.intent,
+            reasoning=f"{intent_result.reasoning} [clarifying: confidence {intent_result.confidence:.2f} below threshold]",
+            message_count=len(recent_messages) + 1,
+        )
 
     # Step 2: Call appropriate Task Agent - propagate X-Request-ID.
     # Autonomous mode (explicit opt-in per request): let the agents service
     # plan + route via /agent/orchestrate instead of the classifier's single
     # target. Browser turns already returned above, so this path only ever
-    # reaches the 9 text specialists - never a click.
+    # reaches the text specialists - never a click.
     orchestrate_plan: list[str] = []
     agent_name = intent_result.target_agent
     if request.autonomous and intent_result.target_agent != "browser_agent":
@@ -952,7 +1261,7 @@ async def process_query(
             agent_name = orchestrated.agent
             orchestrate_plan = orchestrated.plan
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Agent service error: {describe(e)}")
+            raise _agent_error(e)
     else:
         try:
             agent_result = await get_agent_response(
@@ -964,7 +1273,7 @@ async def process_query(
                 request_id=request_id,
             )
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Agent service error: {describe(e)}")
+            raise _agent_error(e)
 
     # Step 3+4: policy rewrite, persist, respond (shared with browser turns).
     # Confidence is what the intent classifier actually reported for this
@@ -982,7 +1291,7 @@ async def process_query(
         confidence=intent_result.confidence,
         intent_label=intent_result.intent,
         reasoning=_reasoning,
-        message_count=len(recent_messages),
+        message_count=len(recent_messages) + 1,
     )
 
 
@@ -993,7 +1302,9 @@ async def process_query_demo(http_request: Request, request: QueryRequest):
     Used for demos when postgres not available; main /api/query is DB-persisted real mode.
     """
     request_id = getattr(http_request.state, "request_id", None) or http_request.headers.get("X-Request-ID")
-    # Demo: create a simple in-memory history (no DB persistence, but services are live)
+    # Demo mode: no DB, ephemeral session id - do not 400 on non-UUID ids
+    # (that validation lives on the DB-persisted /api/query). Reaching the
+    # intent service is the point of this endpoint.
     history = []  # In production this would come from DB; here we keep it ephemeral
 
     # Same fusion + guards as /api/query so demo answers match real ones.
@@ -1019,6 +1330,15 @@ async def process_query_demo(http_request: Request, request: QueryRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Intent service error: {describe(e)}")
+
+    # Same guardrail as /api/query: a browser_* intent with no open live page
+    # demotes to the informational equivalent. The demo never opens pages
+    # (no _maybe_browser_turn), so page_present is the stored live page only -
+    # otherwise browser_agent goes straight to the agents registry and 502s.
+    intent_result = _demote_browser_intent(
+        intent_result,
+        page_present=_live_pages.get(request.session_id) is not None,
+    )
 
     # Step 2: Call appropriate Task Agent
     try:

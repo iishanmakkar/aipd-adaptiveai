@@ -15,7 +15,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from app.config import settings
 from app.database import Base
-from app.models import user, session, message, preference  # noqa
+from app.models import user, session, message, preference, behavior  # noqa
 
 config = context.config
 

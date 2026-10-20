@@ -76,9 +76,15 @@ def test_behavior_404_for_unknown_session(client, authed):
 
 
 def test_behavior_accepts_and_counts(client, authed):
+    # The endpoint is a single atomic upsert: execute#1 checks session
+    # ownership, execute#2 is the upsert RETURNING the row (the increment
+    # happens in SQL, so the canned row carries the post-increment counts).
+    row = SimpleNamespace(session_id=SID, replay_count=1, skip_count=0,
+                          listen_count=0, listen_seconds=0.0)
+
     async def fake_db():
-        # 1st execute: session ownership; 2nd: existing signals (none)
-        return FakeSession([FakeResult([SimpleNamespace(id=SID)]), FakeResult([])])
+        return FakeSession([FakeResult([SimpleNamespace(id=SID)]),
+                            FakeResult([row])])
     client.app.dependency_overrides[get_db] = fake_db
     try:
         r = client.post("/api/behavior-event",
@@ -90,7 +96,7 @@ def test_behavior_accepts_and_counts(client, authed):
 
 
 def test_behavior_increments_existing(client, authed):
-    existing = SimpleNamespace(session_id=SID, replay_count=2, skip_count=1,
+    existing = SimpleNamespace(session_id=SID, replay_count=2, skip_count=2,
                                listen_count=0, listen_seconds=0.0)
 
     async def fake_db():
