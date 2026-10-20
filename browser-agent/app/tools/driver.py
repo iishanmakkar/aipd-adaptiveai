@@ -88,21 +88,75 @@ class Driver:
         except ImportError as e:
             raise RuntimeError("playwright not installed; no simulated browser exists.") from e
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=self.headless)
-        ctx = await self._browser.new_context(viewport={"width": 1366, "height": 900})
-        self._page = await ctx.new_page()
-        self._page.set_default_timeout(self.timeout_ms)
+        try:
+            self._browser = await self._playwright.chromium.launch(headless=self.headless)
+            ctx = await self._browser.new_context(viewport={"width": 1366, "height": 900})
+            self._page = await ctx.new_page()
+            self._page.set_default_timeout(self.timeout_ms)
+            await self._guard_requests()
+        except Exception:
+            # Partial start (launch/context/page blew up after playwright
+            # started) must not leak the driver process per request.
+            await self.stop()
+            raise
+
+    async def _guard_requests(self) -> None:
+        """Re-validate EVERY request the page makes, not just the entry URL.
+
+        validate_browse_url() on the submitted URL alone admits two bypasses:
+        a public URL 302ing to http://169.254.169.254/ (or any internal host),
+        and DNS answers that change between validation and fetch (rebinding).
+        The interceptor aborts any http(s) request whose CURRENT target fails
+        the guard; non-http(s) schemes (ws/data/about) pass through untouched.
+        """
+        from urllib.parse import urlparse
+        from app.tools.url_guard import validate_browse_url
+
+        page = self._require_page()
+        route = getattr(page, "route", None)
+        if route is None:
+            return  # test doubles without interception support
+
+        async def _check(route):
+            url = route.request.url
+            try:
+                if urlparse(url).scheme in ("http", "https"):
+                    validate_browse_url(url)
+            except ValueError:
+                await route.abort()
+                return
+            await route.continue_()
+
+        await page.route("**/*", _check)
 
     async def stop(self) -> None:
+        # Null first, then close: if browser.close() throws, the fields must
+        # still read stopped for the next start(), and a failing
+        # playwright.stop() must not mask the original close error.
+        browser, playwright = self._browser, self._playwright
+        self._browser = None
+        self._page = None
+        self._playwright = None
         try:
-            if self._browser is not None:
-                await self._browser.close()
+            if browser is not None:
+                await browser.close()
         finally:
-            self._browser = None
-            self._page = None
-            if self._playwright is not None:
-                await self._playwright.stop()
-                self._playwright = None
+            if playwright is not None:
+                try:
+                    await playwright.stop()
+                except Exception:
+                    logger.warning("playwright stop failed during driver teardown")
+
+    def current_url(self) -> str:
+        """Best-effort current page URL (empty when no page is loaded)."""
+        try:
+            page = self._require_page()
+        except RuntimeError:
+            return ""
+        try:
+            return page.url or ""
+        except Exception:
+            return ""
 
     def _require_page(self):
         if self._page is None:
@@ -120,7 +174,9 @@ class Driver:
             await page.wait_for_load_state("load", timeout=self.timeout_ms)
         except Exception:
             logger.warning("full load timed out for %s; continuing with live DOM", url)
-        return {"url": url, "http_status": resp.status if resp else None,
+        # Post-redirect truth: callers (session.url, robots checks, status)
+        # must see where the browser actually is, not the requested URL.
+        return {"url": page.url or url, "http_status": resp.status if resp else None,
                 "title": await page.title()}
 
     async def snapshot(self) -> Dict[str, Any]:

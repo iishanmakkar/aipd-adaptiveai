@@ -168,6 +168,26 @@ async def test_robots_skipped_for_data_urls():
     assert ok
 
 
+async def test_robots_fetch_preserves_non_default_port():
+    """Rebuilding robots.txt from hostname alone dropped the port
+    (demo-forms:8080 -> :80), so every act on the bundled demo pages was
+    refused as 'unfetchable'. The fetch authority must keep host:port."""
+    seen = {}
+
+    async def fetch(host, scheme):
+        seen["host"] = host
+        return "User-agent: *\n"
+
+    robots = RobotsCache(fetch=fetch)
+    ok, _ = await robots.allowed("http://demo-forms:8080/book-tickets.html")
+    assert ok
+    assert seen["host"] == "demo-forms:8080"
+
+    ok, _ = await robots.allowed("http://user:pw@demo-forms:8080/other")
+    assert ok
+    assert seen["host"] == "demo-forms:8080"  # userinfo never leaks into the fetch
+
+
 # ---- HTTP-level contract (fake driver injected into the live app) ----
 
 @pytest.fixture

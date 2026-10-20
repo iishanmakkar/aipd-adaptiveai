@@ -13,6 +13,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install --with-deps chromium
 
 COPY ./app ./app
+# Tests live in the image so `docker compose exec browser-agent python -m
+# pytest -q` works as README §5 states (mirrors the agents service).
+COPY ./tests ./tests
+COPY ./pytest.ini .
 
 EXPOSE 8003
 

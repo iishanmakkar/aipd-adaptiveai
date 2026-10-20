@@ -218,20 +218,30 @@ class RobotsCache:
         can't tell groups apart reliably, the path is treated as disallowed
         only when the `*` group says so; named groups are ignored)."""
         disallows: List[str] = []
-        in_star = False
-        seen_ua = False
+        group_uas: List[str] = []
+        seen_any_ua = False
         for raw in text.splitlines():
             line = raw.split("#", 1)[0].strip()
-            if not line or ":" not in line:
+            if not line:
+                # Blank line ends the current UA group (standard grouping).
+                group_uas = []
+                continue
+            if ":" not in line:
+                group_uas = []
                 continue
             field, _, value = line.partition(":")
             field, value = field.strip().lower(), value.strip()
             if field == "user-agent":
-                seen_ua = True
-                in_star = (value == "*")
-            elif field == "disallow" and ((in_star) or not seen_ua) and value:
+                # Consecutive User-agent lines belong to ONE group: accumulate
+                # instead of overwriting (overwriting dropped the `*` when a
+                # named bot was listed next to it, fail-opening the block).
+                seen_any_ua = True
+                group_uas.append(value)
+            elif field == "disallow" and value and ("*" in group_uas or not seen_any_ua):
                 if value not in disallows:
                     disallows.append(value)
+            elif field not in ("disallow", "user-agent"):
+                group_uas = []
         return disallows
 
     async def allowed(self, url: str) -> tuple[bool, str]:
@@ -241,16 +251,23 @@ class RobotsCache:
             return True, "no host to check"
         host = parsed.hostname.lower()
         scheme = parsed.scheme
+        # robots.txt lives per authority, so the port must survive: rebuilding
+        # from hostname alone dropped it (demo-forms:8080 became :80 -> fetch
+        # failed -> every act on a non-default-port host was refused).
+        authority = parsed.netloc.rsplit("@", 1)[-1] or host
+        cache_key = authority.lower()
         now = time.time()
-        cached = self._cache.get(host)
+        cached = self._cache.get(cache_key)
         if cached and now - cached[1] < self.ttl:
             disallows = cached[0]
         else:
-            text = await self._download(host, scheme)
+            text = await self._download(authority, scheme)
             if text is None:
-                return False, f"robots.txt unfetchable for {host} - refusing to act"
+                return False, f"robots.txt unfetchable for {authority} - refusing to act"
             disallows = self._parse_disallows(text)
-            self._cache[host] = (disallows, now)
+            # Keyed by authority (host:port), not bare hostname: a permissive
+            # :80 verdict must never authorize acts on :8443 (and vice versa).
+            self._cache[cache_key] = (disallows, now)
         path = parsed.path or "/"
         for prefix in disallows:
             if path.startswith(prefix):
@@ -289,9 +306,19 @@ class SessionManager:
             if existing is not None:
                 existing.touch()
                 return existing
+            evict = None
             if len(self._sessions) >= self.max_sessions:
-                oldest = min(self._sessions.values(), key=lambda s: s.last_active)
-                await self._close_locked(oldest.session_id, reason="capacity-evict")
+                evict = min(self._sessions.values(),
+                            key=lambda s: s.last_active).session_id
+        # Evict OUTSIDE the manager lock: _close_locked re-acquires it (and
+        # awaits Playwright teardown), which deadlocked open() while held.
+        if evict is not None:
+            await self._close_locked(evict, reason="capacity-evict")
+        async with self._lock:
+            existing = self._sessions.get(session_id)
+            if existing is not None:
+                existing.touch()
+                return existing
             session = LiveSession(
                 session_id, self._driver_factory(),
                 nav_per_hour=self.nav_per_hour, submits_per_hour=self.submits_per_hour)
@@ -300,23 +327,54 @@ class SessionManager:
             return session
 
     async def close(self, session_id: str, reason: str = "explicit") -> bool:
-        async with self._lock:
-            return await self._close_locked(session_id, reason)
-
-    async def _close_locked(self, session_id: str, reason: str) -> bool:
-        session = self._sessions.pop(session_id, None)
+        session = await self._pop_locked(session_id)
         if session is None:
             return False
-        if session.monitor is not None and session.monitor.enabled:
-            # Monitoring must never outlive its session - and its unsent
-            # descriptions are discarded, not delivered posthumously.
-            session.monitor.stop(reason=f"session-closed:{reason}")
+        await self._stop_driver(session, session_id, reason)
+        return True
+
+    async def _pop_locked(self, session_id: str):
+        """Remove the session from the registry under the manager lock. The
+        driver itself is stopped OUTSIDE the lock (Playwright teardown takes
+        seconds; holding the manager lock across it serializes every
+        open/close/sweep behind one teardown)."""
+        async with self._lock:
+            session = self._sessions.pop(session_id, None)
+            if session is not None and session.monitor is not None and session.monitor.enabled:
+                # Monitoring must never outlive its session - and its unsent
+                # descriptions are discarded, not delivered posthumously.
+                session.monitor.stop(reason="session-closed")
+            return session
+
+    @staticmethod
+    async def _stop_driver(session, session_id: str, reason: str) -> None:
+        # Take the session lock first (briefly): an in-flight act holding it
+        # must finish before the browser is closed underneath it. If the lock
+        # is stuck, close anyway after a grace period rather than wedging the
+        # sweep loop forever.
+        locked = False
         try:
-            await session.driver.stop()
-        except Exception as e:
-            logger.warning(json.dumps({"event": "session_close_driver_error",
-                                       "session_id": session_id, "error": str(e)[:150]}))
+            try:
+                await asyncio.wait_for(session.lock.acquire(), timeout=5.0)
+                locked = True
+            except asyncio.TimeoutError:
+                logger.warning(json.dumps({"event": "session_close_lock_timeout",
+                                           "session_id": session_id}))
+            try:
+                await session.driver.stop()
+            except Exception as e:
+                logger.warning(json.dumps({"event": "session_close_driver_error",
+                                           "session_id": session_id, "error": str(e)[:150]}))
+        finally:
+            if locked:
+                session.lock.release()
         session.log("session_close", reason=reason)
+
+    async def _close_locked(self, session_id: str, reason: str) -> bool:
+        session = await self._pop_locked(session_id)
+        if session is None:
+            return False
+        await self._stop_driver(session, session_id, reason)
         return True
 
     async def sweep_once(self, now: Optional[float] = None) -> List[str]:
@@ -325,11 +383,13 @@ class SessionManager:
         async with self._lock:
             idle = [sid for sid, s in self._sessions.items()
                     if now - s.last_active > self.ttl]
-            closed = []
-            for sid in idle:
-                if await self._close_locked(sid, reason="idle-timeout"):
-                    closed.append(sid)
-            return closed
+        # Outside the manager lock: each close re-acquires it briefly, and
+        # driver teardown never blocks the registry.
+        closed = []
+        for sid in idle:
+            if await self._close_locked(sid, reason="idle-timeout"):
+                closed.append(sid)
+        return closed
 
     async def sweep_loop(self, interval_seconds: float = 60.0) -> None:
         """Background task: run from the app lifespan, cancelled on shutdown."""

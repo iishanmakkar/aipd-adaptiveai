@@ -59,6 +59,68 @@ def test_select_on_input_is_422(client, stubbed_app):
     assert r.status_code == 422, r.text
 
 
+async def test_request_interceptor_aborts_ssrf_redirect(monkeypatch):
+    """The entry-URL guard alone admits 302-to-metadata and DNS rebinding:
+    every in-page request must be re-validated, not just the first."""
+    from types import SimpleNamespace
+    from app.tools.driver import Driver
+    import app.tools.url_guard as guard
+
+    def fake_resolve(host):
+        # Mirror real DNS for IP literals (no lookup happens); only
+        # hostnames resolve to the canned public address.
+        import ipaddress
+        try:
+            ipaddress.ip_address(host)
+            return [(2, 1, 6, "", (host, 0))]
+        except ValueError:
+            return [(2, 1, 6, "", ("93.184.216.34", 0))]  # public, no network
+
+    monkeypatch.setattr(guard, "_resolve", fake_resolve)
+    # Pin the local-targets opt-in OFF (compose sets it ON): this test locks
+    # the interception mechanism under the default policy.
+    monkeypatch.setenv(guard.LOCAL_TARGETS_ENV, "0")
+
+    seen = {}
+
+    class FakeRoute:
+        def __init__(self, url):
+            self.request = SimpleNamespace(url=url)
+            self.verdict = None
+
+        async def abort(self):
+            self.verdict = "abort"
+
+        async def continue_(self):
+            self.verdict = "continue"
+
+    class FakePage:
+        async def route(self, pattern, handler):
+            seen["pattern"] = pattern
+            seen["handler"] = handler
+
+    driver = Driver.__new__(Driver)
+    driver._page = FakePage()
+    await driver._guard_requests()
+    assert seen["pattern"] == "**/*"
+
+    public = FakeRoute("https://example.com/app.css")
+    await seen["handler"](public)
+    assert public.verdict == "continue"
+
+    evil = FakeRoute("http://169.254.169.254/latest/meta-data")
+    await seen["handler"](evil)
+    assert evil.verdict == "abort"
+
+    internal = FakeRoute("http://10.9.9.9/admin")
+    await seen["handler"](internal)
+    assert internal.verdict == "abort"
+
+    ws = FakeRoute("wss://example.com/sock")
+    await seen["handler"](ws)
+    assert ws.verdict == "continue"
+
+
 def test_select_on_dropdown_succeeds(client, stubbed_app):
     assert client.post("/session/open",
                        json={"session_id": "s2", "url": "data:text/html,<form></form>"}).status_code == 200

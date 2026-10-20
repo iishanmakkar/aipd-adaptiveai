@@ -174,7 +174,7 @@ def test_stop_disables_and_discards_events():
     asyncio.run(settle(monitor))
     assert monitor.counters["narrations"] == 1
     monitor.stop(reason="test")
-    assert monitor.poll_once is not None
+    assert not monitor.enabled
     asyncio.run(monitor.poll_once())
     assert monitor.counters["polls"] == 3        # poll_once no-ops when stopped
     assert list(monitor.events) == []            # unsent descriptions discarded
@@ -189,6 +189,9 @@ def test_max_duration_auto_stops():
 
 
 def test_failed_describe_does_not_lose_the_change():
+    """A transient NIM failure keeps the change as deferred (and keeps the
+    rate ceiling): the next allowed window retries the SAME change instead
+    of dropping it, then narrates the newer state normally."""
     monitor, driver, calls = make_monitor()
     async def failing(text, prev):
         raise RuntimeError("nim down")
@@ -198,7 +201,7 @@ def test_failed_describe_does_not_lose_the_change():
     asyncio.run(settle(monitor))
     assert monitor.counters["errors"] == 1
     assert monitor.counters["narrations"] == 0
-    # Recovery: next settled change goes out normally.
+    # Recovery: the deferred change goes out first, then the newer state.
     monitor.describe_fn = None  # falls back to real NIM path... not in tests
     # Instead re-inject a working fake.
     async def working(text, prev):
@@ -207,7 +210,8 @@ def test_failed_describe_does_not_lose_the_change():
     monitor.describe_fn = working
     driver.signal["text"] = "error appeared and page recovered"
     asyncio.run(settle(monitor))
-    assert monitor.counters["narrations"] == 1
+    assert monitor.counters["narrations"] == 2
+    assert calls == ["error appeared", "error appeared and page recovered"]
 
 
 def test_delivery_cursor_roundtrip():

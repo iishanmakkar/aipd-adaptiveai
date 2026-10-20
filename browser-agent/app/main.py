@@ -38,7 +38,7 @@ class BrowseRequest(BaseModel):
 
 
 class FillField(BaseModel):
-    selector: str
+    selector: str = Field(..., min_length=1)
     value: str = ""
 
 
@@ -99,12 +99,58 @@ def _session_or_404(session_id: str):
     return session
 
 
+def _refresh_session_location(session) -> None:
+    """Best-effort: clicks can navigate (submit -> confirmation page), so keep
+    session.url pointed at the CURRENT page for the robots checks + status.
+    Never raises (FakeDriver test doubles lack current_url)."""
+    try:
+        current_url = session.driver.current_url() if hasattr(
+            session.driver, "current_url") else ""
+    except Exception:
+        return
+    if current_url:
+        session.url = current_url
+
+
+async def _started_driver(driver) -> None:
+    """Start Chromium with honest errors: an unprovisioned browser is 503
+    (nothing to fix in the request), a launch failure is 502. Unwrapped,
+    both escape as bare 500s."""
+    try:
+        await driver.start()
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=f"browser unavailable: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"browser failed to start: {e}")
+
+
+def _no_page_yet(session_id: str):
+    """409 when the session exists but no page was ever navigated: the
+    browser-agent distinguishes 'no session' (404) from 'session with no
+    page' (409) so callers can guide the user instead of reporting noise."""
+    raise HTTPException(status_code=409,
+                        detail="live session has no page yet - navigate first")
+
+
+async def _fill_one(driver, field: "FillField") -> Dict[str, Any]:
+    """One fill honoring the driver's error-dict contract: a Playwright
+    blow-up on a bad selector becomes a per-field error entry, not a 500
+    that hides which field failed."""
+    try:
+        return await driver.fill(field.selector, field.value)
+    except ValueError as e:
+        return {"status": "error", "detail": str(e)}
+    except Exception as e:
+        return {"status": "error", "detail": f"fill failed: {e}"}
+
+
 def _request_id(request: Request) -> Optional[str]:
     return request.headers.get("X-Request-ID")
 
 
 async def _navigate_session(session, url: str, request_id: Optional[str]) -> Dict[str, Any]:
     """Shared navigate path: budgets, robots note, real navigation, logging."""
+    first = not session.url
     if not session.nav_budget.check_and_spend():
         raise HTTPException(status_code=429,
                             detail="navigation budget exhausted for this session (30/hour)")
@@ -121,7 +167,7 @@ async def _navigate_session(session, url: str, request_id: Optional[str]) -> Dic
     session.log("navigate", url=url, http_status=nav.get("http_status"),
                 robots_ok=robots_ok, robots_reason=robots_reason,
                 request_id=request_id)
-    return {"status": "opened" if not session.url else "navigated",
+    return {"status": "opened" if first else "navigated",
             "url": session.url, "title": session.title,
             "http_status": nav.get("http_status"),
             "robots": robots_reason}
@@ -179,7 +225,7 @@ async def browse(req: BrowseRequest):
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     driver = Driver()
-    await driver.start()
+    await _started_driver(driver)
     try:
         try:
             nav = await driver.navigate(req.url)
@@ -207,13 +253,13 @@ async def fill(req: FillRequest):
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     driver = Driver()
-    await driver.start()
+    await _started_driver(driver)
     try:
         try:
             nav = await driver.navigate(req.url)
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"navigation failed: {e}")
-        results = [await driver.fill(f.selector, f.value) for f in req.fields]
+        results = [await _fill_one(driver, f) for f in req.fields]
         ok = sum(1 for r in results if r.get("status") == "completed")
         return {"url": nav["url"], "http_status": nav["http_status"],
                 "filled": ok, "total": len(results), "results": results}
@@ -243,16 +289,17 @@ async def session_open(req: SessionOpenRequest, request: Request):
         raise HTTPException(status_code=422, detail=str(e))
     session = await sessions.open(req.session_id.strip())
     if _needs_nav_confirm(req.url, req.confirmed):
-        prop = session.propose(
-            "navigate",
-            f"{req.url} looks like a login/payment page. Confirm explicitly before I open it.",
-            {"url": req.url})
-        session.log("navigate_proposed", url=req.url, reason="sensitive-domain",
-                    request_id=_request_id(request))
+        async with session.lock:
+            prop = session.propose(
+                "navigate",
+                f"{req.url} looks like a login/payment page. Confirm explicitly before I open it.",
+                {"url": req.url})
+            session.log("navigate_proposed", url=req.url, reason="sensitive-domain",
+                        request_id=_request_id(request))
         return {"status": "needs_confirmation", "proposal": prop,
                 "session_id": session.session_id}
     async with session.lock:
-        await session.driver.start()
+        await _started_driver(session.driver)
         try:
             result = await _navigate_session(session, req.url, _request_id(request))
         except HTTPException:
@@ -270,16 +317,19 @@ async def session_navigate(session_id: str, req: SessionNavigateRequest,
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     if _needs_nav_confirm(req.url, req.confirmed):
-        prop = session.propose(
-            "navigate",
-            f"{req.url} looks like a login/payment page. Confirm explicitly before I open it.",
-            {"url": req.url})
-        session.log("navigate_proposed", url=req.url, reason="sensitive-domain",
-                    request_id=_request_id(request))
+        # Under the session lock: two concurrent sensitive navigations must
+        # not mint two proposals where the first confirm 404s.
+        async with session.lock:
+            prop = session.propose(
+                "navigate",
+                f"{req.url} looks like a login/payment page. Confirm explicitly before I open it.",
+                {"url": req.url})
+            session.log("navigate_proposed", url=req.url, reason="sensitive-domain",
+                        request_id=_request_id(request))
         return {"status": "needs_confirmation", "proposal": prop,
                 "session_id": session.session_id}
     async with session.lock:
-        await session.driver.start()
+        await _started_driver(session.driver)
         result = await _navigate_session(session, req.url, _request_id(request))
         result["session_id"] = session.session_id
         return result
@@ -288,16 +338,18 @@ async def session_navigate(session_id: str, req: SessionNavigateRequest,
 @app.get("/session/{session_id}/snapshot")
 async def session_snapshot(session_id: str):
     session = _session_or_404(session_id)
+    if not session.url:
+        _no_page_yet(session_id)
     async with session.lock:
         try:
             snap = await session.driver.snapshot()
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"snapshot failed: {e}")
         session.touch()
-        nodes = snap.get("nodes", [])[:100]
+        nodes = snap.get("nodes", [])
         return {"session_id": session_id, "url": session.url,
                 "title": snap.get("title", ""), "node_count": len(nodes),
-                "nodes": nodes}
+                "nodes": nodes[:100]}
 
 
 @app.post("/session/{session_id}/inspect")
@@ -412,27 +464,42 @@ async def session_act(session_id: str, req: SessionActRequest, request: Request)
                     "submit",
                     f"Ready to activate {label!r} on {session.url}. "
                     "Say 'submit' to actually click it, or 'cancel'.",
-                    {"selector": node.get("selector", ""), "label": label})
+                    {"selector": node.get("selector", ""), "label": label,
+                     # Bound to THIS page: a confirm arriving after a
+                     # navigation must 409, never click page B's element.
+                     "url": session.url})
                 session.touch()
                 session.log("submit_proposed", label=label,
                             request_id=_request_id(request))
                 return {"status": "needs_confirmation", "proposal": prop,
                         "session_id": session.session_id}
-            if not session.submit_budget.check_and_spend():
-                raise HTTPException(status_code=429, detail=(
-                    "submit budget exhausted for this session (5/hour)"))
             allowed, reason = await sessions.robots.allowed(session.url)
             if not allowed:
                 session.log("submit_refused", label=label, reason=reason,
                             request_id=_request_id(request))
                 raise HTTPException(status_code=403, detail=reason)
+            # The submit budget pays for submits that actually happen - a
+            # refused click (robots/captcha above, failure below) must not
+            # burn one of the 5/hour.
+            if not session.submit_budget.check_and_spend():
+                raise HTTPException(status_code=429, detail=(
+                    "submit budget exhausted for this session (5/hour)"))
             try:
                 result = await session.driver.click(node.get("selector", ""))
             except Exception as e:
                 raise HTTPException(status_code=502, detail=f"submit click failed: {e}")
+            if str(result.get("status", "")) == "error":
+                # The driver reports failures in-body (vanished element):
+                # claiming "submitted" here once told a blind user a lie.
+                session.log("submit_failed", label=label,
+                            reason=str(result.get("detail", ""))[:150],
+                            request_id=_request_id(request))
+                raise HTTPException(status_code=502,
+                                    detail=f"submit click failed: {result.get('detail')}")
             session.touch()
             session.log("submit_executed", label=label, url=session.url,
                         request_id=_request_id(request))
+            _refresh_session_location(session)
             return {"status": "submitted", "label": label,
                     "detail": result, "session_id": session.session_id}
         if session.url.startswith(("http://", "https://")):
@@ -456,9 +523,16 @@ async def session_act(session_id: str, req: SessionActRequest, request: Request)
             raise HTTPException(status_code=422, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"act failed: {e}")
+        if str(result.get("status", "")) == "error":
+            # Driver failures arrive in-body (vanished element): passing them
+            # through as HTTP 200 "status: error" hid failures from callers
+            # keying on status codes.
+            raise HTTPException(status_code=502,
+                                detail=f"act failed: {result.get('detail')}")
         session.touch()
         session.log("act", kind=req.kind, label=label,
                     request_id=_request_id(request))
+        _refresh_session_location(session)
         return {"status": result.get("status", "completed"), "label": label,
                 "detail": result, "session_id": session.session_id}
 
@@ -474,7 +548,7 @@ async def session_confirm(session_id: str, req: SessionConfirmRequest,
             raise HTTPException(status_code=404, detail=(
                 "no matching pending proposal - it may have expired or been used"))
         if prop["kind"] == "navigate":
-            await session.driver.start()
+            await _started_driver(session.driver)
             try:
                 result = await _navigate_session(
                     session, prop["payload"]["url"], _request_id(request))
@@ -484,9 +558,17 @@ async def session_confirm(session_id: str, req: SessionConfirmRequest,
             result["confirmed_proposal"] = prop["proposal_id"]
             return result
         if prop["kind"] == "submit":
-            if not session.submit_budget.check_and_spend():
-                raise HTTPException(status_code=429, detail=(
-                    "submit budget exhausted for this session (5/hour)"))
+            # Bound to the page the proposal was made on: a confirm arriving
+            # after a navigation must 409, never click page B's element with
+            # page A's selector.
+            held_url = (prop.get("payload") or {}).get("url")
+            if held_url and session.url != held_url:
+                session.log("submit_refused", label=(prop.get("payload") or {}).get("label"),
+                            reason="page-changed-since-proposal",
+                            request_id=_request_id(request))
+                raise HTTPException(status_code=409, detail=(
+                    "the page changed since that was proposed - nothing was "
+                    "clicked. Tell me again what to do."))
             allowed, reason = await sessions.robots.allowed(session.url)
             if not allowed:
                 session.log("submit_refused", label=prop["payload"].get("label"),
@@ -502,21 +584,50 @@ async def session_confirm(session_id: str, req: SessionConfirmRequest,
                             request_id=_request_id(request))
                 raise HTTPException(status_code=423,
                                     detail="bot challenge appeared - refusing to submit")
+            # Re-validate the held selector against the CURRENT page: an
+            # in-place rerender retargets nth-of-type selectors at a different
+            # control, and clicking it would be a wrong irreversible action.
+            nodes = [n for n in (snap.get("nodes", []) or []) if n.get("label")]
+            node, problem = _resolve_target(
+                nodes, prop["payload"].get("label"),
+                prop["payload"].get("selector"))
+            if node is None or node.get("selector") != prop["payload"].get("selector"):
+                session.log("submit_refused", label=prop["payload"].get("label"),
+                            reason="selector-stale", detail=problem,
+                            request_id=_request_id(request))
+                raise HTTPException(status_code=409, detail=(
+                    "the button moved or changed since that was proposed - "
+                    "nothing was clicked. Tell me again what to do."))
+            # Budget pays for submits that happen: refusals above cost nothing.
+            if not session.submit_budget.check_and_spend():
+                raise HTTPException(status_code=429, detail=(
+                    "submit budget exhausted for this session (5/hour)"))
             try:
                 result = await session.driver.click(prop["payload"].get("selector", ""))
             except Exception as e:
                 raise HTTPException(status_code=502, detail=f"submit click failed: {e}")
+            if str(result.get("status", "")) == "error":
+                session.log("submit_failed", label=prop["payload"].get("label"),
+                            reason=str(result.get("detail", ""))[:150],
+                            request_id=_request_id(request))
+                raise HTTPException(status_code=502,
+                                    detail=f"submit click failed: {result.get('detail')}")
             session.touch()
             session.log("submit_executed", label=prop["payload"].get("label"),
                         url=session.url, confirmed=True,
                         request_id=_request_id(request))
+            _refresh_session_location(session)
             try:
                 after = await session.driver.snapshot()
                 confirmation = str(after.get("title", ""))
+                verified = True
             except Exception:
-                confirmation = ""
+                # The click went through but the page can no longer be read:
+                # say the verification failed instead of implying it.
+                confirmation, verified = "", False
             return {"status": "submitted", "label": prop["payload"].get("label"),
                     "detail": result, "page_title_after": confirmation,
+                    "confirmation_unverified": not verified,
                     "session_id": session.session_id}
         raise HTTPException(status_code=422,
                             detail=f"unknown proposal kind {prop['kind']!r}")
@@ -526,6 +637,8 @@ async def session_confirm(session_id: str, req: SessionConfirmRequest,
 async def session_text(session_id: str):
     """Read the live page's visible text (confirmation readback after submits)."""
     session = _session_or_404(session_id)
+    if not session.url:
+        _no_page_yet(session_id)
     async with session.lock:
         try:
             result = await session.driver.extract_text()
@@ -595,10 +708,15 @@ async def monitor_start(session_id: str, req: MonitorStartRequest,
         # ever delayed (loaded host), changes the user makes right after
         # consenting would otherwise be swallowed into a late baseline and
         # never narrated. After this call every later change is a real delta.
+        # A failed baseline is NOT silently installed: without a known state,
+        # "started" would be a lie.
         try:
             await monitor.poll_once()
-        except Exception:
-            pass  # loop retries; a failed baseline is just an early baseline
+        except Exception as e:
+            session.log("monitor_start_failed", reason=str(e)[:150],
+                        request_id=_request_id(request))
+            raise HTTPException(status_code=502,
+                                detail="could not read the page to start watching")
         session.monitor = monitor
         session.log("monitor_start", requested_by=req.requested_by,
                     consent="explicit", request_id=_request_id(request))
