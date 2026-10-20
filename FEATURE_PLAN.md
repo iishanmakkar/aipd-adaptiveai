@@ -155,21 +155,35 @@ class SessionMemory:
 - IndexedDB stores: session history, preferences, RAG index
 - Transformers.js models cached (flan-t5-small ~30MB)
 - Queue mutations (queries, preference changes) → sync when online
+- **Status 2026-10-06**: SW + IndexedDB queue shipped for preferences, behavior
+  events AND chat queries (drain appends + speaks the answer); no Transformers.js
+  model is bundled — in-tab RAG is a local chunk index, not an on-device LLM.
 
 ### 4.2 Real-Time Collaboration (from Google NAI curb-cut effect)
 - Shared session URL → caregiver/assistant can see same view
 - "Watch mode" — read-only view of user's chat + screen context
 - Annotations: helper highlights field → user gets voice notification
+- **Status 2026-10-06**: DONE — `/api/share` + `/api/share/{token}/annotate`
+  behind the owner's bearer; SharedSession caregiver view + owner share link
+  in the UI.
 
 ### 4.3 Braille Display Support (from Granite Assistant)
 - Structured response format maps to Braille displays
 - `backend/app/services/braille_formatter.py`
 - Test with `brlapi` / virtual Braille display
+- **Status 2026-10-06**: shipped as shaped 40-cell lines + a REAL Grade-1
+  (uncontracted) Unicode translation — letters, capital sign, digits via the
+  number sign, common punctuation. Grade-2 contraction still needs liblouis;
+  the UI labels the output accordingly (no fingerspelling claim).
 
 ### 4.4 Sign Language Avatar (from Granite Assistant, Google Grammar Lab)
 - Frontend: Three.js avatar component (optional load)
 - Backend: Response → HamNoSys/SiGML → avatar animation
 - Start with ASL fingerspelling for key terms
+- **Status 2026-10-06**: deliberately NOT built — a text-only "fingerspelling"
+  label over no avatar/animation was misleading, so the placeholder was removed
+  (SignAvatar.tsx deleted) and the alt-format panel now says exactly what it
+  delivers. Revisit only with a real signing pipeline.
 
 ---
 

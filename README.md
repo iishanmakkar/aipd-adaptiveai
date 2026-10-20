@@ -242,7 +242,12 @@ Full user journey: register → login → create session → `POST /api/query`
 Expect query latency of 10–90s depending on NIM cold start — that is upstream
 LLM time, not a bug.
 
-Try the demo: open `demo/book-tickets.html` in a browser, then
+Try the demo: paste a link to `demo/book-tickets.html` into the chat (or serve
+it and use the URL) — the UI loads the live page, shows a **Fill this form**
+button, and fills it in a real browser via `POST /api/form-fill`, reporting
+each action (the Replay button re-fills with auto-heal after a page redesign).
+The same endpoint stays callable directly:
+
 `POST /api/form-fill` with its URL and your values — the pipeline fills it in a
 real browser and reports each action.
 
@@ -301,29 +306,30 @@ real browser and reports each action.
 ## 5. Testing
 
 ```powershell
-# Verified 2026-09-23 on host (all Phase 1-4 completions + store/orchestrator wiring):
-docker compose exec intent-engine python -m pytest -q   # 129 run - keyword + HTTP contract + rate-limit bound + 13-intent routing
-docker compose exec agents python -m pytest -q          # 97 passed - FAISS/RAG, registry (11 agents), orchestrate, API, prompt contracts
-docker compose exec browser-agent python -m pytest -q   # 40 passed - sessions, monitor gating/ceiling/consent, driver guards
-cd backend; python -m pytest tests -m "not live"        # 173 passed, 1 skipped - policy (Rules 1-5), clients, auth,
-                                                        #   degrade, behavior + form-fill + SSRF contracts, hardening,
-                                                        #   + UnifiedContext/SharedDict/braille/share/orchestrate (new)
-                                                        #   (run on host: tests/ aren't copied into the backend image)
-cd frontend; npm ci; npm run build                      # tsc strict + vite pass (127 modules; verified 2026-09-23)
-python frontend/a11y_audit.py http://localhost:5173     # 0 issues - keyboard + ARIA contract (verified 2026-09-23)
-docker compose config --quiet                           # 7 services parse (6 + redis shared store)
+# Verified 2026-10-06 on host (all Phase 1-4 completions + Round 10 wiring):
+cd intent-engine; python -m pytest     # 129 passed, 2 deselected (live) - keyword + HTTP contract + rate-limit bound + 13-intent routing
+cd agents; python -m pytest            # 98 passed, 1 deselected - RAG seed reconciliation, registry (11 agents), orchestrate, API, prompt contracts,
+                                       #   vector store (faiss, or the numpy exact-IP fallback when Smart App Control blocks the faiss DLL)
+cd browser-agent; python -m pytest -m "not live"   # 42 passed - sessions, monitor gating/ceiling/consent, driver guards
+cd backend; python -m pytest           # 185 passed, 1 skipped - policy (Rules 1-5), clients, auth,
+                                       #   degrade, behavior + form-fill + SSRF contracts, hardening,
+                                       #   clarify-on-unsure rule, UnifiedContext/SharedDict/braille/share/orchestrate
+cd frontend; npm run build             # tsc strict + vite pass (135 modules; verified 2026-10-06)
+python frontend/a11y_audit.py http://localhost:5173   # keyboard + ARIA contract (needs the stack up)
+docker compose config --quiet          # 7 services parse (6 + redis shared store)
 ```
 
 At `v1.0` the total was **218 offline green** (68 + 64 + 86); the 2026-09-21
-re-verification totals **256 passed + 1 skipped** (83 + 64 + 109 — counts grew
-with new live/contract tests, and backend picked up the behavior + form-fill +
-hardening suites). Current tree: **439 passed + 1 skipped**
-(129 + 97 + 173 + 40) — new suites: 13-intent routing + tiebreaks, Telugu
-grounding, write-through TTL, no-DB 401, demo parity, trailing-slash budgets,
-JWT/demo guards, VLM key precedence, Chromium budgets, share/annotate
-round-trips, orchestrator routing + client contract, 11-agent registry/API,
-UnifiedContext fusion, SharedDict TTL + store wiring, braille shaping,
-autonomous-flag default, 422-not-503 validation.
+re-verification totals **256 passed + 1 skipped**; the 2026-10-06
+re-verification totals **454 passed + 1 skipped + 3 deselected-live**
+(129 + 98 + 42 + 185) — growth since 09-21: 13-intent routing + tiebreaks,
+Telugu grounding, write-through TTL, no-DB 401, demo parity,
+trailing-slash budgets, JWT/demo guards, VLM key precedence, Chromium budgets,
+share/annotate round-trips, orchestrator routing + client contract,
+11-agent registry/API, UnifiedContext fusion, SharedDict TTL + store wiring,
+braille shaping + Grade-1 translation, form-pipeline replay/heal contracts,
+seed-diff re-indexing, autonomous-flag default, 422-not-503 validation,
+clarify-on-unsure.
 CI also runs 15 live-Postgres + live-LLM accuracy + the
 nightly bare-noun live gate (+ new browser-agent job and load-harness smoke).
 Live proofs: §2 table + §2C (each row is a command
@@ -356,11 +362,15 @@ Live proofs: §2 table + §2C (each row is a command
   share tokens) — safe to lose, documented in `session_memory.py`.
 - **New-phase live proofs**: orchestrator routing, autonomous chat, share/annotate
   flow, monitor lifecycle, and braille are proven live (§2D). Still
-  offline/contract-only: in-tab RAG answers and the SW/IndexedDB queue —
-  each needs one live-stack run before a viva demo leans on it.
+  offline/contract-only: in-tab RAG answers, the SW/IndexedDB queue (now also
+  queueing chat queries, with the drain appending + speaking the answer), the
+  Fill-this-form dialog, and mic-draft recovery — each needs one live-stack
+  run before a viva demo leans on it.
 - **Post-§2D hardening (offline-tested, live re-proof needs a rebuild)**:
   JWT placeholder refused in production, forged/unknown tokens always 401
-  (no-token demo fallback stays in DEBUG — the UI has no login flow),
+  (no-token demo fallback stays in DEBUG; the UI has a real login flow —
+  AuthScreen, bearer on every call, boot-time token validation, logout,
+  account deletion),
   env-driven TrustedHost in intent-engine, explicit CORS origins +
   no-credentials on internal services, server-wins NIM key on the VLM proxy
   (frontend key removed), per-IP budgets on Chromium endpoints + fill caps,
@@ -372,6 +382,10 @@ Live proofs: §2 table + §2C (each row is a command
 - **This dev host fights back** (machine-specific, not project defects):
   thermal hibernates under sustained builds, WSL2 self-stops when idle, and
   Windows→guest TCP is blocked here — all in `DEPLOY.md` §6c with workarounds.
+  Additionally, Windows Smart App Control (on) blocks the unsigned faiss DLL,
+  so the agents service now falls back to a numpy exact inner-product index —
+  the same math as `faiss.IndexFlatIP` on L2-normalized vectors; faiss is
+  still preferred wherever it imports (Docker/Linux).
 
 ---
 
@@ -384,11 +398,14 @@ backend/                FastAPI orchestration, policy engine, episodic memory,
                         /api/form-fill, /api/behavior-event, /api/share, /api/alt/braille,
                         UnifiedContext fusion, Redis-backed SharedStore (Ishan, :8000)
 intent-engine/          LLM classifier + keyword fallback + session memory LRU/TTL (Kakul, :8001)
-agents/                 9 RAG agents (5 base + ui_adjuster/content_explainer/profile_updater/navigation)
+agents/                 11 RAG agents (5 base + ui_adjuster/content_explainer/
+                        profile_updater/navigation/scheduler/translator)
                         + orchestrator route POST /agent/orchestrate + FAISS (Kartik, :8002)
 browser-agent/          real Playwright service: driver + tools + sessions + monitor + FastAPI (:8003)
 frontend/               React chat, voice, VLM upload, a11y toolbar, in-tab RAG, voice commands
-                        (Cmd+K palette), offline SW + IndexedDB queue, SignAvatar (Ishika, :5173)
+                        (Cmd+K palette), offline SW + IndexedDB queue (prefs, behavior
+                        signals AND chat queries), login/account UI, caregiver share view,
+                        Fill-this-form dialog, braille panel (Ishika, :5173)
 demo/book-tickets.html  ticket-booking demo page the pipeline really fills
 docs/                   summary, backup-restore, screen-reader script, STT runbook, a11y log
 DEPLOY.md               production topology, capacity (measured), cost (~$5/10k queries paid tier)

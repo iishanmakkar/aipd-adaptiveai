@@ -29,7 +29,9 @@ git branch -a
 #   remotes/origin/main
 ```
 
-All 4 branches are clean copies of `main`. Working tree is clean (`git status` → `nothing to commit`).  
+All 4 branches are clean copies of `main`. (Snapshot from when this guide was
+written — the working tree now carries in-flight work; `git status` is the
+source of truth.)  
 Architecture reference: `README.md:15-29` + `docker-compose.yml:1-96`.
 
 ---
@@ -149,7 +151,7 @@ code intent-engine/app/classifier.py
 
 cd intent-engine
 pip install -r requirements.txt
-python -m pytest tests/test_classifier.py -v  # 20 cases must pass
+python -m pytest -m "not live"  # keyword classifier + HTTP contract must pass
 cd ..
 
 git add intent-engine/app/classifier.py
@@ -169,7 +171,7 @@ code agents/rag/seed_data.py
 cd agents
 pip install -r requirements.txt
 python tests/run_tests.py        # real LLM test, check accuracy
-# or: python tests/run_tests_mock.py
+# (there is no mock runner — the mock ecosystem was deleted; see README §6)
 cd ..
 
 git add agents/rag/seed_data.py
@@ -189,7 +191,7 @@ code backend/app/services/policy_engine.py
 cd backend
 pip install -r requirements.txt
 python test_integration.py   # httpx to 8001/8002
-docker compose config        # validate 5 services
+docker compose config        # validate 7 services
 cd ..
 
 git add backend/app/services/policy_engine.py
@@ -224,9 +226,9 @@ git commit -m "docs(github): add workflow examples"
 | Person | Command | Must Pass |
 |--------|---------|-----------|
 | Ishika | `cd frontend; npm run build` | `tsc && vite build` zero errors |
-| Kakul | `cd intent-engine; python -m pytest tests/test_classifier.py -v` | 20 cases |
+| Kakul | `cd intent-engine; python -m pytest -m "not live"` | keyword + HTTP contract green |
 | Kartik | `cd agents; python tests/run_tests.py` | 40+ queries grounded |
-| Ishan | `cd backend; docker compose config` + `python test_integration.py` | 5 services valid, 8001/8002 healthy |
+| Ishan | `cd backend; docker compose config` + `python -m pytest -m "not live"` | 7 services valid, backend suite green |
 
 Full Docker smoke (Ishan only, optional):
 ```powershell
@@ -337,7 +339,7 @@ git add frontend/; git commit -m "feat(frontend): ..."; git push origin ishika
 ```powershell
 git checkout kakul; git pull origin kakul
 # edit intent-engine/app/classifier.py , schemas.py , main.py
-cd intent-engine; python -m pytest tests/test_classifier.py -v; cd ..
+cd intent-engine; python -m pytest -m "not live"; cd ..
 git add intent-engine/; git commit -m "feat(intent): ..."; git push origin kakul
 ```
 
@@ -345,7 +347,7 @@ git add intent-engine/; git commit -m "feat(intent): ..."; git push origin kakul
 ```powershell
 git checkout kartik; git pull origin kartik
 # edit agents/rag/* , agents/agents/* , agents/llm/* , agents/main.py
-cd agents; python tests/run_tests_mock.py; cd ..
+cd agents; python -m pytest -m "not live" -q; cd ..
 git add agents/; git commit -m "feat(agents): ..."; git push origin kartik
 ```
 
