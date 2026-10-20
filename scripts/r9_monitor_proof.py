@@ -4,7 +4,7 @@ Drives the REAL stack (browser-agent :8003, backend :8000) and prints the
 evidence used in docs/round9-monitoring.md: narration transcripts with
 timestamps, monitor gate counters, and stop-then-verify-no-calls.
 
-Targets default to the local compose stack and can be pointed elsewhere with
+Targets come from the environment (no defaults - a wrong default would silently drive the wrong stack); point them at the local compose stack with
 ADAPTIVEAI_BROWSER_URL / ADAPTIVEAI_BACKEND_URL (http/https only, validated).
 
 Usage: python scripts/r9_monitor_proof.py <scenario>
@@ -269,3 +269,4 @@ if __name__ == "__main__":
      "interruption": scenario_interruption,
      "stress": scenario_stress,
      "fivemin": scenario_fivemin}[what]()
+

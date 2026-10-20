@@ -6,7 +6,7 @@ Drives the REAL backend (:8000) as a registered user:
   persisted) -> follow-up chat question coherent with narrations ->
   "stop watching my screen" -> verify NO further NIM calls.
 
-Targets default to the local compose stack and can be pointed elsewhere with
+Targets come from ADAPTIVEAI_BACKEND_URL (required, no default) and can be pointed elsewhere with
 ADAPTIVEAI_BROWSER_URL / ADAPTIVEAI_BACKEND_URL (http/https only, validated).
 
 Usage: python scripts/r9_chat_loop_proof.py
@@ -187,3 +187,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

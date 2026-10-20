@@ -10,7 +10,7 @@ No selectors are hardcoded: the slot-fill loop reads each page's live DOM and
 asks for every real field by label, then locates the page's real submit
 control and holds it behind the explicit confirmation.
 
-Env: ADAPTIVEAI_BACKEND_URL, ADAPTIVEAI_BROWSER_URL (http/https, validated;
+Env (both required, no defaults): ADAPTIVEAI_BACKEND_URL, ADAPTIVEAI_BROWSER_URL (http/https, validated;
 ADAPTIVEAI_ALLOW_LOCAL_TARGET=1 for the local compose stack).
 """
 import base64
@@ -119,3 +119,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
