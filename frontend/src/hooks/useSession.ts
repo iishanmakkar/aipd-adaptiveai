@@ -1,22 +1,34 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { getOrCreateSessionId, storeSessionId, clearSessionId } from '../utils/session';
+import { getOrCreateSessionId, storeSessionId, generateSessionId } from '../utils/session';
 import { apiService } from '../services/api';
 import type { Message } from '../types/chat';
-import type { HistoryMessage, SessionSummary } from '../types/api';
+import type { HistoryMessage, HistoryResponse, SessionSummary } from '../types/api';
 
-/**
- * Map a history API row onto the UI Message shape: `created_at` is an ISO
+/** Map a history API row onto the UI Message shape: `created_at` is an ISO
  * string on the wire, but MessageBubble calls Date methods on `timestamp`, and
- * feeding it the raw string crashed the whole chat on reload.
- */
+ * feeding it the raw string crashed the whole chat on reload. */
 function normalizeMessage(m: HistoryMessage): Message {
+  const t = new Date(m.created_at);
   return {
     id: m.id,
     role: m.role,
     content: m.content,
-    timestamp: new Date(m.created_at),
+    timestamp: Number.isNaN(+t) ? new Date() : t,
     agent_used: m.agent_used ?? undefined,
   };
+}
+
+/** History is paginated server-side and ordered oldest-first, so page 1 is
+ * the OLDEST messages. A conversation longer than one page restored only its
+ * first 20 rows and the caregiver-note poll could never see past them —
+ * always fetch the LAST page instead. */
+async function fetchLatestHistory(sessionId: string) {
+  const first: HistoryResponse = await apiService.getHistory(sessionId);
+  const lastPage = Math.max(1, Math.ceil(first.total / Math.max(1, first.page_size)));
+  if (lastPage > first.page) {
+    return apiService.getHistory(sessionId, lastPage, first.page_size);
+  }
+  return first;
 }
 
 export function useSession() {
@@ -33,17 +45,34 @@ export function useSession() {
    * Bootstrap closes that gap: restore history if the session exists, and
    * create it server-side when it does not.
    */
+  // Mirror of sessionId for async guards: a slow bootstrap for session A that
+  // resolves after the user switched to B must not write A's rows (the old
+  // code did exactly that, then B's own bootstrap discarded B's history).
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+  // Latest history for computing poll additions outside setState updaters
+  // (React may run updaters later/double - reading the result synchronously
+  // after setHistory always saw []).
+  const historyRef = useRef<Message[]>([]);
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
+  const pollRemoteBusyRef = useRef(false);
+
   const bootstrap = useCallback(async () => {
+    const forSession = sessionIdRef.current;
     setIsLoading(true);
     setSessionReady(false);
     try {
-      const response = await apiService.getHistory(sessionId);
+      const response = await fetchLatestHistory(forSession);
+      if (sessionIdRef.current !== forSession) return;
       // Never wipe what is already on screen: a restore that races user
       // activity (or StrictMode's second pass) must not delete messages.
       setHistory((prev) => (prev.length > 0 ? prev : response.messages.map(normalizeMessage)));
       setSessionReady(true);
       return;
     } catch (error) {
+      if (sessionIdRef.current !== forSession) return;
       const status = (error as { response?: { status?: number } })?.response?.status;
       if (status !== 404) {
         // Backend unreachable: keep working local-only instead of dying.
@@ -51,10 +80,15 @@ export function useSession() {
         setSessionReady(true);
         return;
       }
+    } finally {
+      // The old code set isLoading true and NEVER reset it: the history panel
+      // showed "Loading…" forever even with sessions present.
+      setIsLoading(false);
     }
     // 404 - this id exists only in this browser; register it with the backend.
     try {
       const created = await apiService.createSession();
+      if (sessionIdRef.current !== forSession) return;
       setSessionId(created.session_id);
       storeSessionId(created.session_id);
     } catch (error) {
@@ -62,7 +96,7 @@ export function useSession() {
     }
     setHistory((prev) => (prev.length > 0 ? prev : []));
     setSessionReady(true);
-  }, [sessionId]);
+  }, []);
 
   // One bootstrap per session id. Without this, the StrictMode remount (and the
   // id change when we create the session) ran bootstrap again and its result
@@ -80,13 +114,17 @@ export function useSession() {
       const response = await apiService.createSession();
       setSessionId(response.session_id);
       storeSessionId(response.session_id);
+      historyRef.current = [];
       setHistory([]);
     } catch (error) {
+      // A fabricated id would be rejected by every later call (the backend
+      // parses it as a UUID), so mint a fresh one and let the next
+      // request surface the outage honestly.
       console.error('Failed to create session:', error);
-      // Fallback to local session
-      const newSessionId = `session-${Date.now()}`;
-      setSessionId(newSessionId);
-      storeSessionId(newSessionId);
+      const fresh = generateSessionId();
+      storeSessionId(fresh);
+      setSessionId(fresh);
+      historyRef.current = [];
       setHistory([]);
     }
   }, []);
@@ -95,28 +133,70 @@ export function useSession() {
     setHistory((prev) => [...prev, message]);
   }, []);
 
+  /**
+   * Pull rows the server knows about but this tab has never seen — that is
+   * how a caregiver's helper note (POST /api/share/{token}/annotate, written
+   * from another browser) reaches the user without a manual reload. Messages
+   * this tab itself produced exist twice (local uuid + server row), so a
+   * same-role, same-content message within a 3-minute window is treated as
+   * already shown, not appended again. Returns what was added so the caller
+   * can announce it.
+   */
+  const pollRemoteMessages = useCallback(async (): Promise<Message[]> => {
+    // Serialized: two overlapping polls computed against the same snapshot
+    // would append the same rows twice.
+    if (pollRemoteBusyRef.current) return [];
+    pollRemoteBusyRef.current = true;
+    try {
+      const forSession = sessionIdRef.current;
+      const response = await fetchLatestHistory(forSession);
+      if (sessionIdRef.current !== forSession) return [];
+      const prev = historyRef.current;
+      const known = new Set(prev.map((m) => m.id));
+      const added = response.messages
+        .map(normalizeMessage)
+        .filter((m) => !known.has(m.id))
+        // Own messages exist twice (local uuid + server row): suppress only a
+        // near-simultaneous echo (3-min window), not every future repeat —
+        // saying "yes" twice must appear twice.
+        .filter((m) => {
+          return !prev.some((p) =>
+            p.role === m.role && p.content === m.content
+            && Math.abs(p.timestamp.getTime() - m.timestamp.getTime()) < 180000);
+        });
+      if (added.length) {
+        // Re-check inside the updater: a message may have landed between the
+        // fetch above and this setState - append only what is still new.
+        setHistory((current) => {
+          const currentKnown = new Set(current.map((m) => m.id));
+          const fresh = added.filter((m) => !currentKnown.has(m.id));
+          return fresh.length ? [...current, ...fresh] : current;
+        });
+      }
+      return added;
+    } catch {
+      // Backend unreachable: try again on the next tick, silently.
+      return [];
+    } finally {
+      pollRemoteBusyRef.current = false;
+    }
+  }, []);
+
   const updateMessage = useCallback((id: string, updates: Partial<Message>) => {
     setHistory((prev) => 
       prev.map((msg) => (msg.id === id ? { ...msg, ...updates } : msg))
     );
   }, []);
 
-  const clearSession = useCallback(() => {
-    clearSessionId();
-    const newSessionId = `session-${Date.now()}`;
-    setSessionId(newSessionId);
-    storeSessionId(newSessionId);
-    setHistory([]);
-  }, []);
-
   /** Recent sessions for the history panel. Silent on 404/503: demo mode and
-   * unreachable backends just show an empty list instead of erroring. */
+   * unreachable backends keep the previous list instead of erroring - an
+   * outage must not present as "you have no sessions". */
   const loadSessions = useCallback(async () => {
     try {
       const response = await apiService.listSessions();
       setSessions(response.sessions);
     } catch {
-      setSessions([]);
+      // keep previous list
     }
   }, []);
 
@@ -125,10 +205,15 @@ export function useSession() {
     loadSessions();
   }, [loadSessions, sessionId, sessionReady]);
 
-  /** Jump to a previous session; the bootstrap effect loads its history. */
+  /** Jump to a previous session; the bootstrap effect loads its history.
+   * History MUST be cleared here: bootstrap's "never wipe on-screen messages"
+   * guard would otherwise keep the PREVIOUS session's transcript on screen
+   * and discard the target session's rows entirely. */
   const switchSession = useCallback((id: string) => {
     if (id === sessionId) return;
     bootstrappedFor.current = null;
+    historyRef.current = [];
+    setHistory([]);
     setSessionReady(false);
     setSessionId(id);
     storeSessionId(id);
@@ -145,6 +230,6 @@ export function useSession() {
     createNewSession,
     addMessage,
     updateMessage,
-    clearSession,
+    pollRemoteMessages,
   };
 }

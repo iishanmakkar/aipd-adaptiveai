@@ -1,0 +1,20 @@
+{
+  "name": "AdaptiveAI",
+  "short_name": "AdaptiveAI",
+  "description": "Context-aware accessibility assistant for blind and low-vision users: forms, documents, web pages and learning, by voice or text.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8f9fa",
+  "theme_color": "#2563eb",
+  "orientation": "any",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

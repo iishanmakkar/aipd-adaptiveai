@@ -28,7 +28,9 @@ export function StatusIndicator({ status, listeningTime = 0, onStopSpeaking }: S
               <span className="pulse-ring"></span>
             </span>
             <span className="status-text">Listening…</span>
-            {listeningTime > 0 && <span className="status-time">{formatTime(listeningTime)}</span>}
+            {/* The ticking clock is visual only: inside role=status it would
+              re-announce every second for the whole recording. */}
+            {listeningTime > 0 && <span className="status-time" aria-hidden="true">{formatTime(listeningTime)}</span>}
           </>
         );
       case 'thinking':

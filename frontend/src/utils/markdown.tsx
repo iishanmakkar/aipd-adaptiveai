@@ -67,7 +67,7 @@ export function renderMarkdown(source: string): ReactNode {
   for (const raw of lines) {
     const line = raw.trimEnd();
     const bullet = line.match(/^\s*[-*•]\s+(.*)$/);
-    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    const numbered = line.match(/^\s*\d{1,2}[.)]\s+(.*)$/);
 
     if (!line.trim()) {
       flushParagraph();
@@ -80,7 +80,7 @@ export function renderMarkdown(source: string): ReactNode {
         flushList();
         list = { ordered: false, items: [] };
       }
-      list.items.push(bullet[1]);
+      list.items.push(bullet[1] ?? '');
       continue;
     }
     if (numbered) {
@@ -89,14 +89,16 @@ export function renderMarkdown(source: string): ReactNode {
         flushList();
         list = { ordered: true, items: [] };
       }
-      list.items.push(numbered[1]);
+      list.items.push(numbered[1] ?? '');
       continue;
     }
     if (/^#{1,6}\s+/.test(line)) {
       flushParagraph();
       flushList();
       const heading = line.replace(/^#{1,6}\s+/, '');
-      blocks.push(<p key={`h-${key++}`} className="md-heading">{parseInline(heading, `h${key}`)}</p>);
+      const level = line.match(/^#+/)?.[0].length ?? 3;
+      const Tag = level <= 2 ? 'h3' : 'h4';
+      blocks.push(<Tag key={`h-${key++}`} className="md-heading">{parseInline(heading, `h${key}`)}</Tag>);
       continue;
     }
     flushList();

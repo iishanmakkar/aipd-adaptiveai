@@ -1,12 +1,23 @@
-import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
+import axios from 'axios';
+import type { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
+import { expireSession, getToken } from '../utils/auth';
 import type {
   QueryRequest, QueryResponse, TranscribeResponse, SessionResponse, HistoryResponse,
   SessionListResponse, PreferenceResponse, PreferenceUpdate, VLMRequest, VLMResponse,
   BehaviorEvent, PageContextResponse,
   MonitorStartResponse, MonitorStopResponse, MonitorEventsResponse,
+  TokenResponse, MeResponse, ShareCreateResponse, SharedSessionResponse,
+  BrailleResponse, FormFillResult,
 } from '../types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+/** Only the sign-in attempts themselves answer 401 about the attempt: /auth/me
+ * failing means the *token* is dead, and exempting it leaves the user on the
+ * chat UI with a live-looking session until some other call happens to 401. */
+function isAuthCall(url?: string): boolean {
+  return !!url && (url.startsWith('/auth/login') || url.startsWith('/auth/register'));
+}
 
 class ApiService {
   private client: AxiosInstance;
@@ -22,6 +33,10 @@ class ApiService {
 
     this.client.interceptors.request.use(
       (config: InternalAxiosRequestConfig) => {
+        const token = getToken();
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
         if (import.meta.env.DEV) {
           // eslint-disable-next-line no-console
           console.log('[API] Request:', config.method?.toUpperCase(), config.url);
@@ -40,10 +55,90 @@ class ApiService {
         return response;
       },
       (error) => {
-        console.error('[API] Error:', error.response?.status, error.message);
-        return Promise.reject(error);
+        const status = error.response?.status;
+        console.error('[API] Error:', status, error.message);
+        // A rejected token is not this user's session any more (expiry, secret
+        // rotation, deleted account). Drop it once so the app shows the login
+        // screen instead of failing every later call the same way. Signing in
+        // is exempt: a wrong password is a 401 about that attempt, not a dead
+        // session.
+        if (status === 401 && !isAuthCall(error.config?.url)) {
+          expireSession();
+        }        return Promise.reject(error);
       }
     );
+  }
+
+  // ---- Account ----
+
+  async register(email: string, password: string): Promise<TokenResponse> {
+    const response = await this.client.post<TokenResponse>('/auth/register', { email, password });
+    return response.data;
+  }
+
+  async login(email: string, password: string): Promise<TokenResponse> {
+    const response = await this.client.post<TokenResponse>('/auth/login', { email, password });
+    return response.data;
+  }
+
+  async me(): Promise<MeResponse> {
+    const response = await this.client.get<MeResponse>('/auth/me');
+    return response.data;
+  }
+
+  async deleteAccount(): Promise<void> {
+    await this.client.delete('/auth/account');
+  }
+
+  async createShare(sessionId: string): Promise<ShareCreateResponse> {
+    const response = await this.client.post<ShareCreateResponse>('/api/share', {
+      session_id: sessionId,
+    });
+    return response.data;
+  }
+
+  /** Caregiver side: the token in the URL is the whole credential, so this must
+   * go out without the owner's bearer even when the owner is signed in. */
+  async watchShare(token: string): Promise<SharedSessionResponse> {
+    const response = await axios.get<SharedSessionResponse>(
+      `${API_BASE_URL}/api/share/${encodeURIComponent(token)}`, { timeout: 30000 });
+    return response.data;
+  }
+
+  /** Returns {status, total} — the backend's actual reply (the declared
+   * ShareAnnotation {text, ts} was never what this endpoint returns). */
+  async annotateShare(token: string, text: string): Promise<{ status: string; total: number }> {
+    const response = await axios.post<{ status: string; total: number }>(
+      `${API_BASE_URL}/api/share/${encodeURIComponent(token)}/annotate`,
+      { text }, { headers: { 'Content-Type': 'application/json' }, timeout: 30000 });
+    return response.data;
+  }
+
+  async braille(text: string): Promise<BrailleResponse> {
+    const response = await this.client.get<BrailleResponse>('/api/alt/braille', {
+      params: { text },
+    });
+    return response.data;
+  }
+
+  async formFill(url: string, values: Record<string, string>, replay = false): Promise<FormFillResult> {
+    // Live Chromium: discover, cache and fill; a heal pass adds another round.
+    // Pre-validate the backend's bounds client-side (100 pairs, 2000 chars)
+    // so a huge form fails here with a message instead of a bare 422.
+    const keys = Object.keys(values);
+    if (keys.length > 100) {
+      throw new Error(`Too many fields to fill at once (${keys.length}; max 100).`);
+    }
+    const trimmed: Record<string, string> = {};
+    for (const key of keys) {
+      const value = values[key] ?? '';
+      trimmed[key.slice(0, 200)] = value.length > 2000
+        ? value.slice(0, 2000)
+        : value;
+    }
+    const response = await this.client.post<FormFillResult>('/api/form-fill',
+      { url, values: trimmed, replay }, { timeout: 180000 });
+    return response.data;
   }
 
   async query(request: QueryRequest): Promise<QueryResponse> {    // A real query spans intent classification + RAG retrieval + an NIM
@@ -65,11 +160,19 @@ class ApiService {
   }
 
   async transcribe(audioBlob: Blob): Promise<TranscribeResponse> {
+    // Client-side guards with spoken-friendly errors, before the 90s upload:
+    // an empty recording and an over-10MB blob both fail server-side anyway.
+    if (audioBlob.size === 0) {
+      throw new Error('Nothing was recorded - please try again.');
+    }
+    if (audioBlob.size > 10 * 1024 * 1024) {
+      throw new Error('That recording is too long to send (over 10 MB). Try a shorter one.');
+    }
     const formData = new FormData();
     formData.append('audio', audioBlob, 'recording.webm');
 
     const response = await this.client.post<TranscribeResponse>('/api/transcribe', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      // Let axios set multipart boundary from FormData (explicit header breaks it).
       // CPU whisper on a 30-second recording can take a while; the 30s default
       // aborted legitimate transcriptions.
       timeout: 90000,
@@ -77,13 +180,15 @@ class ApiService {
     return response.data;
   }
 
-  async createSession(userId?: string): Promise<SessionResponse> {
-    const response = await this.client.post<SessionResponse>('/api/session', { user_id: userId });
+  async createSession(): Promise<SessionResponse> {
+    const response = await this.client.post<SessionResponse>('/api/session', {});
     return response.data;
   }
 
-  async getHistory(sessionId: string): Promise<HistoryResponse> {
-    const response = await this.client.get<HistoryResponse>(`/api/history/${sessionId}`);
+  async getHistory(sessionId: string, page = 1, pageSize = 20): Promise<HistoryResponse> {
+    const response = await this.client.get<HistoryResponse>(`/api/history/${sessionId}`, {
+      params: { page, page_size: pageSize },
+    });
     return response.data;
   }
 
@@ -104,24 +209,31 @@ class ApiService {
     } catch (err) {
       // Offline (no response at all): queue the mutation for the
       // online-drain in main.tsx. A 4xx is a bad payload, not an outage —
-      // queueing it would poison the drain, so rethrow.
-      if (axios.isAxiosError(err) && !err.response) {
-        const { enqueueMutation } = await import('../utils/offlineQueue');
-        await enqueueMutation({ url: '/api/preferences', method: 'PUT', body: prefs });
+      // queueing it would poison the drain, so rethrow. Timeouts may have
+      // committed server-side: never queue blindly (see apiError).
+      const { isOfflineError } = await import('../utils/apiError');
+      if (isOfflineError(err)) {
+        try {
+          const { enqueueMutation } = await import('../utils/offlineQueue');
+          await enqueueMutation({ url: '/api/preferences', method: 'PUT', body: prefs });
+        } catch {
+          /* IndexedDB unavailable - fall through to throw */
+        }
       }
       throw err;
     }
   }
 
-  async recordBehaviorEvent(event: BehaviorEvent): Promise<{ status: string }> {
+  async recordBehaviorEvent(event: BehaviorEvent): Promise<{ status: string; replay_count?: number; skip_count?: number }> {
     try {
-      const response = await this.client.post<{ status: string }>('/api/behavior-event', event);
+      const response = await this.client.post<{ status: string; replay_count?: number; skip_count?: number }>('/api/behavior-event', event);
       return response.data;
     } catch (err) {
       // Behavior signals are advisory: a dead network queues them for the
-      // online-drain; a 4xx means the event itself is invalid, so drop it.
-      // Either way chat continues — recording must never break answers.
-      if (axios.isAxiosError(err) && !err.response) {
+      // online-drain; a 4xx means the event itself is invalid, so rethrow
+      // instead of reporting a 'dropped' success the caller reads as handled.
+      const { isOfflineError } = await import('../utils/apiError');
+      if (isOfflineError(err)) {
         try {
           const { enqueueMutation } = await import('../utils/offlineQueue');
           await enqueueMutation({ url: '/api/behavior-event', method: 'POST', body: event });
@@ -130,7 +242,7 @@ class ApiService {
         }
         return { status: 'queued' };
       }
-      return { status: 'dropped' };
+      throw err;
     }
   }
 
@@ -163,8 +275,10 @@ class ApiService {
   async describeImage(imageBase64: string, prompt?: string): Promise<string> {
     // Vision always goes through the backend proxy, which injects NIM_API_KEY
     // server-side. Never send a key from here: any VITE_* var bakes into the
-    // public JS bundle.
-    const vlmUrl = import.meta.env.VITE_NIM_VLM_URL || 'http://localhost:8000/v1/chat/completions';
+    // public JS bundle. The proxy URL defaults to this same API origin (not a
+    // hardcoded localhost, which breaks every non-localhost deployment).
+    const apiBase = API_BASE_URL.replace(/\/$/, '');
+    const vlmUrl = import.meta.env.VITE_NIM_VLM_URL || `${apiBase}/v1/chat/completions`;
     const model = import.meta.env.VITE_NIM_VLM_MODEL || 'meta/llama-3.2-11b-vision-instruct';
 
     const request: VLMRequest = {
@@ -202,7 +316,8 @@ class ApiService {
     if (!content) {
       throw new Error('No description returned from VLM');
     }
-    return content;
+    if (typeof content === 'string') return content;
+    return content.map((p) => p.text ?? '').join(' ');
   }
 }
 

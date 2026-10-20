@@ -13,7 +13,7 @@ interface IndexedChunk {
 
 function tokenize(text: string): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const tok of text.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2)) {
+  for (const tok of text.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 1)) {
     counts.set(tok, (counts.get(tok) ?? 0) + 1);
   }
   return counts;
@@ -32,8 +32,9 @@ function cosine(a: Map<string, number>, b: Map<string, number>): number {
 
 function chunkText(text: string, maxChars = 800): string[] {
   const out: string[] = [];
-  for (let i = 0; i < text.length; i += maxChars) out.push(text.slice(i, i + maxChars));
-  return out.filter((c) => c.trim().length > 40);
+  const step = Math.max(1, maxChars - 150);
+  for (let i = 0; i < text.length; i += step) out.push(text.slice(i, i + maxChars));
+  return out.filter((c) => c.trim().length > 0);
 }
 
 /**

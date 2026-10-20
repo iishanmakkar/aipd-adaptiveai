@@ -7,12 +7,24 @@ interface AccessibilityToolbarProps {
   fontSize: FontSize;
   contrastMode: ContrastMode;
   voiceSpeed: number;
+  muted: boolean;
+  uiScale: number;
+  boldText: boolean;
+  wideSpacing: boolean;
+  darkMode: boolean;
+  readingFocus: boolean;
   verbosity: Verbosity;
   disabilityProfile: DisabilityProfile;
   languageComplexity: LanguageComplexity;
   onFontSizeChange: (size: FontSize) => void;
   onContrastToggle: () => void;
   onVoiceSpeedChange: (speed: number) => void;
+  onMuteToggle: () => void;
+  onUiScaleChange: (scale: number) => void;
+  onBoldToggle: () => void;
+  onSpacingToggle: () => void;
+  onDarkToggle: () => void;
+  onReadingToggle: () => void;
   onVerbosityChange: (level: Verbosity) => void;
   onDisabilityProfileChange: (profile: DisabilityProfile) => void;
   onLanguageComplexityChange: (complexity: LanguageComplexity) => void;
@@ -50,43 +62,64 @@ export function AccessibilityToolbar({
   fontSize,
   contrastMode,
   voiceSpeed,
+  muted,
+  uiScale,
+  boldText,
+  wideSpacing,
+  darkMode,
+  readingFocus,
   verbosity,
   disabilityProfile,
   languageComplexity,
   onFontSizeChange,
   onContrastToggle,
   onVoiceSpeedChange,
+  onMuteToggle,
+  onUiScaleChange,
+  onBoldToggle,
+  onSpacingToggle,
+  onDarkToggle,
+  onReadingToggle,
   onVerbosityChange,
   onDisabilityProfileChange,
   onLanguageComplexityChange,
   onReset,
 }: AccessibilityToolbarProps) {
   const handleFontSizeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    onFontSizeChange(e.target.value as FontSize);
+    const v = e.target.value as FontSize;
+    if (FONT_SIZES.some((o) => o.value === v)) onFontSizeChange(v);
   }, [onFontSizeChange]);
 
   const handleVerbosityChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    onVerbosityChange(e.target.value as Verbosity);
+    const v = e.target.value as Verbosity;
+    if (VERBOSITY_LEVELS.some((o) => o.value === v)) onVerbosityChange(v);
   }, [onVerbosityChange]);
 
   const handleDisabilityProfileChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    onDisabilityProfileChange(e.target.value as DisabilityProfile);
+    const v = e.target.value as DisabilityProfile;
+    if (DISABILITY_PROFILES.some((o) => o.value === v)) onDisabilityProfileChange(v);
   }, [onDisabilityProfileChange]);
 
   const handleLanguageComplexityChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    onLanguageComplexityChange(e.target.value as LanguageComplexity);
+    const v = e.target.value as LanguageComplexity;
+    if (LANGUAGE_COMPLEXITIES.some((o) => o.value === v)) onLanguageComplexityChange(v);
   }, [onLanguageComplexityChange]);
 
   const handleVoiceSpeedChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    onVoiceSpeedChange(parseFloat(e.target.value));
+    const v = parseFloat(e.target.value);
+    if (!Number.isFinite(v)) return;
+    onVoiceSpeedChange(v);
   }, [onVoiceSpeedChange]);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      e.currentTarget.click();
-    }
-  }, []);
+  const handleUiScaleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = parseFloat(e.target.value);
+    if (!Number.isFinite(v)) return;
+    onUiScaleChange(v);
+  }, [onUiScaleChange]);
+
+  // NOTE: no manual Enter/Space -> click() here. These are native <button>
+  // elements: the browser fires activation itself, and a manual keydown
+  // handler double-fired (or swallowed repeat) on some browsers.
 
   return (
     <div className="accessibility-toolbar" role="toolbar" aria-label="Accessibility settings">
@@ -154,7 +187,7 @@ export function AccessibilityToolbar({
           type="button"
           className={`toolbar-button ${contrastMode === 'high' ? 'active' : ''}`}
           onClick={onContrastToggle}
-          onKeyDown={handleKeyDown}
+
           aria-pressed={contrastMode === 'high'}
           aria-label={contrastMode === 'high' ? 'Disable high contrast mode' : 'Enable high contrast mode'}
         >
@@ -180,17 +213,101 @@ export function AccessibilityToolbar({
             aria-label="Voice speed"
             aria-valuemin={0.5}
             aria-valuemax={2}
-            aria-valuenow={voiceSpeed}
+            aria-valuenow={Number.isFinite(voiceSpeed) ? voiceSpeed : 1}
           />
-          <span className="voice-speed-value" aria-hidden="true">{voiceSpeed.toFixed(1)}x</span>
+          <span className="voice-speed-value" aria-hidden="true">
+            {Number.isFinite(voiceSpeed) ? voiceSpeed.toFixed(1) : '1.0'}x
+          </span>
         </div>
+      </fieldset>
+
+      <fieldset className="toolbar-group">
+        <legend>UI Size (low vision)</legend>
+        <div className="voice-speed-control">
+          <input
+            type="range"
+            min={1}
+            max={2}
+            step={0.1}
+            value={Number.isFinite(uiScale) ? uiScale : 1}
+            onChange={handleUiScaleChange}
+            className="voice-speed-slider"
+            aria-label="Interface size"
+            aria-valuemin={1}
+            aria-valuemax={2}
+            aria-valuenow={Number.isFinite(uiScale) ? uiScale : 1}
+            aria-valuetext={`${Math.round((Number.isFinite(uiScale) ? uiScale : 1) * 100)} percent`}
+          />
+          <span className="voice-speed-value" aria-hidden="true">
+            {Math.round((Number.isFinite(uiScale) ? uiScale : 1) * 100)}%
+          </span>
+        </div>
+      </fieldset>
+
+      <fieldset className="toolbar-group">
+        <legend>Readability</legend>
+        <button
+          type="button"
+          className={`toolbar-button ${boldText ? 'active' : ''}`}
+          onClick={onBoldToggle}
+          aria-pressed={boldText}
+          aria-label={boldText ? 'Disable bold text' : 'Enable bold text'}
+        >
+          <span>Bold text</span>
+        </button>
+        <button
+          type="button"
+          className={`toolbar-button ${wideSpacing ? 'active' : ''}`}
+          onClick={onSpacingToggle}
+          aria-pressed={wideSpacing}
+          aria-label={wideSpacing ? 'Disable wide spacing' : 'Enable wide letter spacing'}
+        >
+          <span>Wide spacing</span>
+        </button>
+      </fieldset>
+
+      <fieldset className="toolbar-group">
+        <legend>Display</legend>
+        <button
+          type="button"
+          className={`toolbar-button ${darkMode ? 'active' : ''}`}
+          onClick={onDarkToggle}
+          aria-pressed={darkMode}
+          aria-label={darkMode ? 'Disable dark mode' : 'Enable dark mode'}
+        >
+          <span>Dark mode</span>
+        </button>
+        <button
+          type="button"
+          className={`toolbar-button ${readingFocus ? 'active' : ''}`}
+          onClick={onReadingToggle}
+          aria-pressed={readingFocus}
+          aria-label={readingFocus ? 'Disable reading focus' : 'Enable reading focus'}
+          title="Dim every answer except the one under your cursor"
+        >
+          <span>Reading focus</span>
+        </button>
+      </fieldset>
+
+      <fieldset className="toolbar-group">
+        <legend>App Voice</legend>
+        <button
+          type="button"
+          className={`toolbar-button ${muted ? 'active' : ''}`}
+          onClick={onMuteToggle}
+          aria-pressed={muted}
+          aria-label={muted ? 'Unmute app voice' : 'Mute app voice'}
+          title="Mute app voice (screen-reader-only mode keeps text announcements)"
+        >
+          <span>{muted ? 'Unmute voice' : 'Mute voice'}</span>
+        </button>
       </fieldset>
 
       <button
         type="button"
         className="toolbar-button reset-button"
         onClick={onReset}
-        onKeyDown={handleKeyDown}
+
         aria-label="Reset accessibility settings to defaults"
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">

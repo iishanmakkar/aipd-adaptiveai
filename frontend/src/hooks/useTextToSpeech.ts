@@ -27,18 +27,17 @@ export function useTextToSpeech(): UseTextToSpeechReturn {
       voicesLoadedRef.current = true;
     };
 
-    if (speechSynthesis.onvoiceschanged !== undefined) {
-      speechSynthesis.onvoiceschanged = loadVoices;
-    }
+    // addEventListener (not onvoiceschanged assignment): every hook instance
+    // (chat + monitor) assigning the global handler stomped the others, and
+    // unmounting one nulled a live other's handler.
+    speechSynthesis.addEventListener('voiceschanged', loadVoices);
 
     // Force load voices
     speechSynthesis.getVoices();
     loadVoices();
 
     return () => {
-      if (speechSynthesis.onvoiceschanged === loadVoices) {
-        speechSynthesis.onvoiceschanged = null;
-      }
+      speechSynthesis.removeEventListener('voiceschanged', loadVoices);
     };
   }, [supported]);
 
@@ -61,9 +60,15 @@ export function useTextToSpeech(): UseTextToSpeechReturn {
     if (!supported) return;
 
     // Apply user preferences from CSS custom properties
-    const rate = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--voice-rate') || '1');
-    const pitch = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--voice-pitch') || '1');
-    const volume = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--voice-volume') || '1');
+    const rawRate = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--voice-rate') || '1');
+    const rawPitch = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--voice-pitch') || '1');
+    const rawVolume = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--voice-volume') || '1');
+    const rate = Number.isFinite(rawRate) ? rawRate : 1;
+    const pitch = Number.isFinite(rawPitch) ? rawPitch : 1;
+    const volume = Number.isFinite(rawVolume) ? rawVolume : 1;
+    // Muted (volume 0, e.g. screen-reader-only users): resolve without
+    // queueing so callers never hang waiting on silent speech.
+    if (volume === 0) return;
 
     await enqueueSpeech(text, { rate, pitch, volume, voice: getPreferredVoice() });
   }, [supported, getPreferredVoice]);

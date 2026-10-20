@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { validateImageFile } from '../utils/image';
 
 interface ScreenshotUploadProps {
@@ -20,6 +20,30 @@ export function ScreenshotUpload({
   const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  // Low vision: the thumbnail is too small to see — open it fullscreen.
+  const [enlarged, setEnlarged] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [inverted, setInverted] = useState(false);
+  const enlargeCloseRef = useRef<HTMLButtonElement>(null);
+
+  const openEnlarged = useCallback(() => {
+    setZoom(1);
+    setInverted(false);
+    setEnlarged(true);
+  }, []);
+
+  useEffect(() => {
+    if (enlarged) enlargeCloseRef.current?.focus();
+  }, [enlarged]);
+
+  useEffect(() => {
+    if (!enlarged) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setEnlarged(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [enlarged]);
 
   const handleFileSelect = useCallback(async (file: File) => {
     setError(null);
@@ -117,11 +141,54 @@ export function ScreenshotUpload({
             <span className="visually-hidden">Upload screenshot</span>
           </>
         ) : (
-          <span className="upload-thumb" aria-hidden="true">
-            <img src={displayImage} alt="" />
-          </span>
+          <button
+            type="button"
+            className="upload-thumb-button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); openEnlarged(); }}
+            aria-label="Enlarge screenshot preview"
+            title="Enlarge"
+          >
+            <span className="upload-thumb" aria-hidden="true">
+              <img src={displayImage} alt="" />
+            </span>
+          </button>
         )}
       </label>
+
+      {enlarged && displayImage && (
+        <div
+          className="image-viewer-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Enlarged screenshot"
+          onClick={() => setEnlarged(false)}
+        >
+          <div style={{ overflow: 'auto', maxWidth: '95vw', maxHeight: '80vh' }} onClick={(e) => e.stopPropagation()}>
+            <img
+              className={`image-viewer-full${inverted ? ' inverted' : ''}`}
+              style={{ transform: `scale(${zoom})`, transformOrigin: 'top left' }}
+              src={displayImage}
+              alt="Enlarged screenshot preview"
+            />
+          </div>
+          <div className="image-viewer-toolbar" role="toolbar" aria-label="Image viewer controls" onClick={(e) => e.stopPropagation()}>
+            <button type="button" onClick={() => setZoom((z) => Math.max(1, +(z - 0.5).toFixed(1)))} aria-label="Zoom out">−</button>
+            <span aria-live="polite">{Math.round(zoom * 100)}%</span>
+            <button type="button" onClick={() => setZoom((z) => Math.min(4, +(z + 0.5).toFixed(1)))} aria-label="Zoom in">+</button>
+            <button type="button" onClick={() => setInverted((v) => !v)} aria-pressed={inverted}>
+              {inverted ? 'Normal colors' : 'Invert colors'}
+            </button>
+          </div>
+          <button
+            type="button"
+            ref={enlargeCloseRef}
+            className="image-viewer-close"
+            onClick={() => setEnlarged(false)}
+          >
+            Close (Esc)
+          </button>
+        </div>
+      )}
 
       {displayImage && (
         <button

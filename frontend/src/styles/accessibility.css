@@ -120,6 +120,132 @@ html {
   font-size: 1rem;
 }
 
+/* Low-vision text amplification */
+.bold-text .chat-main,
+.bold-text .message-bubble,
+.bold-text .text-input,
+.bold-text .command-palette,
+.bold-text .history-panel,
+.bold-text .form-fill-dialog {
+  font-weight: 700;
+}
+
+.bold-text strong {
+  font-weight: 900;
+}
+
+.wide-spacing .chat-main,
+.wide-spacing .message-bubble,
+.wide-spacing .form-fill-dialog {
+  letter-spacing: 0.06em;
+  line-height: 1.9;
+  word-spacing: 0.12em;
+}
+
+/* Extra-visible focus everywhere when bold text is on (low-vision users
+ * need the caret position, not just screen-reader focus) */
+.bold-text *:focus-visible {
+  outline: 3px solid var(--color-primary, #0b6bcb) !important;
+  outline-offset: 3px !important;
+}
+
+/* Dark theme (low vision: less glare than light, softer than high contrast) */
+.dark-mode {
+  --color-bg: #14171b;
+  --color-bg-secondary: #1d2127;
+  --color-bg-tertiary: #282e37;
+  --color-text: #e9ebef;
+  --color-text-secondary: #bfc5cf;
+  --color-text-muted: #9298a3;
+  --color-primary: #7aa7ff;
+  --color-primary-hover: #93b6ff;
+  --color-primary-light: #22344f;
+  --color-accent: #6fdc8c;
+  --color-accent-light: #173324;
+  --color-warning: #ffb35c;
+  --color-warning-light: #3a2a12;
+  --color-error: #ff7a76;
+  --color-error-light: #3d1f1e;
+  --color-border: #3a414c;
+  --color-border-focus: #7aa7ff;
+  --color-shadow: rgba(0, 0, 0, 0.45);
+  --color-shadow-strong: rgba(0, 0, 0, 0.6);
+}
+
+/* Reading focus: dim every answer except the hovered / keyboard-focused one,
+ * so low-vision eyes track one block at a time instead of a wall of text */
+.reading-focus .message-bubble {
+  opacity: 0.35;
+  transition: opacity 150ms ease;
+}
+
+.reading-focus .message-bubble:hover,
+.reading-focus .message-bubble:focus-within {
+  opacity: 1;
+}
+
+/* Screenshot enlarge viewer (low vision: see the image yourself, enlarged) */
+.image-viewer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.image-viewer-full {
+  max-width: min(95vw, 1400px);
+  max-height: 88vh;
+  object-fit: contain;
+  border: 3px solid #fff;
+  background: #000;
+  transition: transform 150ms ease;
+}
+
+.image-viewer-full.inverted {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+.image-viewer-toolbar {
+  position: fixed;
+  bottom: 1.2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 401;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.8);
+  padding: 0.5rem 0.8rem;
+  border-radius: 8px;
+  color: #fff;
+}
+
+.image-viewer-toolbar button {
+  font-size: 1rem;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+}
+
+.image-viewer-close {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 401;
+  font-size: 1.1rem;
+  padding: 0.6rem 1.2rem;
+}
+
+.upload-thumb-button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: zoom-in;
+}
+
 /* High contrast focus for keyboard navigation */
 .high-contrast *:focus-visible {
   outline: 3px solid var(--color-border-focus) !important;

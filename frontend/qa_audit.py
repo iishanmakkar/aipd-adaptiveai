@@ -12,6 +12,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 from automation_guard import assert_focus_unchanged, assert_isolated_browser, foreground_window_token
+from audit_login import sign_up_and_in, utf8_console
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:5174"
 OUT = Path(sys.argv[2] if len(sys.argv) > 2 else "/tmp/qa")
@@ -29,6 +30,7 @@ def shot(page, name):
 
 
 def main():
+    utf8_console()
     focus_before = foreground_window_token()
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -57,6 +59,11 @@ def main():
         page.goto(BASE, wait_until="domcontentloaded", timeout=30000)
         page.wait_for_load_state("networkidle", timeout=15000)
         print(f"[load] {time.time() - t0:.1f}s")
+        shot(page, "01-auth-screen")
+
+        # --- sign in, exactly as a new user does --------------------------
+        email = sign_up_and_in(page)
+        print(f"[auth] created + signed in as {email}")
         shot(page, "01-initial")
 
         # --- structural expectations -------------------------------------

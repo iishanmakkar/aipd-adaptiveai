@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 import type { SessionSummary } from '../types/api';
 
 interface HistoryPanelProps {
@@ -27,6 +28,8 @@ function formatWhen(iso: string): string {
 export function HistoryPanel({
   open, onClose, sessions, currentSessionId, loading, onSelect, onRefresh,
 }: HistoryPanelProps) {
+  const panelRef = useRef<HTMLElement>(null);
+  useDialogFocus(open, panelRef);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -42,6 +45,7 @@ export function HistoryPanel({
     <>
       <div className="history-backdrop" onClick={onClose} aria-hidden="true" />
       <aside
+        ref={panelRef}
         className="history-panel"
         role="dialog"
         aria-modal="true"

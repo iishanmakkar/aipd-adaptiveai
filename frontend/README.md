@@ -4,11 +4,16 @@ React + Vite frontend for the AdaptiveAI system — an accessible chat interface
 
 ## Features
 
-- **Accessible Chat UI**: ARIA labels, keyboard navigation, screen reader support
-- **Voice Input**: Hold mic button → record → auto-transcribe via backend `/api/transcribe`
+- **Accessible Chat UI**: ARIA labels, keyboard navigation, screen reader support, skip link, focus-trapped dialogs
+- **Real authentication**: login/register (AuthScreen), bearer token on every API call, boot-time token validation, logout, account deletion
+- **Voice Input**: Hold mic button → record → auto-transcribe via backend `/api/transcribe`; a recording interrupted by page leave or unmount is parked in IndexedDB and recovered (transcribed + sent) on the next load
 - **Text-to-Speech**: Auto-speaks responses using Web Speech API (browser native)
 - **Screenshot Understanding**: Upload image → VLM describes it → used as context for queries
-- **Accessibility Toolbar**: Font size (4 levels), high contrast mode, voice speed control
+- **Form filling**: paste a page URL → the live page loads → **Fill this form** collects values per field and runs the real discover → cache → fill pipeline, with replay + auto-heal
+- **Caregiver share**: mint a 24h read-only link; a helper watches and annotates; notes are spoken to the user
+- **Braille panel**: per-answer shaped 40-cell lines + real Grade-1 (uncontracted) Unicode braille — labeled honestly, no sign/fingerspelling claim
+- **Offline mode**: service worker shell cache + IndexedDB queue for preferences, behavior events and chat queries; queued answers arrive (and are spoken) when connectivity returns
+- **Adaptive behavior**: answers rewritten per disability profile, verbosity and observed replay/skip behavior; unsure intents get one clarifying question
 - **No mock layer**: the Express mock server and `mockApi.ts` were deleted; every request goes to the real backend
 
 ## Quick Start
@@ -30,12 +35,15 @@ frontend/
 ├── src/
 │   ├── components/       # React components
 │   │   ├── ChatInterface.tsx      # Main chat container
-│   │   ├── MessageBubble.tsx      # Message display
+│   │   ├── MessageBubble.tsx      # Message display + braille panel
 │   │   ├── TextInput.tsx          # Text input with send
 │   │   ├── MicButton.tsx          # Voice recording button
 │   │   ├── ScreenshotUpload.tsx   # Image upload + preview
 │   │   ├── StatusIndicator.tsx    # Listening/Thinking/Speaking
 │   │   ├── AccessibilityToolbar.tsx # Font/contrast/voice controls
+│   │   ├── AuthScreen.tsx         # Login / register
+│   │   ├── SharedSession.tsx      # Caregiver read-only view
+│   │   ├── FormFillDialog.tsx     # Real form-fill + replay/heal
 │   │   └── Header.tsx             # App header with session info
 │   ├── hooks/            # Custom React hooks
 │   │   ├── useVoiceRecording.ts   # MediaRecorder wrapper

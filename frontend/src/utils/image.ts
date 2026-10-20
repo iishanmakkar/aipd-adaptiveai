@@ -10,8 +10,8 @@ export async function compressImage(file: File, maxWidth = 1024, quality = 0.8):
     }
 
     img.onload = () => {
+      URL.revokeObjectURL(img.src);
       let { width, height } = img;
-      
       if (width > maxWidth) {
         height = (height * maxWidth) / width;
         width = maxWidth;
@@ -35,7 +35,7 @@ export async function compressImage(file: File, maxWidth = 1024, quality = 0.8):
       );
     };
     
-    img.onerror = () => reject(new Error('Failed to load image'));
+    img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error('Failed to load image')); };
     img.src = URL.createObjectURL(file);
   });
 }
@@ -46,7 +46,8 @@ export async function fileToCompressedBase64(file: File, maxWidth = 1024, qualit
     const reader = new FileReader();
     reader.onloadend = () => {
       const result = reader.result as string;
-      const base64 = result.split(',')[1];
+      const base64 = result.split(',')[1] ?? '';
+      if (!base64) { reject(new Error('Could not read image data')); return; }
       resolve(base64);
     };
     reader.onerror = reject;

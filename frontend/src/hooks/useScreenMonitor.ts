@@ -17,6 +17,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiService } from '../services/api';
+import { describeApiError } from '../utils/apiError';
 import { useTextToSpeech } from './useTextToSpeech';
 import type { NarrationEvent } from '../types/api';
 
@@ -27,10 +28,10 @@ export function useScreenMonitor(sessionId: string | null,
   const [active, setActive] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const sinceRef = useRef(0);
   const activeRef = useRef(false);
   const pollingRef = useRef(false);
   const cancelledRef = useRef(false);
+  const failuresRef = useRef(0);
   const timerRef = useRef<number | null>(null);
   const { speak, stop: stopSpeech } = useTextToSpeech();
   const onNarrationRef = useRef(onNarration);
@@ -43,7 +44,7 @@ export function useScreenMonitor(sessionId: string | null,
     pollingRef.current = true;
     try {
       const data = await apiService.monitorEvents(sessionId);
-      sinceRef.current = data.cursor ?? sinceRef.current;
+      failuresRef.current = 0;
       if (!data.active) {
         // Backend/browser says monitoring ended (idle sweep, session close,
         // max-duration cap). Reflect that honestly instead of polling on.
@@ -61,8 +62,24 @@ export function useScreenMonitor(sessionId: string | null,
         // a message stops speech (see ChatInterface).
         await speak(event.text);
       }
-    } catch {
-      // A failed poll must not kill monitoring; the next tick retries.
+    } catch (e: unknown) {
+      // A failed poll must not kill monitoring; the next tick retries. But
+      // failures must not be silent forever either: after several in a row
+      // the "watching" indicator is a lie (backend dead, session swept), so
+      // say so and stop polling. Auth/gone-session failures stop at once.
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      if (status === 401 || status === 404) {
+        activeRef.current = false;
+        setActive(false);
+        setError('Monitoring stopped: the session is gone or not signed in.');
+        return;
+      }
+      failuresRef.current += 1;
+      if (failuresRef.current > 3) {
+        activeRef.current = false;
+        setActive(false);
+        setError('Lost contact with the monitoring service - stopped watching.');
+      }
     } finally {
       pollingRef.current = false;
     }
@@ -87,19 +104,25 @@ export function useScreenMonitor(sessionId: string | null,
     if (!sessionId) return 'No chat session - start a conversation first.';
     setStarting(true);
     setError(null);
+    // Defensive: a wedged poll flag from an older run must not silently
+    // disable the fresh one (the poll loop early-returns while it is set).
+    pollingRef.current = false;
+    failuresRef.current = 0;
     try {
       const res = await apiService.monitorStart(sessionId);
-      sinceRef.current = 0;
+      pollingRef.current = false;
+      failuresRef.current = 0;
       activeRef.current = true;
       setActive(true);
       const message = res.message ?? 'Watching the live page.';
-      speak(message);
+      void speak(message);
       return message;
     } catch (e: unknown) {
-      const detail =
-        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      const message = detail || 'Could not start monitoring.';
+      // describeApiError, because FastAPI sends validation failures as an array
+      // of objects and this text is spoken and rendered verbatim.
+      const message = describeApiError(e, 'Could not start monitoring.');
       setError(message);
+      void speak(message);
       return message;
     } finally {
       setStarting(false);
@@ -110,6 +133,9 @@ export function useScreenMonitor(sessionId: string | null,
     stopSpeech(); // the kill switch outranks a narration mid-sentence
     activeRef.current = false;
     setActive(false);
+    // A stuck poll flag would silently eat the next start's ticks.
+    pollingRef.current = false;
+    failuresRef.current = 0;
     if (!sessionId) return 'Stopped.';
     try {
       await apiService.monitorStop(sessionId);
@@ -133,8 +159,9 @@ export function useScreenMonitor(sessionId: string | null,
     apiService.monitorEvents(sessionId)
       .then((data) => {
         if (cancelled) return;
-        sinceRef.current = data.cursor ?? sinceRef.current;
         if (data.active) {
+          pollingRef.current = false;
+          failuresRef.current = 0;
           activeRef.current = true;
           setActive(true);
         }
@@ -144,12 +171,14 @@ export function useScreenMonitor(sessionId: string | null,
   }, [sessionId]);
 
   // One-action stop via keyboard: Alt+W toggles monitoring. Registered only
-  // while a session exists; ignored while typing (Alt+W has no text effect,
-  // but avoid surprising combos inside inputs).
+  // while a session exists. Skipped inside editable fields despite what the
+  // old comment claimed: toggling mid-typing stole the keystroke.
   useEffect(() => {
     if (!sessionId) return;
     const handler = (e: KeyboardEvent) => {
       if (e.altKey && (e.key === 'w' || e.key === 'W')) {
+        const target = e.target as HTMLElement | null;
+        if (target?.closest?.('input,textarea,select,[contenteditable]')) return;
         e.preventDefault();
         void toggle();
       }

@@ -26,8 +26,13 @@ export function MicButton({
 
   const handleMouseDown = useCallback(async () => {
     if (disabled) return;
+    // Touch devices fire pointerdown AND touchstart for one gesture; without
+    // this guard both scheduled a start → two getUserMedia races, the loser's
+    // stream leaked with the mic indicator stuck on.
+    if (pressTimerRef.current) return;
     setIsPressed(true);
     pressTimerRef.current = window.setTimeout(async () => {
+      pressTimerRef.current = null;
       await onStartRecording();
     }, 150);
   }, [disabled, onStartRecording]);
@@ -43,24 +48,50 @@ export function MicButton({
     }
   }, [isRecording, onStopRecording]);
 
-  const handleMouseLeave = useCallback(() => {
+  /**
+   * Drifting off the button while holding it must not throw the recording away.
+   * That was the old behaviour, and it punished exactly the users this product
+   * is for: a tremor, a sliding thumb, or a magnifier that moves the cursor off
+   * the target lost everything they had just dictated. Recording therefore
+   * continues until a deliberate stop (release, second key press) or an
+   * explicit cancel (Escape).
+   */
+  const handlePointerLeave = useCallback(() => {
+    if (isRecording) return;
     if (pressTimerRef.current) {
+      // Released before the hold threshold: nothing was recorded, so nothing
+      // is lost by clearing the pending start.
       clearTimeout(pressTimerRef.current);
       pressTimerRef.current = null;
     }
     setIsPressed(false);
-    if (isRecording) {
-      onCancelRecording();
-    }
+  }, [isRecording]);
+
+  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    // Pointer capture delivers the release to this button even when the
+    // pointer has wandered off it - the mechanism behind the rule above.
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    void handleMouseDown();
+  }, [handleMouseDown]);
+
+  useEffect(() => {
+    if (!isRecording) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onCancelRecording();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [isRecording, onCancelRecording]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (e.key !== ' ' && e.key !== 'Enter') return;
+    if (e.repeat) return; // holding Space must not re-fire start races
     e.preventDefault();
     // A keyboard or screen-reader user presses and releases in well under the
     // 150ms hold threshold, so treating the key as a "hold" meant recording
     // could never start. From the keyboard the key is a toggle instead: first
-    // press records, second press stops and sends.
+    // press records, second press stops and sends. (preventDefault above also
+    // suppresses the synthetic click, so onClick below never double-toggles.)
     if (isRecording) {
       onStopRecording();
     } else if (!isPressed) {
@@ -68,6 +99,20 @@ export function MicButton({
       onStartRecording();
     }
   }, [isRecording, isPressed, onStartRecording, onStopRecording]);
+
+  const handleClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    // Assistive-tech "Activate" fires a synthetic click (detail 0) with no
+    // key or pointer events first - without this, NVDA/virtual-cursor users
+    // could not operate the mic at all. Real mouse clicks (detail >= 1)
+    // already went through the pointer handlers; keyboard clicks are
+    // suppressed by the preventDefault above. Only detail-0 reaches here.
+    if (e.detail !== 0) return;
+    if (isRecording) {
+      onStopRecording();
+    } else {
+      void onStartRecording();
+    }
+  }, [isRecording, onStartRecording, onStopRecording]);
 
   const handleKeyUp = useCallback((e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (e.key === ' ' || e.key === 'Enter') {
@@ -78,15 +123,9 @@ export function MicButton({
   }, []);
 
   // Handle long press for touch devices
-  const handleTouchStart = useCallback((e: React.TouchEvent<HTMLButtonElement>) => {
-    e.preventDefault();
-    handleMouseDown();
-  }, [handleMouseDown]);
-
-  const handleTouchEnd = useCallback((e: React.TouchEvent<HTMLButtonElement>) => {
-    e.preventDefault();
-    handleMouseUp();
-  }, [handleMouseUp]);
+  // NOTE: no onTouchStart/onTouchEnd — pointer events already cover touch,
+  // and the extra handlers double-fired stop (two transcriptions). Kept only
+  // onPointerDown/onPointerUp (+ onKeyDown/onClick for keyboard/AT).
 
   useEffect(() => {
     return () => {
@@ -99,20 +138,21 @@ export function MicButton({
   return (
     <div className="mic-button-container">
       <span id="mic-usage-hint" className="visually-hidden">
-        Hold the mouse button to record and release to send. With a keyboard,
-        press Enter or Space to start recording and press it again to stop and send.
+        Hold the mouse button to record and release to send. Moving off the
+        button while holding it keeps recording. With a keyboard, press Enter or
+        Space to start recording and press it again to stop and send; press
+        Escape to discard the recording.
       </span>
       <button
         ref={buttonRef}
         type="button"
         className={`mic-button ${isRecording ? 'recording' : ''} ${isPressed ? 'pressed' : ''} ${error ? 'error' : ''}`}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseLeave}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handleMouseUp}
+        onPointerLeave={handlePointerLeave}
         onKeyDown={handleKeyDown}
         onKeyUp={handleKeyUp}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
+        onClick={handleClick}
         disabled={disabled}
         aria-label={isRecording ? 'Stop recording and send' : 'Record voice message'}
         aria-pressed={isRecording}
@@ -144,8 +184,11 @@ export function MicButton({
       </button>
       
       {isRecording && (
-        <div className="recording-info" role="status" aria-live="polite" aria-label={`Recording for ${formatDuration(recordingTime)}`}>
-          <span className="recording-time">{formatDuration(recordingTime)}</span>
+        <div className="recording-info" role="status" aria-live="polite">
+          {/* Announce start/stop once: the ticking time below is aria-hidden
+            so screen readers are not re-announced every second. */}
+          <span className="visually-hidden">Recording in progress</span>
+          <span className="recording-time" aria-hidden="true">{formatDuration(recordingTime)}</span>
           <span className="recording-hint">Release to send</span>
         </div>
       )}

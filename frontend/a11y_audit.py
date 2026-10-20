@@ -23,6 +23,7 @@ except Exception:
 
 from playwright.sync_api import sync_playwright
 
+from audit_login import sign_up_and_in
 from automation_guard import assert_focus_unchanged, assert_isolated_browser, foreground_window_token
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:5173"
@@ -37,6 +38,8 @@ def run():
         assert_isolated_browser(browser)
         page = browser.new_context(viewport={"width": 1280, "height": 860}).new_page()
         page.goto(BASE, wait_until="networkidle")
+        # The chat is behind a real login, so the audit signs in first.
+        sign_up_and_in(page)
         page.wait_for_function(
             "document.querySelectorAll('.message-bubble').length > 0", timeout=25000)
 
@@ -116,6 +119,72 @@ def run():
         print("live regions:", live)
         if not live["logLive"]:
             issues.append("conversation log has no aria-live")
+        # A polite region nested inside another polite region makes a screen
+        # reader say the same answer twice - the log is the one announcement
+        # point, so nothing inside it may declare its own.
+        nested = page.evaluate("""() => {
+          const log = document.querySelector('[role=log]');
+          if (!log) return ['no log region'];
+          return [...log.querySelectorAll('[aria-live], [role=status], [role=alert]')]
+            .map(el => el.className.toString().slice(0, 40) || el.tagName);
+        }""")
+        print("nested live regions inside the log:", len(nested), nested[:4])
+        if nested:
+            issues.append(f"live regions nested inside the conversation log: {nested}")
+
+        # 5b. Skip link: first stop on the page, and it really moves focus.
+        page.keyboard.press("Escape")
+        # blur() alone is not enough: if the previously focused element was
+        # removed from the DOM (the sign-in button just unmounted), Chrome
+        # resumes sequential navigation from that dead position instead of the
+        # document start, and the "first stop" probe flakes. Focusing <body>
+        # (tabindex=-1) deterministically restarts the Tab walk at the top.
+        page.evaluate("() => { document.body.setAttribute('tabindex','-1'); document.body.focus(); }")
+        page.keyboard.press("Tab")
+        first_stop = page.evaluate("""() => {
+          const el = document.activeElement;
+          return {tag: el.tagName, text: (el.textContent || '').trim().slice(0, 40),
+                  href: el.getAttribute('href')};
+        }""")
+        print("first tab stop:", first_stop)
+        if "skip" not in (first_stop.get("text") or "").lower():
+            issues.append("no skip link as the first keyboard stop")
+        else:
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(200)
+            landed = page.evaluate("() => document.activeElement && document.activeElement.id")
+            print("skip link moved focus to:", landed)
+            if landed != "main-content":
+                issues.append("skip link does not move focus into the conversation")
+
+        # 5c. Dialog focus management: opening a modal must move focus inside it,
+        # Tab must not escape, Escape must hand focus back.
+        page.get_by_role("button", name="Open session history").focus()
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(300)
+        dialog_focus = page.evaluate("""() => {
+          const panel = document.querySelector('.history-panel');
+          return {open: !!panel, inside: !!(panel && panel.contains(document.activeElement))};
+        }""")
+        tabbed_out = False
+        for _ in range(15):
+            page.keyboard.press("Tab")
+            if not page.evaluate("() => { const p = document.querySelector('.history-panel'); return !!p && p.contains(document.activeElement); }"):
+                tabbed_out = True
+                break
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(250)
+        restored = page.evaluate("""() => {
+          const el = document.activeElement;
+          return (el.getAttribute && el.getAttribute('aria-label')) || '';
+        }""")
+        print(f"dialog focus: {dialog_focus}; tab escaped: {tabbed_out}; Escape returned to {restored!r}")
+        if not dialog_focus["inside"]:
+            issues.append("opening the history dialog does not move focus inside it")
+        if tabbed_out:
+            issues.append("Tab escapes the open history dialog (aria-modal is not honoured)")
+        if "history" not in restored.lower():
+            issues.append("Escape does not return focus to the button that opened the dialog")
 
         # 6. Accessibility roles present (via ARIA/DOM, the tree a SR reads).
         role_counts = page.evaluate("""() => {

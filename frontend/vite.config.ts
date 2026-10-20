@@ -10,17 +10,18 @@ export default defineConfig({
     // and Vite 5.4 403s unknown hosts. Browsers on a dev machine use localhost.
     allowedHosts: ['localhost', '127.0.0.1', '::1', 'frontend'],
     proxy: {
+      // Inside the compose network `localhost` is this container itself, not
+      // the backend: the container gets VITE_PROXY_TARGET=http://backend:8000
+      // (see docker-compose.yml); plain `npm run dev` on a laptop keeps the
+      // localhost default.
       '/api': {
-        target: 'http://localhost:8000',
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:8000',
         changeOrigin: true,
       },
       '/v1': {
-        target: 'http://localhost:8000',
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:8000',
         changeOrigin: true,
       },
     },
-  },
-  define: {
-    'process.env': {},
   },
 })

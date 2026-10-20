@@ -29,20 +29,15 @@ export interface QueryResponse {
   sources_used?: string[];
 }
 
-export interface TranscribeRequest {
-  audio: Blob;
-}
-
 export interface TranscribeResponse {
   transcript: string;
-}
-
-export interface SessionRequest {
-  user_id?: string;
+  language?: string;
+  duration?: number;
 }
 
 export interface SessionResponse {
   session_id: string;
+  created_at: string;
 }
 
 export interface SessionSummary {
@@ -68,10 +63,10 @@ export interface PreferenceResponse {
 }
 
 export interface PreferenceUpdate {
-  verbosity_level: Verbosity;
-  voice_speed: number;
-  disability_profile: DisabilityProfile;
-  language_complexity: LanguageComplexity;
+  verbosity_level?: Verbosity;
+  voice_speed?: number;
+  disability_profile?: DisabilityProfile;
+  language_complexity?: LanguageComplexity;
 }
 
 /** Behavior event sent from frontend to backend for adaptive policy tracking. */
@@ -105,7 +100,7 @@ export interface PageContextResponse {
  */
 export interface HistoryMessage {
   id: string;
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant';
   content: string;
   agent_used?: string | null;
   created_at: string;
@@ -152,7 +147,7 @@ export interface VLMChoice {
   index: number;
   message: {
     role: string;
-    content: string;
+    content: string | Array<{ type: string; text?: string }>;
   };
   finish_reason: string;
 }
@@ -207,4 +202,72 @@ export interface MonitorEventsResponse {
   narrations: NarrationEvent[];
   cursor: number;
   stats: MonitorStats;
+}
+
+/** Auth: the backend issues a bearer JWT; every /api call carries it. */
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export interface MeResponse {
+  id: string;
+  email: string;
+}
+
+/** Phase 4.2: caregiver share link + read-only transcript. */
+export interface ShareCreateResponse {
+  share_token: string;
+  watch_url: string;
+  expires_in_seconds: number;
+}
+
+export interface ShareAnnotation {
+  text: string;
+  ts: number;
+}
+
+export interface SharedSessionResponse {
+  session_id: string;
+  messages: { role: string; content: string }[];
+  annotations: ShareAnnotation[];
+  read_only: boolean;
+}
+
+/** Phase 4.3: braille shaping of one answer.
+ * `lines`: shaped plain text for a refreshable display;
+ * `grade1`: real uncontracted Grade-1 Unicode braille (not Grade 2). */
+export interface BrailleResponse {
+  lines: string[];
+  grade1: string[];
+  preview_braille: string;
+}
+
+/** POST /api/form-fill: per-action truth from a real Chromium. */
+export interface FormFillResult {
+  status: string;
+  action: string;
+  episode_id?: string | null;
+  discovery_id?: string;
+  new_episode?: boolean;
+  reason?: string;
+  url?: string;
+  success_count: number;
+  failure_count: number;
+  unfilled?: string[];
+  page_message?: string;
+  replay_results?: {
+    status: string;
+    action?: string;
+    field_id?: string;
+    label?: string;
+    value?: string;
+    reason?: string;
+  }[];
+  healed?: {
+    status: string;
+    repaired_fields?: number;
+    stale_fields?: number;
+    repairs?: { label: string; old_selector: string; new_selector: string }[];
+  };
 }
