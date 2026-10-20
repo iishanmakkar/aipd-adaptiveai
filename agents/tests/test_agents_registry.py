@@ -118,3 +118,29 @@ async def test_sync_llm_does_not_block_the_event_loop(registry, seeded):
 
     # Serial would be >= 1.2s; offloaded should be close to a single 0.4s call.
     assert elapsed < 0.9, f"3 concurrent requests took {elapsed:.2f}s - calls are serialising"
+
+
+async def test_system_prompt_has_no_unsubstituted_placeholders(registry, seeded):
+    """The templates carry {entity}/{extra_context}/{query}/{sources} slots;
+    they used to be sent verbatim, so the model literally read
+    'Field: {entity}'. The values must land in the system message."""
+    llm = StubLLM()
+    from agents.registry import AgentRegistry
+    from rag.retriever import Retriever
+    reg = AgentRegistry(Retriever(), llm)
+    await reg.get("form_agent").handle("What is this field?", "Name", "form open")
+    system = llm.calls[0][0]["content"]
+    assert "{" not in system and "}" not in system
+    assert "Name" in system and "form open" in system
+
+
+async def test_document_agent_refuses_without_document(registry, seeded):
+    """The NO-DOCUMENT RULE: with empty context the document agent must not
+    be handed retrieved helper docs to summarize instead."""
+    llm = StubLLM()
+    from agents.registry import AgentRegistry
+    from rag.retriever import Retriever
+    reg = AgentRegistry(Retriever(), llm)
+    result = await reg.get("document_agent").handle("Summary?", "", "")
+    assert result["sources_used"] == []
+    assert "no document" in llm.calls[0][1]["content"].lower()

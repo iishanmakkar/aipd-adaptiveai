@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from contextlib import asynccontextmanager
+import asyncio
 import json
 import logging
 import time
@@ -36,6 +37,11 @@ async def lifespan(app: FastAPI):
     
     global agent_registry
     agent_registry = AgentRegistry(retriever, llm_client)
+    # lifespan rebinding only touches this module's name: publish the instance
+    # on the registry module too, so `from agents.registry import
+    # agent_registry` never sees the initial None at request time.
+    import agents.registry as _registry_module
+    _registry_module.agent_registry = agent_registry
     
     print(f"Agent service started on port {settings.PORT}")
     print(f"Available agents: {agent_registry.get_all_names()}")
@@ -99,6 +105,10 @@ async def agent_respond(request: Request):
 
     try:
         result = await agent.handle(validated.query, validated.entity, validated.extra_context)
+    except (ValueError, KeyError) as e:
+        # Caller error (bad entity/query for the agent): 422, not 500 - a 500
+        # would read as an outage and retry forever.
+        raise HTTPException(status_code=422, detail=str(e)[:200])
     except Exception as e:
         logger.error(json.dumps({
             "event": "agent_error",
@@ -131,7 +141,7 @@ class OrchestrateResponse(AgentRespondResponse):
     plan: list[str] = []  # type: ignore[assignment]
 
 
-@app.post("/agent/orchestrate")
+@app.post("/agent/orchestrate", response_model=OrchestrateResponse)
 async def agent_orchestrate(request: Request):
     """Natural-language goal -> plan + specialist execution (Phase 2.1)."""
     from agents.orchestrator import llm_route, keyword_route
@@ -145,16 +155,23 @@ async def agent_orchestrate(request: Request):
         validated = OrchestrateRequest(**body)
     except ValidationError as e:
         return JSONResponse(status_code=422, content={"detail": json.loads(e.json())})
-    # LLM routing with keyword fallback lives inside llm_route.
-    llm_client = agent_registry.get("general_agent").llm  # type: ignore[union-attr]
-    agent_name = llm_route(validated.goal, llm_client)
+    # LLM routing with keyword fallback lives inside llm_route. The sync LLM
+    # call must not run on the event loop (it stalls every concurrent
+    # request for the whole model round-trip).
+    general = agent_registry.get("general_agent")
+    if general is None:
+        raise HTTPException(status_code=503, detail="Agent registry not initialized")
+    llm_client = general.llm
+    agent_name, via = await asyncio.to_thread(llm_route, validated.goal, llm_client)
     agent = agent_registry.get(agent_name)
     if not agent:
-        agent_name = keyword_route(validated.goal)
+        agent_name, via = keyword_route(validated.goal), "keyword"
         agent = agent_registry.get(agent_name)
-    plan = [f"route -> {agent_name}", "execute specialist", "return grounded answer"]
+    plan = [f"route ({via}) -> {agent_name}", "execute specialist", "return grounded answer"]
     try:
         result = await agent.handle(validated.goal, validated.entity, validated.extra_context)  # type: ignore[union-attr]
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=422, detail=str(e)[:200])
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
     logger.info(json.dumps({

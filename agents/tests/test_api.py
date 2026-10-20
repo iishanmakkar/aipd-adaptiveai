@@ -66,7 +66,12 @@ def test_knowledge_base_is_seeded_on_startup(client):
     "form_agent", "document_agent", "web_agent", "education_agent", "general_agent",
 ])
 def test_all_agents_respond_over_http(client, agent):
-    r = client.post("/agent/respond", json=_body(agent=agent, query="what is the aadhaar number field?"))
+    # document_agent's NO-DOCUMENT contract refuses to summarize with empty
+    # context, so it gets a document like a real caller would.
+    extra = ("The rental agreement says rent is due on the 1st."
+             if agent == "document_agent" else "")
+    r = client.post("/agent/respond", json=_body(agent=agent, query="what is the aadhaar number field?",
+                                                 extra_context=extra))
     assert r.status_code == 200
     assert r.json()["sources_used"]
 

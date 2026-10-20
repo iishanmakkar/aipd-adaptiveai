@@ -96,3 +96,20 @@ def test_initialize_is_idempotent(store):
     assert initialize_knowledge_base(store) == len(SEED_DOCUMENTS)
     assert initialize_knowledge_base(store) == 0
     assert store.count() == len(SEED_DOCUMENTS)
+
+
+def test_seeds_added_after_an_index_exists_are_indexed(store):
+    """The bug this locks out: 'already initialized' early-returned whenever the
+    persisted index was non-empty, so on every host that ran the service before
+    the scheduler/translator seeds existed those five documents were never
+    indexed and those agents retrieved form glossary text for their queries."""
+    from rag.seed_data import SEED_DOCUMENTS, initialize_knowledge_base
+
+    vintage = [d for d in SEED_DOCUMENTS
+               if d["id"] not in {"sched_planning_day", "trans_telugu_help"}]
+    store.add_documents(vintage)
+    assert initialize_knowledge_base(store) == 2
+    assert store.count() == len(SEED_DOCUMENTS)
+    assert {"sched_planning_day", "trans_telugu_help"} <= store.doc_ids()
+    # No duplicates: ids stay unique after the reconcile pass.
+    assert len(store.doc_ids()) == store.count()

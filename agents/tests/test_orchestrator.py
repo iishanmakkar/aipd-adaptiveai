@@ -15,7 +15,7 @@ def test_llm_route_falls_back_on_broken_client():
         def chat(self, messages):
             raise RuntimeError("no network")
 
-    assert llm_route("make font bigger", Broken()) == "ui_adjuster_agent"
+    assert llm_route("make font bigger", Broken()) == ("ui_adjuster_agent", "keyword")
 
 
 def test_llm_route_accepts_valid_name():
@@ -23,7 +23,18 @@ def test_llm_route_accepts_valid_name():
         def chat(self, messages):
             return "navigation_agent"
 
-    assert llm_route("go to checkout", Fake()) == "navigation_agent"
+    assert llm_route("go to checkout", Fake()) == ("navigation_agent", "llm")
+
+
+def test_llm_route_extracts_name_from_prose():
+    """Models rarely obey 'reply with only the name' - the first known name
+    in the answer must win instead of silently falling back to keywords."""
+
+    class Chatty:
+        def chat(self, messages):
+            return "I think this is a job for document_agent. Let me explain."
+
+    assert llm_route("summarize this", Chatty()) == ("document_agent", "llm")
 
 
 def test_document_beats_generic_summarize():

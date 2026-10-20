@@ -22,7 +22,6 @@ class Retriever:
         lines = []
         for i, doc in enumerate(docs, 1):
             metadata = doc.get("metadata", {})
-            source_id = doc.get("id", f"doc_{i}")
             category = metadata.get("category", "unknown")
             field_or_topic = metadata.get("field") or metadata.get("topic", "general")
             lines.append(f"[{i}] [{category}:{field_or_topic}] {doc['text'][:300]}...")

@@ -5,7 +5,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=(".env", "agents/.env", "./agents/.env", "app/.env"), env_file_encoding="utf-8", extra="ignore")
+    # File order matters: LATER files win. agents/.env is the documented
+    # location for keys, so it comes last (app/.env previously won silently).
+    model_config = SettingsConfigDict(env_file=(".env", "app/.env", "agents/.env", "./agents/.env"), env_file_encoding="utf-8", extra="ignore")
 
     LLM_PROVIDER: Literal["openai", "anthropic", "nim"] = "nim"
     LLM_MODEL: str = "meta/llama-3.2-11b-vision-instruct"

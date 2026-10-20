@@ -1,7 +1,10 @@
 from .base import BaseAgent
 from llm.prompts import WEB_AGENT_PROMPT
-from rag.retriever import Retriever
-from llm.client import LLMClient
+import re
+
+
+def _w(q: str, w: str) -> bool:
+    return re.search(r"\b" + re.escape(w) + r"\b", q) is not None
 
 
 class WebAgent(BaseAgent):
@@ -15,10 +18,10 @@ class WebAgent(BaseAgent):
 
     def _get_suggested_action(self, query: str, entity: str) -> str:
         query_lower = query.lower()
-        if any(word in query_lower for word in ["click", "press", "activate", "submit"]):
+        if any(_w(query_lower, w) for w in ["click", "press", "activate", "submit"]):
             return "highlight_button"
-        if any(word in query_lower for word in ["navigate", "go to", "move to", "find"]):
+        if any(_w(query_lower, w) for w in ["navigate", "go to", "move to", "find"]):
             return "navigate_to"
-        if any(word in query_lower for word in ["read", "what does it say"]):
+        if any(_w(query_lower, w) for w in ["read", "what does it say"]):
             return "read_element"
         return "none"

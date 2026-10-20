@@ -186,10 +186,27 @@ SEED_DOCUMENTS = [
 
 
 def initialize_knowledge_base(vector_store) -> int:
-    """Initialize the knowledge base with seed documents. Returns count added."""
-    existing_count = vector_store.count()
-    if existing_count > 0:
-        return 0  # Already initialized
+    """Make the index match SEED_DOCUMENTS. Returns the number added.
 
-    vector_store.add_documents(SEED_DOCUMENTS)
-    return len(SEED_DOCUMENTS)
+    A persistent index that predates the newest seeds must still pick them up:
+    an early return whenever count()>0 meant the scheduler/translator documents
+    were never indexed on any host that had run the service before those agents
+    existed, so those agents retrieved form glossary text instead of their own.
+
+    Seed TEXT edits must propagate too: id presence alone kept serving stale
+    embedded text forever after a factual correction. Changed seeds are
+    re-embedded in place.
+    """
+    existing = vector_store.doc_ids()
+    missing = [doc for doc in SEED_DOCUMENTS if doc["id"] not in existing]
+    if missing:
+        vector_store.add_documents(missing)
+    changed = 0
+    for doc in SEED_DOCUMENTS:
+        if doc["id"] in existing:
+            stored = vector_store.get_document(doc["id"])
+            if (stored is not None and stored.get("text", "") != doc["text"]
+                    and vector_store.update_document_text(
+                        doc["id"], doc["text"], doc.get("metadata"))):
+                changed += 1
+    return len(missing) + changed

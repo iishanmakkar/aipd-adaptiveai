@@ -112,7 +112,8 @@ async def run_tests():
     # Save detailed results (fixed literal filename; the run timestamp is stored
     # inside the document, so no value is interpolated into the path).
     from pathlib import Path
-    Path("test_results.json").write_text(json.dumps({
+    output_file = Path("test_results.json")
+    output_file.write_text(json.dumps({
         "timestamp": datetime.now().isoformat(),
         "llm_provider": settings.LLM_PROVIDER,
         "llm_model": settings.LLM_MODEL,
@@ -120,7 +121,7 @@ async def run_tests():
         "passed_tests": passed_tests,
         "results": results
     }, indent=2), encoding="utf-8")
-    
+
     print(f"\nDetailed results saved to: {output_file}")
     
     return passed_tests == total_tests

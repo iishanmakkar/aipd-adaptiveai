@@ -14,6 +14,8 @@ class LLMClient:
 
     def _init_client(self):
         # REAL MODE: requires valid NIM API key - no demo fallbacks
+        # Every branch gets the same bounded timeout: the SDK default (600s +
+        # retries) would hang a worker ~10 minutes per request on any provider.
         if self.provider == "nim":
             api_key = settings.NIM_API_KEY or settings.LLM_API_KEY or os.getenv("NIM_API_KEY") or os.getenv("OPENAI_API_KEY")
             if not api_key:
@@ -26,13 +28,15 @@ class LLMClient:
             if not api_key:
                 raise ValueError("OPENAI_API_KEY not set - set LLM_API_KEY in agents/.env for real mode")
             from openai import OpenAI
-            self._client = OpenAI(api_key=api_key)
+            self._client = OpenAI(api_key=api_key,
+                                  timeout=settings.LLM_TIMEOUT_SECONDS, max_retries=1)
         elif self.provider == "anthropic":
             api_key = settings.LLM_API_KEY or os.getenv("ANTHROPIC_API_KEY")
             if not api_key:
                 raise ValueError("ANTHROPIC_API_KEY not set")
             from anthropic import Anthropic
-            self._client = Anthropic(api_key=api_key)
+            self._client = Anthropic(api_key=api_key,
+                                     timeout=settings.LLM_TIMEOUT_SECONDS, max_retries=1)
         else:
             raise ValueError(f"Unknown LLM provider: {self.provider}")
 
@@ -51,7 +55,13 @@ class LLMClient:
             temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
-        return response.choices[0].message.content.strip()
+        # Refusals, tool-call turns, and truncated completions come back with
+        # content=None (or no choices at all): .strip() on None 500'd.
+        choices = getattr(response, "choices", None) or []
+        content = choices[0].message.content if choices else None
+        if not content:
+            raise ValueError("empty LLM response (no content)")
+        return content.strip()
 
     def _chat_anthropic(self, messages: List[Dict[str, str]]) -> str:
         system_msg = next((m["content"] for m in messages if m["role"] == "system"), "")
@@ -63,4 +73,9 @@ class LLMClient:
             temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
-        return response.content[0].text.strip()
+        blocks = getattr(response, "content", None) or []
+        texts = [getattr(b, "text", "") for b in blocks if getattr(b, "type", "text") == "text"]
+        text = "".join(texts)
+        if not text:
+            raise ValueError("empty LLM response (no text blocks)")
+        return text.strip()
