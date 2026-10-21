@@ -42,22 +42,68 @@
     return snap;
   }
 
+  function findNode(ref) {
+    var snap = snapshot(false);
+    for (var i = 0; i < snap.nodes.length; i++) {
+      if (snap.nodes[i].ref === ref) return snap.nodes[i];
+    }
+    return null;
+  }
+
+  function runAction(message) {
+    var ACTOR = globalThis.AdaptiveAIActor;
+    if (!ACTOR) {
+      return { status: 'failed', reason: 'actor script did not load on this page' };
+    }
+    var node = findNode(message.ref);
+    if (!node) {
+      // Never fall back to guessing a selector: acting on the wrong control is
+      // worse than doing nothing.
+      return { status: 'not_found', ref: message.ref,
+               reason: 'that control is not in the current page snapshot' };
+    }
+    if (message.action === 'fill') return ACTOR.fill(node, message.value, document);
+    if (message.action === 'select') return ACTOR.select(node, message.value, document);
+    if (message.action === 'click') return ACTOR.click(node, document);
+    if (message.action === 'focus') return ACTOR.focus(node, document);
+    return { status: 'failed', ref: message.ref,
+             reason: 'unknown action ' + String(message.action) };
+  }
+
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
-      if (!message || message.type !== 'adaptiveai:snapshot') return false;
-      var snap = snapshot(!!message.force);
-      publishForPage(snap);
-      sendResponse(snap);
+      if (!message) return false;
+      if (message.type === 'adaptiveai:snapshot') {
+        var snap = snapshot(!!message.force);
+        publishForPage(snap);
+        sendResponse(snap);
+        return false;
+      }
+      if (message.type === 'adaptiveai:act') {
+        var result = runAction(message);
+        // The tree may have changed under us (validation message appeared, row
+        // re-rendered), so the next snapshot must be built fresh rather than
+        // served from the 250ms cache.
+        invalidate();
+        sendResponse(result);
+        return false;
+      }
       return false;
     });
+  }
+
+  function invalidate() {
+    lastSnapshot = null;
+    lastTakenAt = 0;
   }
 
   globalThis.__adaptiveai = {
     snapshot: snapshot,
     refresh: refresh,
+    act: runAction,
     // A page that changes under the assistant must not be navigated by an old
     // tree, so the loop needs a cheap way to say "forget the cache".
-    invalidate: function () { lastSnapshot = null; lastTakenAt = 0; },
+    invalidate: invalidate,
   };
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') {

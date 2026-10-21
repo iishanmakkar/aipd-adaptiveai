@@ -1,25 +1,26 @@
 # AdaptiveAI browser extension
 
-**Status: perception only. This cannot yet do anything for a user.**
+**Status: it can see a page and act on it when told. Nobody tells it yet.**
 
-What exists is the accessibility layer: a real accessible-name computation and a
-snapshot of every control, state and live region on a page, loaded into Chrome as
-a genuine MV3 extension. What does not exist yet is why anyone would install it —
-there is **no voice input, no page acting, no backend call and no spending gate**.
-Do not demonstrate this as a working assistant; it would be the same kind of claim
-this repository spent a full pass removing.
+What exists: a real accessibility snapshot (accessible names computed the way the
+browser computes them), an actor that fills, selects, clicks and focuses **only
+with a readback that proves it landed**, and a message surface a service worker can
+drive — all verified end-to-end in real Chromium. What does not exist is the reason
+a user would install it: **no voice input, no planner, no spending gate, no backend
+call.** Ask it for a task and nothing happens. Do not demonstrate this as an
+assistant.
 
 | Piece | State |
 |---|---|
-| `src/ax.js` accessible-name snapshot | done, verified in real Chromium |
-| `src/content.js` bootstrap | done, verified as a loaded content script |
+| `src/ax.js` accessible-name snapshot | done, verified against Chrome's own AX tree |
+| `src/actor.js` fill / select / click / focus + readback | done, 18 tests incl. a controlled-input and a stale-reference case |
+| `src/content.js` bootstrap + action message surface | done, driven end-to-end from the service worker |
 | `manifest.json`, `background.js`, `popup.html` | loads and runs; popup reports real counts |
-| `src/actor.js` (click / fill / select + readback) | not written |
 | gate (irreversible-action confirmation) | not written |
-| `await_change` verification | not written |
-| profile vault | not written |
+| `await_change` — proving a click changed the page as expected | not written |
+| profile vault (where field values live) | not written |
 | voice in / speech out | not written |
-| `POST /api/extension/step` on the backend | not written |
+| task runner, `POST /api/extension/step` | not written |
 
 Plan: `docs/superpowers/plans/2026-10-21-plan-b-extension.md`. Design:
 `docs/superpowers/specs/2026-10-21-adaptiveai-real-user-extension-design.md`.
@@ -57,8 +58,10 @@ globally, and tested against NVDA rather than assumed.
 python -m pytest extension/test -p no:warnings
 ```
 
-Both files drive a **real Chromium** (21 tests): `test_ax.py` for name/role/state
-computation, `test_extension_loads.py` for Chrome accepting the unpacked extension.
+All three files drive a **real Chromium** (41 tests): `test_ax.py` for name/role/state
+computation, `test_actor.py` for actions and their readbacks, and
+`test_extension_loads.py` for Chrome accepting the unpacked extension and driving an
+action from the service worker through to the page.
 `test_ax.py` includes a differential test that compares every accessible name this
 module produces against Chrome's own accessibility tree via CDP — Chrome is the
 engine NVDA reads, so where the two disagree, this module is wrong.

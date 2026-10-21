@@ -139,6 +139,88 @@ def test_content_script_runs_and_reports_real_counts(loaded_extension, site):
     assert errors == [], f"extension scripts threw on a real page: {errors}"
 
 
+SW_FIND_AND_FILL = """async (siteUrl) => {
+    // chrome.tabs.query() redacts `url` without the "tabs" permission, which
+    // this extension deliberately does not ask for. The snapshot carries the
+    // page's own location, so the tab is identified from inside the page.
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+        let snap;
+        try {
+            snap = await chrome.tabs.sendMessage(tab.id,
+                { type: 'adaptiveai:snapshot', force: true });
+        } catch (e) { continue; }        // no content script on this tab
+        if (!snap || !snap.url || !snap.url.startsWith(siteUrl)) continue;
+        const node = (snap.nodes || []).find(n => n.name === 'Passenger name');
+        if (!node) continue;
+        const out = await chrome.tabs.sendMessage(tab.id,
+            { type: 'adaptiveai:act', ref: node.ref, action: 'fill',
+              value: 'Asha Sharma' });
+        return { out: out, ref: node.ref, tabUrl: snap.url };
+    }
+    return { error: 'no fixture tab answering the content script',
+             tabs: tabs.map(t => t.id) };
+}"""
+
+SW_FIND_AND_ACT_ON_GHOST = """async (siteUrl) => {
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+        let snap;
+        try {
+            snap = await chrome.tabs.sendMessage(tab.id,
+                { type: 'adaptiveai:snapshot', force: true });
+        } catch (e) { continue; }
+        if (!snap || !snap.url || !snap.url.startsWith(siteUrl)) continue;
+        return await chrome.tabs.sendMessage(tab.id,
+            { type: 'adaptiveai:act', ref: 'n999', action: 'fill', value: 'x' });
+    }
+    return { status: 'error', reason: 'no fixture tab found' };
+}"""
+
+
+def test_service_worker_drives_an_action_through_to_the_page(loaded_extension, site):
+    """The whole path a real task would use: service worker -> content script ->
+    actor -> real page -> readback. If any link is missing (actor not listed in
+    the manifest, no message handler, refs not resolvable) this fails, which is
+    precisely the integration unit tests cannot see.
+
+    A unique query string per test, not just the shared path: an earlier test
+    leaves another tab on the same URL open, and the first run of this test
+    happily reported "verified" for the WRONG tab while asserting against this
+    one. A task runner that acts on "whichever tab looked right" is a bug, so the
+    target here is unambiguous by construction."""
+    target = site + "?case=fill"
+    page = loaded_extension.new_page()
+    page.goto(target, wait_until="load")
+    page.wait_for_function(
+        "() => document.documentElement.hasAttribute('data-adaptiveai-nodes')",
+        timeout=15000)
+
+    sw = _wait_service_worker(loaded_extension)
+    assert sw is not None, "no service worker to act as the task runner"
+
+    result = sw.evaluate(SW_FIND_AND_FILL, target)
+    assert "out" in result, result
+    out = result["out"]
+    assert out["status"] == "verified", out
+    assert out["readback"] == "Asha Sharma", out
+    assert result["tabUrl"] == target, result
+    assert page.input_value("#pname") == "Asha Sharma"
+    page.close()
+
+
+def test_service_worker_reports_a_ref_that_is_no_longer_in_the_snapshot(loaded_extension, site):
+    target = site + "?case=ghost"
+    page = loaded_extension.new_page()
+    page.goto(target, wait_until="load")
+    page.wait_for_function(
+        "() => document.documentElement.hasAttribute('data-adaptiveai-nodes')", timeout=15000)
+    sw = _wait_service_worker(loaded_extension)
+    result = sw.evaluate(SW_FIND_AND_ACT_ON_GHOST, target)
+    assert result["status"] == "not_found", result
+    page.close()
+
+
 def test_popup_page_loads_without_errors(loaded_extension):
     sw = _wait_service_worker(loaded_extension)
     assert sw is not None
