@@ -23,8 +23,10 @@ effects no code performed, and three proof scripts that printed expectations and
 regardless). Those are fixed and locked by tests - see
 `docs/superpowers/specs/2026-10-21-adaptiveai-real-user-extension-design.md` §8 and
 `docs/proofs/README.md`. The suite baseline is measured, not asserted:
-`docs/verification-baseline.md` (472 passed / 1 skipped / 3 deselected as of Task 1), and
-`bash scripts/verify.sh` is the command that produces it.
+`docs/verification-baseline.md`. The suite baseline is measured, not asserted:
+**606 passed / 1 skipped / 3 deselected** as of 2026-10-21, produced on this
+machine by `bash scripts/verify-host.sh` (and 472 in the containers, against the
+pinned dependency set, by `bash scripts/verify.sh`).
 
 What has always been real stays real: Playwright Chromium, faster-whisper STT with VAD,
 RAG over a FAISS (or numpy exact-IP) index, and NIM-backed generation. Where something
@@ -321,28 +323,38 @@ real browser and reports each action.
 ## 5. Testing
 
 ```powershell
-# Verified 2026-10-21 with `bash scripts/verify.sh` (suites run INSIDE the service
-# containers - see docs/verification-baseline.md for why the host cannot run them):
-bash scripts/verify.sh backend         # 198 passed, 1 skipped - policy (Rules 1-5), clients, auth,
-                                       #   degrade, behavior + form-fill + SSRF contracts, hardening,
-                                       #   clarify-on-unsure, UnifiedContext/SharedDict/braille/share/
-                                       #   orchestrate, millisecond shared-store TTLs
-bash scripts/verify.sh agents          # 101 passed, 1 deselected - RAG seed reconciliation, registry
-                                       #   (11 agents), orchestrate, API, prompt contracts, vector store
-                                       #   (faiss, or the numpy exact-IP fallback when Smart App Control
-                                       #   blocks the faiss DLL)
-bash scripts/verify.sh intent-engine   # 129 passed, 2 deselected - keyword + HTTP contract +
-                                       #   rate-limit bound + 13-intent routing
-bash scripts/verify.sh browser-agent   # 44 passed - sessions, monitor gating/ceiling/consent, driver guards
+# Measured 2026-10-21 on this host with `bash scripts/verify-host.sh` (no Docker;
+# .venv with --system-site-packages, so these runs use the host's newer fastapi/
+# pydantic/faiss - see docs/verification-baseline.md for what that does and does
+# not prove, and for the pinned-set run inside the containers):
+bash scripts/verify-host.sh backend         # 222 passed, 1 skipped - policy (Rules 1-5), clients,
+                                       #   auth, degrade, behavior + form-fill + SSRF contracts,
+                                       #   hardening, clarify-on-unsure, UnifiedContext/SharedDict/
+                                       #   braille/share/orchestrate, millisecond shared-store TTLs,
+                                       #   production boot refusals
+bash scripts/verify-host.sh agents          # 102 passed, 1 deselected - RAG seed reconciliation,
+                                       #   registry (11 agents), orchestrate, API, prompt contracts,
+                                       #   vector store (faiss, or the numpy exact-IP fallback when
+                                       #   Smart App Control blocks the faiss DLL)
+bash scripts/verify-host.sh intent-engine   # 134 passed, 2 deselected - keyword + HTTP
+                                       #   contract + rate-limit bound + 13-intent routing +
+                                       #   confidence provenance
+bash scripts/verify-host.sh browser-agent   # 62 passed - sessions, monitor gating/ceiling/consent,
+                                       #   driver guards
+bash scripts/verify-host.sh extension       # 86 passed - every suite below drives a real Chromium
 cd frontend; npm run build             # tsc strict + vite pass
 python frontend/a11y_audit.py http://localhost:5173   # keyboard + ARIA contract (needs the stack up)
 docker compose config --quiet          # 7 services parse (6 + redis shared store)
 ```
 
-Total: **472 passed, 1 skipped, 3 deselected**. `verify.sh` exits non-zero when a
-suite fails *or collects zero tests* — the previous host-only instructions could not
-tell those two apart, and both the missing `pytest.ini` mount and the TTL bug in
-`docs/verification-baseline.md` were invisible for that reason.
+Total: **606 passed, 1 skipped, 3 deselected** (backend 222 + agents 102 +
+intent-engine 134 + browser-agent 62 + extension 86). Both runners exit non-zero
+when a suite fails *or collects zero tests* — the previous host-only instructions
+could not tell those two apart, and both the missing `pytest.ini` mount and the
+TTL bug in `docs/verification-baseline.md` were invisible for that reason.
+`bash scripts/verify.sh` is the same suites inside the service containers against
+the pinned dependency set; it last measured **472 passed** before the extension
+suite existed.
 
 At `v1.0` the total was **218 offline green** (68 + 64 + 86); the 2026-09-21
 re-verification totals **256 passed + 1 skipped**; the 2026-10-06
