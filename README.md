@@ -1,4 +1,4 @@
-# AdaptiveAI — Final Build (verified live, 2026-09-19; R8+R9 proven 2026-09-20/21)
+# AdaptiveAI — truth-passed build (live 2026-09-19, re-verified 2026-10-21; see the status block below)
 
 > **Release:** `v1.1-dev` (post-`v1.0` @ `e1c9117`; adds Round 8 chat-driven live
 > sessions + Round 9 real-time monitoring + any-site guided fill — see
@@ -10,15 +10,30 @@ book tickets, browse pages, understand documents — not just read content aloud
 **Team:** Ishan Makkar · Ishika Garg · Kakul Aeron · Kartik Bareja
 **Supervisor:** Dr. Vidhu Baggan — Chitkara University, Himachal Pradesh
 
-**Status: everything below ran live on `docker compose` (6/6 healthy) on 2026-09-19,
-re-verified 2026-09-21 (6/6 healthy + full e2e green — see §2C), plus Round 8
-chat-driven live sessions and Round 9 real-time monitoring proven 2026-09-20
-(see `docs/round9-monitoring.md`: 164 polls → 2 NIM calls; stress capped at
-ceiling; any-site guided fill on 2 live pages).**
-No mocks anywhere: the mock ecosystem was deleted long ago, and this build round
-deleted the last stubs too (browser-agent canned tools, unimportable form agents).
-Where something cannot run, the API returns an honest error (502/503/422) — never
-invented data.
+**Status: the stack ran live on `docker compose` (6/6 healthy) on 2026-09-19, was
+re-verified 2026-09-21 and again 2026-10-21, and the sections below describe that
+working tree.**
+
+**Truth pass 2026-10-21.** An audit of this tree found that "no mocks anywhere" was
+true of the *serving* layer but not of the *reporting* layer: several paths reported
+success they had not earned (a browser-agent cache that replayed a previous result and
+counted it as completed, checkbox clicks verified as unchecked and reported anyway,
+browser requests answered by a chat agent that browsed nowhere, three agents advertising
+effects no code performed, and three proof scripts that printed expectations and exited 0
+regardless). Those are fixed and locked by tests - see
+`docs/superpowers/specs/2026-10-21-adaptiveai-real-user-extension-design.md` §8 and
+`docs/proofs/README.md`. The suite baseline is measured, not asserted:
+`docs/verification-baseline.md` (472 passed / 1 skipped / 3 deselected as of Task 1), and
+`bash scripts/verify.sh` is the command that produces it.
+
+What has always been real stays real: Playwright Chromium, faster-whisper STT with VAD,
+RAG over a FAISS (or numpy exact-IP) index, and NIM-backed generation. Where something
+cannot run, the API returns an honest error (502/503/422) — never invented data.
+
+**What this project does not do:** book tickets on any real platform. No vendor is
+supported or contacted; every "ticket booked" line below was executed against
+`demo/book-tickets.html`, a page this repository wrote. Supporting BookMyShow, IRCTC and
+food ordering is the browser extension's scope, with its limits stated in §7 of the spec.
 
 ---
 
@@ -66,7 +81,7 @@ gives caregivers a read-only transcript + annotations.
 |---|-------|------------------------|
 | 1 | 6/6 containers healthy | `postgres, intent-engine, agents, backend, browser-agent, frontend` all `healthy` |
 | 2 | Full user journey | register **201** → login **200** → session **201** → query **200 in 10.9s** (`form_agent`, conf **0.95**, sources `form_aadhar_number, form_permanent_address, form_pan_number`) → history `total: 2` → metrics `16/16 2xx, 0 errors` |
-| 3 | **Ticket booking, container Chromium** | `POST /api/form-fill` on `demo/book-tickets.html`: **8/8 actions success** (5 fills + select + 2 radio clicks); local 9/9 run incl. submit rendered the page's own confirmation: *"Booked 2 seat(s), New Delhi to Chandigarh on 2026-10-02 for Asha Sharma. Reference PNR101017."* |
+| 3 | **Form filling on a real page, container Chromium** | `POST /api/form-fill` on `demo/book-tickets.html` — **this repository's own demo form, not a vendor site**: **8/8 actions success** (5 fills + select + 2 radio clicks), each verified by readback; the local 9/9 run including submit rendered that page's own confirmation, which now reads *"DEMO PAGE - no real ticket was booked and this reference is a hash of the name, not a PNR. Booked 2 seat(s), New Delhi to Chandigarh…"* |
 | 4 | **Browser agent browses for real** | `POST /browse` → real title, **5 live DOM nodes** with real labels, **21952-byte real screenshot**; `POST /fill` → **2/2 with same-page readbacks** (`Browser Agent`, `agent@real.test`); `POST /agent/browse` → 1 completed / 0 failed |
 | 5 | **Really adaptive** (same question, two profiles) | blind+concise+simple → **818 chars, step-by-step** ("follow these steps: 1. Type the first letter…"); none+detailed+technical → **1088 chars, technical** ("alphanumeric identifier issued by the Income Tax Department…") |
 | 6 | **UI loop in real Chromium** | title `AdaptiveAI`, welcome bubble, `Message input` named, send → user bubble + answer with `form_agent` badge, **90%**, 3 source chips (screenshot in run log) |
@@ -349,6 +364,25 @@ Live proofs: §2 table + §2C (each row is a command
 
 ## 6. Honest gaps (runbooks included, nothing faked)
 
+- **No real platform works with this product yet.** There is no browser extension, and
+  no code path here can operate BookMyShow, IRCTC, Swiggy/Zomato or any other site —
+  the only booking flow ever executed is against this repository's own demo form. The
+  server-side browser has no cookies, no logged-in session and no anti-bot handling, so
+  it structurally cannot act on an authenticated site. That is the reason for the
+  extension design, and §7.1 of the spec states per platform how far it will get and
+  which walls (CAPTCHA, OTP, payment frames) stay with the user.
+- **Verification is currently partial.** `docs/verification-baseline.md` records 472
+  passing tests measured on 2026-10-21 at Task 1 of the truth pass. Tests added since
+  for `backend`, `agents` and `intent-engine` are **not re-verified** — this host's
+  Docker Desktop died repeatedly during that session, and those suites only run in
+  containers. `bash scripts/verify.sh` is the command to re-establish the number, and
+  `browser-agent` (55 passed on the host) and `npm run build` are the two suites that do
+  run on the host. Treat any test total in this file older than the baseline document as
+  unconfirmed.
+- **Several confidence numbers are still constants.** Browser and monitor turns answer
+  with hardcoded 0.9/0.95 values. They now report `confidence_source: "unknown"` rather
+  than pretending to be a model judgment, but the honest fix is to stop emitting a number
+  nobody produced — open.
 - **Human screen-reader pass** (NVDA/JAWS/VoiceOver): automated ARIA/keyboard
   contract passes; verbatim announcements need a human ear —
   `docs/screen-reader-test-script.md`. New surfaces since the checklist was
@@ -416,7 +450,8 @@ frontend/               React chat, voice, VLM upload, a11y toolbar, in-tab RAG,
                         (Cmd+K palette), offline SW + IndexedDB queue (prefs, behavior
                         signals AND chat queries), login/account UI, caregiver share view,
                         Fill-this-form dialog, braille panel (Ishika, :5173)
-demo/book-tickets.html  ticket-booking demo page the pipeline really fills
+demo/book-tickets.html  this repo's OWN demo booking form (not a vendor) that the
+                        pipeline really fills; confirmation text labels itself a demo
 docs/                   summary, backup-restore, screen-reader script, STT runbook, a11y log
 DEPLOY.md               production topology, capacity (measured), cost (~$5/10k queries paid tier)
 FEATURE_PLAN.md         phased enhancements: Phases 1-4 DONE (see §6 for live-proof caveats)

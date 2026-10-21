@@ -64,7 +64,8 @@ document.getElementById('booking').addEventListener('submit', function (ev) {
   box.dataset.to = get('to');
   box.dataset.date = get('date');
   box.dataset.seats = get('seats');
-  box.textContent = 'Booked ' + get('seats') + ' seat(s), ' + get('from') + ' to ' + get('to') +
+  box.textContent = 'DEMO PAGE - no real ticket was booked and this reference '
+    + 'is a hash of the name, not a PNR. Booked ' + get('seats') + ' seat(s), ' + get('from') + ' to ' + get('to') +
     ' on ' + get('date') + ' for ' + get('pname') + '. Reference ' + ref + '.';
 });
 </script>

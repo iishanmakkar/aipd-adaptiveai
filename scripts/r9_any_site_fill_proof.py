@@ -10,6 +10,14 @@ No selectors are hardcoded: the slot-fill loop reads each page's live DOM and
 asks for every real field by label, then locates the page's real submit
 control and holds it behind the explicit confirmation.
 
+Scope: "ANY page" means any page structured like these two - both are this repo's
+OWN demo forms, served locally. This proves the guided slot-fill loop generalises
+across different layouts and label vocabularies. It is not evidence about a real
+vendor site, and no vendor is contacted.
+
+Every expectation below is an assertion and exits non-zero - a script that cannot
+fail is not a proof.
+
 Env (both required, no defaults): ADAPTIVEAI_BACKEND_URL, ADAPTIVEAI_BROWSER_URL (http/https, validated;
 ADAPTIVEAI_ALLOW_LOCAL_TARGET=1 for the local compose stack).
 """
@@ -17,8 +25,18 @@ import base64
 import json
 import os
 import secrets
+import sys
 import time
 import urllib.parse
+
+
+def _require(cond, msg):
+    """A proof that cannot fail is not a proof: report, then exit non-zero."""
+    if cond:
+        print(f"   ok: {msg}")
+        return
+    print(f"   FAIL: {msg}", file=sys.stderr)
+    raise SystemExit(1)
 
 
 def _service_url(env_name: str) -> str:
@@ -102,19 +120,25 @@ def main():
     token = (reg.get("access_token") or req(
         f"{BACKEND}/auth/login", {"email": email, "password": password}
     ).get("access_token"))
+    _require(token, f"no bearer token from register or login: {str(reg)[:160]}")
     print("== auth ok")
     sid = req(f"{BACKEND}/api/session", {}, token=token)["session_id"]
     print("== chat session:", sid[:8])
 
     print("== SITE 1: citizen grievance form (different layout/labels)")
-    guided_fill(token, sid, "demo/gov-form-demo.html",
-                ["Ravi Kumar", "9876543210", "roads",
-                 "Street light not working near block 4 for two weeks."])
+    out1 = guided_fill(token, sid, "demo/gov-form-demo.html",
+                       ["Ravi Kumar", "9876543210", "roads",
+                        "Street light not working near block 4 for two weeks."])
+    _require(out1.strip(), "site 1 finished with an empty final answer")
 
     print("== SITE 2: train ticket booking (text, email, select, radios)")
     sid2 = req(f"{BACKEND}/api/session", {}, token=token)["session_id"]
-    guided_fill(token, sid2, "demo/book-tickets-monitored.html",
-                ["Asha Sharma", "asha@example.com", "2", "skip"])
+    _require(sid2 != sid, "the second page reused the first session - state leaked")
+    out2 = guided_fill(token, sid2, "demo/book-tickets-monitored.html",
+                       ["Asha Sharma", "asha@example.com", "2", "skip"])
+    _require(out2.strip(), "site 2 finished with an empty final answer")
+    print("== done")
+    raise SystemExit(0)
 
 
 if __name__ == "__main__":

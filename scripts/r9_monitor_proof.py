@@ -1,8 +1,17 @@
 """Round 9 live proof driver.
 
-Drives the REAL stack (browser-agent :8003, backend :8000) and prints the
+Drives the REAL stack (browser-agent :8003, backend :8000) and proves the
 evidence used in docs/round9-monitoring.md: narration transcripts with
 timestamps, monitor gate counters, and stop-then-verify-no-calls.
+
+Every expectation below is an assertion and exits non-zero - a script that
+cannot fail is not a proof. (Until 2026-10-21 this file printed "expected 0" and
+"must be 1" and then returned 0 whether or not they held.)
+
+Scope: the targets are this repo's OWN demo pages (demo/book-tickets-monitored.html
+and demo/monitor-stress.html). They prove the monitor's gating, rate ceiling and
+interrupt behaviour against a real Chromium DOM. They are NOT evidence about any
+real vendor - no ticket is booked and no booking site is touched.
 
 Targets come from the environment (no defaults - a wrong default would silently drive the wrong stack); point them at the local compose stack with
 ADAPTIVEAI_BROWSER_URL / ADAPTIVEAI_BACKEND_URL (http/https only, validated).
@@ -17,6 +26,15 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+
+
+def _require(cond, msg):
+    """A proof that cannot fail is not a proof: report, then exit non-zero."""
+    if cond:
+        print(f"  ok: {msg}")
+        return
+    print(f"  FAIL: {msg}", file=sys.stderr)
+    raise SystemExit(1)
 
 
 def _service_url(env_name: str) -> str:
@@ -130,8 +148,10 @@ def scenario_gating():
     print(" ", act(sid, "fill", "Passenger name", "Asha Sharma")["status"])
     time.sleep(6)
     pull = narrations(sid)
-    print(f"  narrations so far: {pull['stats']['counters']['narrations']} "
-          f"(expected 0), nim_calls: {pull['stats']['counters']['nim_calls']}")
+    counters = pull["stats"]["counters"]
+    _require(counters["narrations"] == 0,
+             f"a typing-only edit must not narrate (got {counters['narrations']})")
+    print(f"  (nim_calls so far: {counters['nim_calls']})")
 
     def confirmed_click(label):
         prop = act(sid, "click", label)
@@ -148,25 +168,31 @@ def scenario_gating():
     print("  submit:", confirmed_click("Book tickets").get("status"))
     events = wait_for_narrations(sid, expect=1, timeout_s=60)
     show_narrations(sid)
-    since = events[-1]["id"] if events else 0
+    _require(len(events) >= 1, "the seat-count validation error was never narrated")
+    since = events[-1]["id"]
 
     print("== 3) reveal a new field (choose AC 3-tier -> meal field appears)")
     print("  radio:", act(sid, "click", "AC 3-tier")["status"])
     events = wait_for_narrations(sid, expect=1, timeout_s=90, since=since)
-    show_narrations(sid, since)
-    if events:
-        since = events[-1]["id"]
+    shown = show_narrations(sid, since)
+    _require(len(shown) >= 1, "a page change went unnarrated inside 90s")
+    since = shown[-1]["id"]
     print("== 4) fix the seat count (error clears) and submit again -> booking")
     print("  select seats=2:", act(sid, "fill", "Seats", "2")["status"])
     print("  submit:", confirmed_click("Book tickets").get("status"))
     events = wait_for_narrations(sid, expect=1, timeout_s=90, since=since)
-    show_narrations(sid, since)
-    if events:
-        since = events[-1]["id"]
+    shown = show_narrations(sid, since)
+    _require(len(shown) >= 1, "a page change went unnarrated inside 90s")
+    since = shown[-1]["id"]
 
     print("== final stats")
     stats = narrations(sid)["stats"]
     print(json.dumps(stats, indent=2))
+    _require(stats["counters"]["nim_calls"] >= 1,
+             "three real page changes narrated with zero vision calls - the "
+             "narration did not come from the page")
+    _require(stats["counters"]["narrations"] >= 3,
+             f"expected one narration per page change, got {stats['counters']['narrations']}")
     req(f"{BROWSER}/session/{sid}/monitor/stop", {})
     return stats
 
@@ -187,15 +213,19 @@ def scenario_interruption():
     req(f"{BROWSER}/session/{sid}/monitor/interrupt", {})
     print("  user turn at", time.strftime("%H:%M:%S", time.localtime(t_user)))
     events = wait_for_narrations(sid, expect=1, timeout_s=90)
-    if events:
-        t_narr = events[-1]["ts"]
-        c = narrations(sid)["stats"]["counters"]
-        print("  narration delivered at",
-              time.strftime("%H:%M:%S", time.localtime(t_narr)),
-              f'-> {events[-1]["raw_description"][:90]}')
-        print(f"  deferred_by_quiet={c['deferred_by_quiet']} (must be 1); "
-              f"narration fired {t_narr - t_user:.1f}s after the user turn, "
-              f"i.e. only after the quiet window - the user was talked to first")
+    _require(len(events) >= 1, "no narration ever arrived after the user turn")
+    t_narr = events[-1]["ts"]
+    c = narrations(sid)["stats"]["counters"]
+    print("  narration delivered at",
+          time.strftime("%H:%M:%S", time.localtime(t_narr)),
+          f'-> {events[-1]["raw_description"][:90]}')
+    _require(c["deferred_by_quiet"] == 1,
+             f"the user turn must defer exactly one narration, got "
+             f"{c['deferred_by_quiet']}")
+    _require(t_narr > t_user,
+             f"narration fired at {t_narr} before the user turn at {t_user} - "
+             f"it talked over the user instead of waiting for the quiet window")
+    print(f"  narration landed {t_narr - t_user:.1f}s after the user turn")
     req(f"{BROWSER}/session/{sid}/monitor/stop", {})
 
 
@@ -216,6 +246,13 @@ def scenario_stress():
     req(f"{BROWSER}/session/{sid}/monitor/stop", {})
     after = req(f"{BROWSER}/session/{sid}/monitor/status")
     print("== after stop, active:", after.get("active"))
+    _require(c["polls"] > 0, "the monitor never polled a page that mutates every 250ms")
+    _require(c["changes_detected"] > 0,
+             f"no change detected on a page that changes 4x/second for {duration}s")
+    _require(c["rate_blocked"] > 0,
+             f"the rate ceiling never engaged despite continuous churn: {c}")
+    _require(after.get("active") is False,
+             "monitor still reports active after stop - it keeps spending NIM quota")
     return stats
 
 
@@ -260,6 +297,8 @@ def scenario_fivemin():
     print("== narration transcript (this session):")
     show_narrations(sid, 0)
     req(f"{BROWSER}/session/{sid}/monitor/stop", {})
+    _require(c["polls"] > 0, "a 5-minute monitored session recorded zero polls")
+    _require(elapsed > 240, f"soak ended after only {elapsed:.0f}s, not 5 minutes")
     return stats
 
 
@@ -269,4 +308,6 @@ if __name__ == "__main__":
      "interruption": scenario_interruption,
      "stress": scenario_stress,
      "fivemin": scenario_fivemin}[what]()
+    print("\nall checks passed")
+    raise SystemExit(0)
 

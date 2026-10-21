@@ -9,15 +9,32 @@ Drives the REAL backend (:8000) as a registered user:
 Targets come from ADAPTIVEAI_BACKEND_URL (required, no default) and can be pointed elsewhere with
 ADAPTIVEAI_BROWSER_URL / ADAPTIVEAI_BACKEND_URL (http/https only, validated).
 
+Scope: the page is this repo's own demo/book-tickets-monitored.html. This proves
+monitoring and chat share one context against a real Chromium DOM; it says nothing
+about any real vendor site.
+
+Every expectation below is an assertion and exits non-zero - a script that cannot
+fail is not a proof.
+
 Usage: python scripts/r9_chat_loop_proof.py
 """
 import base64
 import json
 import os
 import secrets
+import sys
 import time
 import urllib.parse
 import urllib.request
+
+
+def _require(cond, msg):
+    """A proof that cannot fail is not a proof: report, then exit non-zero."""
+    if cond:
+        print(f"   ok: {msg}")
+        return
+    print(f"   FAIL: {msg}", file=sys.stderr)
+    raise SystemExit(1)
 
 
 def _service_url(env_name: str) -> str:
@@ -88,15 +105,18 @@ def main():
     print("== 1. register + login (real auth)")
     reg = req(f"{BACKEND}/auth/register",
               {"email": email, "password": password, "name": "R9 Proof"})
-    print("   register:", reg.get("access_token") is not None and "201 token"
-          or reg)
+    _require(reg.get("access_token") is not None,
+             f"register must return a real token, got {str(reg)[:160]}")
     login = req(f"{BACKEND}/auth/login",
                 {"email": email, "password": password})
+    _require(login.get("access_token") is not None,
+             f"login must return a real token, got {str(login)[:160]}")
     token = login["access_token"]
     print("   login: ok")
 
     print("== 2. create chat session")
     chat = req(f"{BACKEND}/api/session", {}, token=token)
+    _require(chat.get("session_id"), f"no session_id in {str(chat)[:160]}")
     sid = chat["session_id"]
     print("   chat session:", sid[:8], "...")
 
@@ -107,6 +127,8 @@ def main():
         "input_text": f"I'm looking at this page: {url} where is the submit button?",
         "input_source": "text", "screen_context": "",
     }, token=token)
+    _require(isinstance(r.get("response_text"), str) and r["response_text"].strip(),
+             f"page-open turn returned no answer: {str(r)[:200]}")
     print("   answer:", r["response_text"][:220].replace("\n", " "))
 
     print("== 4. voice command: 'watch my screen'")
@@ -117,6 +139,8 @@ def main():
     print("   answer:", r["response_text"][:200])
     mon = req(f"{BACKEND}/api/monitor/status?session_id={sid}", token=token)
     print("   monitor active:", mon.get("active"))
+    _require(mon.get("active") is True,
+             "a spoken 'watch my screen' did not start the monitor")
 
     print("== 5. drive a real change: submit with 4 seats -> validation error")
     for payload in ({"kind": "fill", "label": "Passenger name", "value": "Asha Sharma"},
@@ -142,12 +166,14 @@ def main():
         ev = req(f"{BACKEND}/api/monitor/events?session_id={sid}&since=0",
                  token=token)
         events = ev.get("narrations", [])
+    if not events:
+        print("   monitor state at failure:",
+              req(f"{BROWSER}/session/{sid}/monitor/narrations?since=0"))
+    _require(len(events) >= 1,
+             "a real page change was never narrated into the chat pull (90s)")
     for e in events:
         ts = time.strftime("%H:%M:%S", time.localtime(e["ts"]))
         print(f"   NARRATION [{ts}]: {e['text'][:200]}")
-    if not events:
-        print("   (no narration arrived - check monitor state)")
-        print(req(f"{BROWSER}/session/{sid}/monitor/narrations?since=0"))
 
     print("== 6. follow-up chat question about what was just narrated")
     r = req(f"{BACKEND}/api/query", {
@@ -166,6 +192,10 @@ def main():
     nim_before = (before.get("stats", {}).get("counters") or {}).get("nim_calls", "n/a")
     print("   monitor active after stop:", before.get("active"),
           "| nim_calls at stop:", nim_before)
+    _require(before.get("active") is False,
+             "a spoken 'stop watching my screen' left the monitor running")
+    _require(isinstance(nim_before, int),
+             f"no numeric nim_calls baseline to compare against: {nim_before!r}")
 
     print("== 8. drive MORE changes after the stop - nothing may be narrated")
     req(f"{BROWSER}/session/{sid}/act",
@@ -180,9 +210,14 @@ def main():
     nim_after = (after.get("stats", {}).get("counters") or {}).get("nim_calls", "n/a")
     ev = req(f"{BACKEND}/api/monitor/events?session_id={sid}&since=0", token=token)
     print(f"   nim_calls before={nim_before} after={nim_after} "
-          f"(must be equal); active={after.get('active')} "
+          f"active={after.get('active')} "
           f"new_narrations={len(ev.get('narrations', []))}")
+    _require(isinstance(nim_after, int) and nim_after == nim_before,
+             f"a stopped monitor spent more vision quota: {nim_before} -> {nim_after}")
+    _require(after.get("active") is False,
+             "monitor became active again after an explicit stop")
     print("== done")
+    raise SystemExit(0)
 
 
 if __name__ == "__main__":

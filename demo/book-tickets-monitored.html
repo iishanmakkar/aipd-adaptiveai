@@ -71,7 +71,8 @@ document.getElementById('booking').addEventListener('submit', function (ev) {
   const ref = 'PNR' + Math.abs([...get('pname')].reduce((a, c) => a + c.charCodeAt(0), 0) % 900000 + 100000);
   const box = document.getElementById('confirmation');
   box.style.display = 'block';
-  box.textContent = 'Booked ' + get('seats') + ' seat(s) for ' + get('pname') +
+  box.textContent = 'DEMO PAGE - no real ticket was booked and this reference '
+    + 'is a hash of the name, not a PNR. Booked ' + get('seats') + ' seat(s) for ' + get('pname') +
     ' (' + get('pemail') + '). Reference ' + ref + '.';
 });
 // Class radios reveal the AC-only meal field: a real "new field appears" event.
