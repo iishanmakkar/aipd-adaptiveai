@@ -16,7 +16,12 @@ SNAPSHOT_JS = """() => {
   const out = [];
   const els = document.querySelectorAll(
     'input, textarea, select, button, [role=textbox], [role=button], ' +
-    '[role=combobox], [role=listbox], [role=searchbox], a[href], h1, h2, h3'
+    '[role=combobox], [role=listbox], [role=searchbox], a[href], h1, h2, h3, ' +
+    // Images were absent from the list entirely, so the agent could not see
+    // that a page has images, which ones carry alt text, and which carry none -
+    // and "this image has no description" is the one thing a blind user needs
+    // said out loud, plus the trigger for the vision path.
+    'img, [role=img]'
   );
     els.forEach((el) => {
       const tag = (el.tagName || '').toLowerCase();

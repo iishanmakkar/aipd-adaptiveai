@@ -122,6 +122,13 @@ jobs:
       - run: |
           pip install -r requirements.txt -r requirements-dev.txt
           pytest
+      # tests/test_real_browser.py is the only suite in the repo that launches a
+      # real Chromium. Until this step existed, "browser agent tested in CI"
+      # meant FakeDriver only - perception was never actually exercised.
+      - name: Install Chromium for real-browser tests
+        run: playwright install --with-deps chromium
+      - name: Real Chromium perception tests
+        run: pytest tests/test_real_browser.py -v -p no:warnings
 
   loadtest-smoke:
     name: Load harness import smoke
