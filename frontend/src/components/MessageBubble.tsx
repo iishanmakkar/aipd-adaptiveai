@@ -121,15 +121,12 @@ export function MessageBubble({ message, onReplay }: MessageBubbleProps) {
         </div>
       )}
 
-      {message.suggested_action && message.suggested_action !== 'none' && (
-        // Deliberately NOT a live region: this bubble already arrives inside the
-        // conversation's aria-live=log container, and a nested polite region
-        // makes a screen reader say the same answer two or three times over.
-        <div className="suggested-action">
-          <span className="action-icon" aria-hidden="true">💡</span>
-          <span>Suggested: {message.suggested_action.replace(/_/g, ' ')}</span>
-        </div>
-      )}
+      {/* suggested_action is deliberately NOT rendered. It used to appear as
+          "Suggested: highlight button" beside an answer, and no code anywhere
+          highlighted anything - a claim about the system stated to the one
+          person who cannot verify it visually. The field still travels on the
+          message; it becomes worth showing again when the extension's executor
+          can actually perform the action (design spec section 8 item 6). */}
 
       {!isUser && !message.is_loading && message.content && message.content.length > 0 && (
         <details className="alt-formats" onToggle={(event) => {

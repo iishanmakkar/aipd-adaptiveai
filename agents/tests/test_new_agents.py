@@ -18,10 +18,34 @@ def test_new_agents_expose_actions_and_prompts(store):
     from rag.seed_data import SEED_DOCUMENTS
     store.add_documents(SEED_DOCUMENTS)
     reg = AgentRegistry(Retriever(), StubLLM())
-    assert reg.get("scheduler_agent")._get_suggested_action("anything", "x") == "plan_schedule"
+    # The three prompt-only specialists must advertise nothing they cannot do.
+    # "plan_schedule" / "update_profile" / "adjust_ui" used to render as
+    # "Suggested: plan schedule" over an action no code performed; a user who
+    # cannot see the screen has no way to check that nothing happened.
+    assert reg.get("scheduler_agent")._get_suggested_action("anything", "x") == "none"
+    assert reg.get("profile_updater_agent")._get_suggested_action("anything", "x") == "none"
+    assert reg.get("ui_adjuster_agent")._get_suggested_action("anything", "x") == "none"
+    # read_translation is backed: the reply really does carry translated text.
     assert reg.get("translator_agent")._get_suggested_action("anything", "x") == "read_translation"
     assert reg.get("scheduler_agent").system_prompt_template.strip()
     assert reg.get("translator_agent").system_prompt_template.strip()
+
+
+def test_prompt_only_agents_never_claim_to_have_changed_something(store):
+    """Capability claims live in the system prompts, not just the action field:
+    these three must say outright that they apply nothing."""
+    from agents.registry import AgentRegistry
+    from rag.retriever import Retriever
+    from rag.seed_data import SEED_DOCUMENTS
+    store.add_documents(SEED_DOCUMENTS)
+    reg = AgentRegistry(Retriever(), StubLLM())
+
+    for name in ("scheduler_agent", "profile_updater_agent", "ui_adjuster_agent"):
+        prompt = reg.get(name).system_prompt_template.lower()
+        assert "never" in prompt or "cannot" in prompt or "do not" in prompt, (
+            f"{name} prompt still asserts a capability it does not have")
+    assert "confirm the change" not in reg.get(
+        "profile_updater_agent").system_prompt_template.lower()
 
 
 @pytest.mark.parametrize("name,query", [
