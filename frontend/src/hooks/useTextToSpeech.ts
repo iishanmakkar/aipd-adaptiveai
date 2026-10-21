@@ -2,7 +2,10 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { enqueueSpeech, cancelSpeech, onSpeechQueueChange, speechQueueDepth } from '../utils/speechQueue';
 
 interface UseTextToSpeechReturn {
-  speak: (text: string) => Promise<void>;
+  // 'silent' means the text was NOT spoken aloud: no speechSynthesis in this
+  // browser, or an explicit mute at volume 0. Callers must not describe content
+  // as heard or fully listened to after a 'silent' result.
+  speak: (text: string) => Promise<'spoken' | 'silent'>;
   stop: () => void;
   isSpeaking: boolean;
   supported: boolean;
@@ -56,8 +59,8 @@ export function useTextToSpeech(): UseTextToSpeechReturn {
   }, [supported]);
 
   // Voice selection feeds the shared queue, which owns utterance construction.
-  const speak = useCallback(async (text: string): Promise<void> => {
-    if (!supported) return;
+  const speak = useCallback(async (text: string): Promise<'spoken' | 'silent'> => {
+    if (!supported) return 'silent';
 
     // Apply user preferences from CSS custom properties
     const rawRate = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--voice-rate') || '1');
@@ -66,12 +69,21 @@ export function useTextToSpeech(): UseTextToSpeechReturn {
     const rate = Number.isFinite(rawRate) ? rawRate : 1;
     const pitch = Number.isFinite(rawPitch) ? rawPitch : 1;
     const volume = Number.isFinite(rawVolume) ? rawVolume : 1;
-    // Muted (volume 0, e.g. screen-reader-only users): resolve without
-    // queueing so callers never hang waiting on silent speech.
-    if (volume === 0) return;
+    // Muted (volume 0, e.g. screen-reader-only users who drive NVDA's own voice
+    // and want no app audio): resolve as 'silent' without queueing, so callers
+    // never hang - and never count a sound nobody heard.
+    if (volume === 0) return 'silent';
 
     await enqueueSpeech(text, { rate, pitch, volume, voice: getPreferredVoice() });
+    return 'spoken';
   }, [supported, getPreferredVoice]);
+
+  // Dev-only handle so frontend/tts_proof.py can drive this real hook in a real
+  // Chromium. import.meta.env.DEV is statically false in a production build, so
+  // the assignment is dead-code-eliminated and ships no test backdoor.
+  if (import.meta.env.DEV) {
+    (window as unknown as Record<string, unknown>).__adaptiveai_test_speak = speak;
+  }
 
   const stop = useCallback(() => {
     cancelSpeech();

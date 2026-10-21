@@ -387,15 +387,22 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
         agent_used: response.agent_used,
         suggested_action: response.suggested_action ?? undefined,
         confidence: response.confidence,
+        confidence_source: response.confidence_source,
         sources: response.sources_used,
       });
 
       setStatus('speaking');
       const listenStart = Date.now();
-      await speak(response.response_text);
+      const spoken = await speak(response.response_text);
       // Fully heard answers are listen signals (duration in seconds); an
       // interrupted answer records skip instead via handleStopSpeaking.
-      recordListen(Math.max(0, (Date.now() - listenStart) / 1000));
+      // 'silent' (muted, or no speechSynthesis) means NOTHING was heard -
+      // recording it would hand the adaptive policy a 0-second "listened"
+      // number for audio that never existed, and Rule 5 would shorten answers
+      // at a user who never heard one.
+      if (spoken === 'spoken') {
+        recordListen(Math.max(0, (Date.now() - listenStart) / 1000));
+      }
     } catch (err) {
       // Offline: the network never answered. Queue the whole query for the
       // online-drain in main.tsx instead of losing the user's question —
@@ -715,6 +722,7 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
         agent_used: detail.response.agent_used,
         suggested_action: detail.response.suggested_action ?? undefined,
         confidence: detail.response.confidence,
+        confidence_source: detail.response.confidence_source,
         sources: detail.response.sources_used,
       });
       void speak(detail.response.response_text);

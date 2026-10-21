@@ -17,7 +17,9 @@ interface FormFillDialogProps {
   onClose: () => void;
   /** Spoken through the chat's TTS so the result reaches a blind user
    * without them having to find this dialog's live region. */
-  announce?: (text: string) => Promise<void> | void;
+  // Returns 'spoken' | 'silent' so the caller COULD tell whether the user heard
+  // anything; this dialog never claims that they did, so it discards the result.
+  announce?: (text: string) => Promise<unknown>;
 }
 
 /** Real form filling through POST /api/form-fill: the backend's live Chromium
