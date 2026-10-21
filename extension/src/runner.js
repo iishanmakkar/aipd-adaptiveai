@@ -53,11 +53,28 @@
         goal: goal,
         stepCount: steps.length,
         lastOutcome: lastOutcome,
-        snapshot: opts.snapshot ? opts.snapshot() : null,
+        // Awaited: a page read that has to cross a message port is the normal
+        // case, and handing the planner a Promise instead of a snapshot would
+        // look like an empty page - which it would then honestly report as one.
+        snapshot: opts.snapshot ? await opts.snapshot() : null,
         availableLabels: opts.availableLabels ? await opts.availableLabels() : [],
       };
       var step = await nextStep(context);
       if (!step) { status = 'completed'; plannerFinished = true; break; }
+
+      // A reply that is not an action: the planner finished, needs something from
+      // the user, or gave up. The runner speaks what the planner said instead of
+      // rewording a refusal into something that sounds like a result, and each
+      // case gets its own run status so a review can tell them apart.
+      if (step.control) {
+        say(step.say);
+        steps.push({ description: step.say || null, action: null,
+                     status: 'planner_' + step.control, reason: step.why || null });
+        if (step.control === 'done') { status = 'completed'; plannerFinished = true; }
+        else if (step.control === 'ask') { status = 'needs_user'; }
+        else { status = 'stopped'; }
+        break;
+      }
 
       if (!step.action || !step.ref) {
         status = 'stopped';

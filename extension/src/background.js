@@ -1,9 +1,10 @@
 // AdaptiveAI service worker.
 //
-// Deliberately small. The step -> act -> verify -> narrate loop, the spend gate
-// and the profile vault land here in later tasks of the extension plan; nothing
-// in this file pretends to plan or execute yet, because a scaffold that returns
-// invented results is exactly the failure mode the truth pass just removed.
+// This is the loop: goal -> plan (backend) -> act (content script) -> verify
+// (watch.js) -> narrate (offscreen speech), with the spending gate in front of
+// every click and no success claim without a readback. The worker owns the loop
+// and nothing else - it holds no model of the page and makes no decision about
+// money, both of which live somewhere that can be tested.
 // Classic worker (no "type": "module"): a module worker has no importScripts and
 // would fail to install over one unnecessary line. The vault is shared with the
 // options page through chrome.storage.local, so the worker can read profile labels
@@ -12,6 +13,7 @@
 // 'src/vault.js' asks for src/src/vault.js, the import throws, and the worker
 // silently never activates.
 importScripts('vault.js');
+importScripts('privacy.js', 'planner.js', 'runner.js', 'speech.js');
 
 chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
   if (!message) return false;
@@ -57,21 +59,220 @@ chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
       sendResponse({ ok: false, reason: 'no active tab' });
       return;
     }
-    chrome.tabs.sendMessage(tab.id, { type: 'adaptiveai:snapshot', force: true },
-      function (snap) {
-        if (chrome.runtime.lastError || !snap) {
-          // Most common real cause: the tab is a chrome:// page, the Web Store,
-          // or an origin the user has not granted yet. Say which, never return
-          // an empty snapshot as if the page were simply blank.
-          sendResponse({ ok: false,
-                         reason: 'no content script on this page',
-                         detail: chrome.runtime.lastError
-                           ? chrome.runtime.lastError.message : 'no response' });
-          return;
-        }
-        sendResponse({ ok: true, snapshot: snap });
-      });
-    return;
+    snapshotOf(tab.id).then(sendResponse);
   });
   return true;  // asynchronous sendResponse
+});
+
+function snapshotOf(tabId) {
+  return new Promise(function (resolve) {
+    try {
+      chrome.tabs.sendMessage(tabId, { type: 'adaptiveai:snapshot', force: true },
+        function (snap) {
+          if (chrome.runtime.lastError || !snap) {
+            // Most common real cause: the tab is a chrome:// page, the Web Store,
+            // or an origin the user has not granted yet. Say which, never return
+            // an empty snapshot as if the page were simply blank.
+            resolve({ ok: false,
+                      reason: 'no content script on this page',
+                      detail: chrome.runtime.lastError
+                        ? chrome.runtime.lastError.message : 'no response' });
+            return;
+          }
+          resolve({ ok: true, snapshot: snap });
+        });
+    } catch (e) {
+      resolve({ ok: false, reason: String(e).slice(0, 120) });
+    }
+  });
+}
+
+// ---- the task loop ------------------------------------------------------------
+//
+// One run at a time, because two loops pressing controls in the same tab is not
+// concurrency, it is a race on a page that a blind user cannot see.
+var ACTIVE = null;
+var LAST = null;
+var ANSWER = null;   // the pending gate question's resolver, if any
+var QUESTION = null; // and the words the user is being asked to answer
+
+function clearQuestion() { QUESTION = null; ANSWER = null; }
+
+// How long a spending confirmation waits before it counts as a no. The default is
+// 45 s because that is generous enough for someone using a screen reader to find
+// the answer control; it is a device-local setting, never something the planner
+// or the server can raise.
+var DEFAULT_ANSWER_MS = 45000;
+
+function readAnswerTimeout() {
+  return new Promise(function (resolve) {
+    try {
+      chrome.storage.local.get(['adaptiveai_answer_timeout_ms'], function (data) {
+        var v = Number(data && data.adaptiveai_answer_timeout_ms);
+        resolve(v >= 250 && v <= 120000 ? v : DEFAULT_ANSWER_MS);
+      });
+    } catch (e) { resolve(DEFAULT_ANSWER_MS); }
+  });
+}
+
+function remember(result) {
+  LAST = result;
+  try {
+    chrome.storage.session.set({ adaptiveai_last_run: result }, function () {
+      void chrome.runtime.lastError;   // session storage is best-effort here
+    });
+  } catch (e) { /* the in-memory copy above is what the popup reads */ }
+}
+
+function answer(timeoutMs) {
+  return new Promise(function (resolve) {
+    var timer = setTimeout(function () {
+      clearQuestion();
+      // Silence is a no. A confirmation that times out as approval would let the
+      // most reliable failure - a user who did not hear the question - spend money.
+      resolve(false);
+    }, timeoutMs || 45000);
+    ANSWER = function (reply) {
+      clearTimeout(timer);
+      clearQuestion();
+      resolve(String(reply).toLowerCase() === 'yes' || reply === true);
+    };
+  });
+}
+
+async function runTask(goal) {
+  if (ACTIVE) {
+    return { ok: false, reason: 'I am already working on: ' + ACTIVE };
+  }
+  if (!goal || !String(goal).trim()) {
+    return { ok: false, reason: 'no goal was given' };
+  }
+  var tab = await new Promise(function (resolve) {
+    chrome.tabs.query({ active: true, currentWindow: true },
+                      function (tabs) { resolve(tabs && tabs[0]); });
+  });
+  if (!tab || !tab.id) return { ok: false, reason: 'no active tab' };
+
+  var first = await snapshotOf(tab.id);
+  if (!first.ok) return first;
+
+  ACTIVE = String(goal).slice(0, 200);
+  var planner = AdaptiveAIPlanner.create({ vault: AdaptiveAIVault,
+                                           privacy: AdaptiveAIPrivacy });
+  var ceiling = await AdaptiveAIVault.spendCeiling();
+  var confirmMs = await readAnswerTimeout();
+  var started = Date.now();
+  try {
+    var result = await AdaptiveAIRunner.run({
+      goal: String(goal),
+      spendCeiling: ceiling,
+      snapshot: function () { return snapshotOf(tab.id).then(function (r) {
+        return r.ok ? r.snapshot : null;
+      }); },
+      availableLabels: function () { return AdaptiveAIVault.availableLabels(); },
+      nextStep: planner.nextStep,
+      send: function (action) {
+        return new Promise(function (resolve) {
+          var message = { type: 'adaptiveai:act' };
+          Object.keys(action || {}).forEach(function (k) { message[k] = action[k]; });
+          try {
+            chrome.tabs.sendMessage(tab.id, message, function (outcome) {
+              if (chrome.runtime.lastError) {
+                resolve({ status: 'failed',
+                          reason: chrome.runtime.lastError.message.slice(0, 140) });
+                return;
+              }
+              resolve(outcome || { status: 'failed', reason: 'no outcome returned' });
+            });
+          } catch (e) {
+            resolve({ status: 'failed', reason: String(e).slice(0, 140) });
+          }
+        });
+      },
+      confirm: function (record, verdict) {
+        QUESTION = 'About to ' + (record.description || record.action) +
+          (verdict.amount && verdict.amount.text
+            ? ' for ' + verdict.amount.text : '') +
+          (verdict.reason ? '. This ' + verdict.reason : '') +
+          '. Do you want me to go ahead?';
+        return answer(confirmMs);
+      },
+      narrate: function (text) { AdaptiveAISpeech.speak(text); },
+    });
+    result.elapsedMs = Date.now() - started;
+    result.historyLength = planner.history().length;
+    remember(result);
+    return { ok: true, result: result };
+  } catch (e) {
+    var failure = { goal: goal, status: 'crashed', steps: [], narration: [],
+                    stepsVerified: 0, reason: String(e).slice(0, 200) };
+    remember(failure);
+    return { ok: false, reason: failure.reason, result: failure };
+  } finally {
+    ACTIVE = null;
+  }
+}
+
+chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
+  if (!message) return false;
+  if (message.type === 'adaptiveai:run-task') {
+    runTask(message.goal).then(sendResponse, function (e) {
+      sendResponse({ ok: false, reason: String(e).slice(0, 200) });
+    });
+    return true;
+  }
+  if (message.type === 'adaptiveai:answer') {
+    if (!ANSWER) {
+      sendResponse({ ok: false, reason: 'nothing is asking you anything right now' });
+      return false;
+    }
+    ANSWER(message.answer);
+    sendResponse({ ok: true });
+    return false;
+  }
+  if (message.type === 'adaptiveai:pending-question') {
+    sendResponse({ ok: true, running: ACTIVE, question: QUESTION });
+    return false;
+  }
+  return false;
+});
+
+// Two views, because they can disagree: what this worker asked to be said and
+// what it was told back, and what the document that owns the engine actually
+// saw. A test that reads only one cannot tell "never asked" from "asked and
+// the engine refused".
+function speechLog() {
+  var attempts = (typeof AdaptiveAISpeech !== 'undefined' && AdaptiveAISpeech.log)
+    ? AdaptiveAISpeech.log() : [];
+  return new Promise(function (resolve) {
+    try {
+      chrome.runtime.sendMessage({ type: 'adaptiveai:speech-log' }, function (reply) {
+        resolve({ ok: true, attempts: attempts,
+                  engine: (reply && reply.spoken) || null,
+                  reason: chrome.runtime.lastError
+                    ? String(chrome.runtime.lastError.message).slice(0, 120) : '' });
+      });
+    } catch (e) {
+      resolve({ ok: true, attempts: attempts, engine: null,
+                reason: String(e).slice(0, 120) });
+    }
+  });
+}
+
+chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
+  if (!message) return false;
+  if (message.type === 'adaptiveai:speech-log') {
+    speechLog().then(sendResponse);
+    return true;
+  }
+  if (message.type === 'adaptiveai:last-run') {
+    sendResponse({ ok: true, running: ACTIVE, result: LAST });
+    return false;
+  }
+  if (message.type === 'adaptiveai:stop') {
+    AdaptiveAISpeech.stop();
+    sendResponse({ ok: true, running: ACTIVE });
+    return false;
+  }
+  return false;
 });

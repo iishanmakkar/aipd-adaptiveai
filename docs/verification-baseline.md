@@ -2,21 +2,20 @@
 
 ## Current: this host, no Docker
 
-Measured **2026-10-21** on the working tree at `8536341` with
+Measured **2026-10-21** on the working tree at `17e838e` + the extension task loop, with
 
 ```bash
 bash scripts/verify-host.sh        # all five suites, non-zero on any failure
-bash scripts/verify-host.sh backend
 ```
 
 | Suite | Result |
 |---|---|
-| backend | **222 passed**, 1 skipped |
+| backend | **248 passed**, 1 skipped |
 | agents | **102 passed**, 1 deselected |
 | intent-engine | **134 passed**, 2 deselected |
 | browser-agent | **62 passed** |
-| extension (real Chromium) | **86 passed** |
-| **Python total** | **606 passed**, 1 skipped, 3 deselected |
+| extension (real Chromium) | **112 passed** |
+| **Python total** | **658 passed**, 1 skipped, 3 deselected |
 
 Interpreter: `Python 3.14.7` in `.venv`, created with `--system-site-packages`.
 
@@ -55,7 +54,7 @@ Measured the same day at `ad4a0db` + Task 1 changes with `docker compose up -d`
 | browser-agent | **44 passed** | 0 | 0 |
 | **Python total** | **472 passed** | 3 | 1 |
 
-The extension suite (`extension/test`, 86 tests) did not exist for that run, and
+The extension suite (`extension/test`, 112 tests) did not exist for that run, and
 backend gained tests since. Frontend `npm run build` (tsc strict + Vite) passes on
 the host.
 

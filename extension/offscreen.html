@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AdaptiveAI speech</title>
+</head>
+<body>
+<!-- An offscreen document exists to own the two things a service worker cannot:
+     a speech engine and a microphone. Nothing here is ever displayed, so there
+     is nothing to look at - and no inline script, because extension pages run
+     under a CSP that forbids it. -->
+<script src="src/offscreen.js"></script>
+</body>
+</html>

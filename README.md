@@ -24,7 +24,7 @@ regardless). Those are fixed and locked by tests - see
 `docs/superpowers/specs/2026-10-21-adaptiveai-real-user-extension-design.md` §8 and
 `docs/proofs/README.md`. The suite baseline is measured, not asserted:
 `docs/verification-baseline.md`. The suite baseline is measured, not asserted:
-**606 passed / 1 skipped / 3 deselected** as of 2026-10-21, produced on this
+**658 passed / 1 skipped / 3 deselected** as of 2026-10-21, produced on this
 machine by `bash scripts/verify-host.sh` (and 472 in the containers, against the
 pinned dependency set, by `bash scripts/verify.sh`).
 
@@ -327,11 +327,11 @@ real browser and reports each action.
 # .venv with --system-site-packages, so these runs use the host's newer fastapi/
 # pydantic/faiss - see docs/verification-baseline.md for what that does and does
 # not prove, and for the pinned-set run inside the containers):
-bash scripts/verify-host.sh backend         # 222 passed, 1 skipped - policy (Rules 1-5), clients,
+bash scripts/verify-host.sh backend         # 248 passed, 1 skipped - policy (Rules 1-5), clients,
                                        #   auth, degrade, behavior + form-fill + SSRF contracts,
                                        #   hardening, clarify-on-unsure, UnifiedContext/SharedDict/
                                        #   braille/share/orchestrate, millisecond shared-store TTLs,
-                                       #   production boot refusals
+                                       #   production boot refusals, the /api/extension/step contract
 bash scripts/verify-host.sh agents          # 102 passed, 1 deselected - RAG seed reconciliation,
                                        #   registry (11 agents), orchestrate, API, prompt contracts,
                                        #   vector store (faiss, or the numpy exact-IP fallback when
@@ -341,14 +341,15 @@ bash scripts/verify-host.sh intent-engine   # 134 passed, 2 deselected - keyword
                                        #   confidence provenance
 bash scripts/verify-host.sh browser-agent   # 62 passed - sessions, monitor gating/ceiling/consent,
                                        #   driver guards
-bash scripts/verify-host.sh extension       # 86 passed - every suite below drives a real Chromium
+bash scripts/verify-host.sh extension       # 112 passed - every suite drives a real Chromium, incl.
+                                       #   the whole typed-goal loop through a loaded extension
 cd frontend; npm run build             # tsc strict + vite pass
 python frontend/a11y_audit.py http://localhost:5173   # keyboard + ARIA contract (needs the stack up)
 docker compose config --quiet          # 7 services parse (6 + redis shared store)
 ```
 
-Total: **606 passed, 1 skipped, 3 deselected** (backend 222 + agents 102 +
-intent-engine 134 + browser-agent 62 + extension 86). Both runners exit non-zero
+Total: **658 passed, 1 skipped, 3 deselected** (backend 248 + agents 102 +
+intent-engine 134 + browser-agent 62 + extension 112). Both runners exit non-zero
 when a suite fails *or collects zero tests* — the previous host-only instructions
 could not tell those two apart, and both the missing `pytest.ini` mount and the
 TTL bug in `docs/verification-baseline.md` were invisible for that reason.
@@ -376,22 +377,27 @@ Live proofs: §2 table + §2C (each row is a command
 
 ## 6. Honest gaps (runbooks included, nothing faked)
 
-- **No real platform works with this product yet.** There is no browser extension, and
-  no code path here can operate BookMyShow, IRCTC, Swiggy/Zomato or any other site —
-  the only booking flow ever executed is against this repository's own demo form. The
-  server-side browser has no cookies, no logged-in session and no anti-bot handling, so
-  it structurally cannot act on an authenticated site. That is the reason for the
-  extension design, and §7.1 of the spec states per platform how far it will get and
-  which walls (CAPTCHA, OTP, payment frames) stay with the user.
-- **The extension exists and can see real sites; it cannot yet act on their behalf.**
-  `extension/` is a working MV3 extension: accessible-name perception differential-tested
-  against Chrome's own AX tree, an actor that only reports success with a readback, a
-  spending gate enforced in the content script, change verification, a local profile
-  vault, and a task loop with budgets and halt-on-failure — 81 tests in real Chromium,
-  and a live-site proof (`docs/proofs/README.md`) that read 207 nodes on railyatri.in
-  in 15 ms and independently flagged "Book Train Tickets" as gated. What is missing is
-  the reason to install it: no voice input, no planner wired to the runner, no
-  `POST /api/extension/step`, so **no task can be completed end to end yet**.
+- **No real platform is supported yet.** The extension can now carry a typed goal all
+  the way through (plan → act → verify → speak) on a page it was pointed at, but no
+  site knowledge exists: there are no `extension/recipes/*.json`, no verified-trace
+  memory, and no task has ever been completed on BookMyShow, IRCTC, Swiggy/Zomato or
+  any other vendor. The only booking flow ever executed end to end is against this
+  repository's own demo form. The server-side browser has no cookies, no logged-in
+  session and no anti-bot handling, so it structurally cannot act on an authenticated
+  site. That is the reason for the extension design, and §7.1 of the spec states per
+  platform how far it will get and which walls (CAPTCHA, OTP, payment frames) stay
+  with the user.
+- **The extension cannot hear you yet.** `extension/` is a working MV3 extension:
+  accessible-name perception differential-tested against Chrome's own AX tree, an
+  actor that only reports success with a readback, a spending gate enforced in the
+  content script, change verification, a local profile vault, a planner client that
+  sends structure and resolves values on the device, and a task loop that halts on a
+  failed step and pauses at the gate — 112 tests in real Chromium, including the whole
+  loop driven through an extension Chrome actually loaded. A live-site proof
+  (`docs/proofs/README.md`) read 207 nodes on railyatri.in in 15 ms and independently
+  flagged "Book Train Tickets" as gated. What is missing is the microphone: the goal
+  is typed into the popup, and spoken input, push-to-talk and a spoken yes/no are the
+  next task.
 - **The booking vendors cannot be reached from an automated browser.** Measured
   2026-10-21: BookMyShow served a Cloudflare challenge, IRCTC failed the HTTP/2
   handshake, Swiggy returned an error status, and Wikipedia served an error page.

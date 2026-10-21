@@ -54,4 +54,84 @@
     chrome.runtime.openOptionsPage();
   });
   request();
+
+  // ---- the task surface ----------------------------------------------------
+  //
+  // Typing a goal here drives the same loop the voice path drives. The reply
+  // arrives when the RUN ends, not when the first step does, so the status line
+  // says it is working rather than going quiet; and if this popup is dismissed
+  // mid-run the loop keeps going in the worker, because it never lived here.
+  var goalEl = document.getElementById('goal');
+  var askEl = document.getElementById('ask');
+  var askText = document.getElementById('ask-text');
+  var transcriptEl = document.getElementById('transcript');
+  var transcriptTitle = document.getElementById('transcript-title');
+  var noteEl = document.getElementById('transcript-note');
+
+  function send(message) {
+    return new Promise(function (resolve) {
+      try {
+        chrome.runtime.sendMessage(message, function (reply) {
+          resolve(chrome.runtime.lastError ? null : reply);
+        });
+      } catch (e) { resolve(null); }
+    });
+  }
+
+  function renderRun(result) {
+    if (!result) return;
+    transcriptTitle.hidden = false;
+    transcriptEl.textContent = '';
+    (result.steps || []).forEach(function (step) {
+      var li = document.createElement('li');
+      li.className = 'step';
+      li.textContent = (step.description || step.action || '(no description)') +
+        ' — ' + step.status + (step.reason ? ' (' + step.reason + ')' : '');
+      transcriptEl.appendChild(li);
+    });
+    noteEl.textContent = 'Result: ' + result.status + '. ' +
+      (result.stepsVerified || 0) + ' of ' + (result.steps || []).length +
+      ' step(s) verified.';
+  }
+
+  async function runTask() {
+    var goal = (goalEl.value || '').trim();
+    if (!goal) { say('Tell me what to do first.'); goalEl.focus(); return; }
+    say('Working on: ' + goal);
+    var reply = await send({ type: 'adaptiveai:run-task', goal: goal });
+    if (!reply) { say('The assistant did not answer. Its service worker may have stopped - try again.'); return; }
+    if (!reply.ok) { say('I could not start: ' + (reply.reason || 'unknown reason')); return; }
+    renderRun(reply.result);
+  }
+
+  async function pollQuestion() {
+    var reply = await send({ type: 'adaptiveai:pending-question' });
+    if (reply && reply.question) {
+      askEl.hidden = false;
+      askText.textContent = reply.question;
+    } else {
+      askEl.hidden = true;
+    }
+    if (reply && reply.running) {
+      var last = await send({ type: 'adaptiveai:last-run' });
+      if (last && last.result) renderRun(last.result);
+    }
+  }
+
+  document.getElementById('run').addEventListener('click', runTask);
+  goalEl.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') { event.preventDefault(); runTask(); }
+  });
+  [['yes', 'yes'], ['no', 'no']].forEach(function (pair) {
+    document.getElementById(pair[0]).addEventListener('click', async function () {
+      await send({ type: 'adaptiveai:answer', answer: pair[1] });
+      askEl.hidden = true;
+      say(pair[1] === 'yes' ? 'Answered yes.' : 'Answered no.');
+    });
+  });
+  setInterval(pollQuestion, 700);
+  pollQuestion();
+  send({ type: 'adaptiveai:last-run' }).then(function (reply) {
+    if (reply && reply.result) renderRun(reply.result);
+  });
 })();

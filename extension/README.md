@@ -1,15 +1,16 @@
 # AdaptiveAI browser extension
 
-**Status: it can see a page and act on it when told. Nobody tells it yet.**
+**Status: tell it a goal in typing and it plans, acts, verifies and speaks. It cannot
+yet hear you.**
 
 What exists: a real accessibility snapshot (accessible names computed the way the
 browser computes them), an actor that fills, selects, clicks and focuses **only
 with a readback that proves it landed**, a spending gate enforced in the content
-script itself, and a message surface a service worker can drive — all verified
-end-to-end in real Chromium. What does not exist is the reason a user would install
-it: **no voice input, no planner, no backend call, and nothing that decides the next
-step.** Ask it for a task and nothing happens. Do not demonstrate this as an
-assistant.
+script itself, a planner client that posts structure and resolves values from the
+local vault, a service worker that runs the step → act → verify → narrate loop, and
+an offscreen document that owns the speech engine. All of it is driven end-to-end in
+real Chromium, including what went to the wire. What does not exist is the microphone:
+**you type the goal in the popup; saying it out loud is the next task.**
 
 | Piece | State |
 |---|---|
@@ -20,14 +21,25 @@ assistant.
 | `src/watch.js` `await_change` | done — a click is only `verified` when the page changed the way it was predicted to; a wrong prediction fails and reports what did happen |
 | `src/vault.js` profile vault | done — values stay on the device, `availableLabels()` is the only export, and passwords/OTPs/CVV are refused for storage outright |
 | `src/privacy.js` snapshot redaction | done — plus `findLeaks()`, run against a page full of real values **and** a positive control proving the check would catch one |
-| `src/runner.js` task loop | done for control flow — budgets, gate pausing, and halting on a failed step are tested with a stubbed planner; **no planner is wired to it yet** |
+| `src/planner.js` step client | done — redacts before sending, resolves `profile:<label>` from the vault on the device, refuses a ref that is not in the snapshot, refuses password fields locally as well as server-side, and reports an unreachable planner instead of guessing |
+| `src/runner.js` task loop | done — budgets, gate pausing, halting on a failed step, and the planner's `done`/`ask_user`/`cannot` replies, all tested with a scripted planner **and** driven against a real step endpoint |
+| `src/background.js` the loop itself | done — one run at a time, live snapshot per step, confirmation that treats silence as a no, run transcript readable afterwards |
+| `src/speech.js` + `offscreen.html` narration | done — the worker has no speech engine, so an offscreen document owns it; every announcement reports what the engine did, and a document that answers nothing is reported rather than assumed |
 | `options.html` + `src/options.js` | done — the one place details are entered, batched into a single write, delete needs two deliberate presses |
-| `manifest.json`, `background.js`, `popup.html` | loads and runs; popup reports real counts and opens setup |
-| voice in / speech out | not written |
-| `POST /api/extension/step`, real planner, recipes | not written |
+| `popup.html` typed goal + transcript + yes/no | done — labelled input, live regions, what happened listed per step |
+| microphone in, push-to-talk, spoken yes/no | **not written** — the offscreen document has the health check and the message surface; capture and `/api/transcribe` wiring are next |
+| `extension/recipes/*.json`, verified-trace memory | not written — no site knowledge exists yet, so no platform is supported |
 
 Plan: `docs/superpowers/plans/2026-10-21-plan-b-extension.md`. Design:
 `docs/superpowers/specs/2026-10-21-adaptiveai-real-user-extension-design.md`.
+
+## Pointing it at a backend
+
+The loop posts each step to `POST /api/extension/step` on the backend
+(`http://localhost:8000` unless changed). The URL and the bearer token are read from
+`chrome.storage.local` (`adaptiveai_backend`, `adaptiveai_token`), so a dev box with a
+different port needs one storage write, not a rebuild. With no backend running the
+extension says so and does nothing — it never plans locally.
 
 ## Loading it
 
@@ -62,13 +74,17 @@ globally, and tested against NVDA rather than assumed.
 python -m pytest extension/test -p no:warnings
 ```
 
-All suites drive a **real Chromium** (86 tests): `test_ax.py` name/role/state
+All suites drive a **real Chromium** (112 tests): `test_ax.py` name/role/state
 computation, `test_actor.py` actions and their readbacks, `test_gate.py` what gets
 stopped (and what must not be), `test_watch.py` change verification,
 `test_vault_privacy.py` profile storage and redaction, `test_options.py` the setup
 page and what the worker reads back from it, `test_runner.py` the task loop's
-control flow, and `test_extension_loads.py` for Chrome accepting the unpacked
-extension and driving an action from the service worker through to the page.
+control flow, `test_planner.py` what the step client puts on the wire and what it
+does with a reply it did not choose, `test_extension_loads.py` for Chrome accepting
+the unpacked extension, the worker's script actually having run, and the offscreen
+document answering its own health check, and `test_task_loop.py` for the whole loop:
+a typed goal in a loaded extension produces a verified DOM change, a refusal it
+cannot talk itself out of, and a narration the speech engine reported back.
 `test_ax.py` includes a differential test that compares every accessible name this
 module produces against Chrome's own accessibility tree via CDP — Chrome is the
 engine NVDA reads, so where the two disagree, this module is wrong.

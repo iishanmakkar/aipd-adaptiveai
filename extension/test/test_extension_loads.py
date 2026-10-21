@@ -165,6 +165,48 @@ def test_service_worker_registers(loaded_extension, site):
     assert sw.url.startswith("chrome-extension://"), sw.url
 
 
+def test_the_worker_script_actually_ran(loaded_extension, site):
+    """Registered is not the same as working.
+
+    A syntax error or a bad `importScripts` path leaves a worker that Chrome
+    reports as registered while its top-level evaluation died partway, so every
+    message handler below it is missing. This happened for real: `offscreen.js`
+    gained a stray `});`, the offscreen document loaded, answered nothing, and the
+    only symptom was silence. So the test asks the live worker for the globals each
+    feature needs, by name.
+    """
+    page = loaded_extension.new_page()
+    page.goto(site, wait_until="load")
+    sw = _wait_service_worker(loaded_extension, timeout_s=45)
+    assert sw is not None
+    present = sw.evaluate("""() => ({
+        vault: typeof AdaptiveAIVault,
+        privacy: typeof AdaptiveAIPrivacy,
+        planner: typeof AdaptiveAIPlanner,
+        runner: typeof AdaptiveAIRunner,
+        speech: typeof AdaptiveAISpeech,
+        runTask: typeof runTask,
+        speechLog: typeof speechLog,
+    })""")
+    dead = {k: v for k, v in present.items() if v != "object" and v != "function"}
+    page.close()
+    assert not dead, "worker loaded but these are missing: %s" % dead
+
+
+def test_the_offscreen_document_answers_its_health_check(loaded_extension, site):
+    """The speech path is the user's only feedback channel, and a document whose
+    script failed to run is invisible from the worker's side: `hasDocument()` says
+    true, `createDocument()` says it already exists, and nothing ever answers. The
+    ping is the one check that cannot lie about a listener."""
+    page = loaded_extension.new_page()
+    page.goto(site, wait_until="load")
+    sw = _wait_service_worker(loaded_extension, timeout_s=45)
+    verdict = sw.evaluate("() => AdaptiveAISpeech.speak('health check for the test')")
+    page.close()
+    assert verdict["ok"] is True, verdict
+    assert verdict["status"] in ("ended", "speaking"), verdict
+
+
 def test_content_script_runs_and_reports_real_counts(loaded_extension, site):
     page = loaded_extension.new_page()
     errors = []

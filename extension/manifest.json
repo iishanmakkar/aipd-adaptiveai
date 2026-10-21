@@ -6,6 +6,8 @@
 
   "permissions": ["storage", "activeTab", "scripting", "offscreen"],
 
+  "host_permissions": ["http://localhost:8000/*", "http://127.0.0.1/*"],
+
   "background": {
     "service_worker": "src/background.js"
   },
