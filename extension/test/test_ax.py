@@ -279,3 +279,27 @@ def test_stats_are_coherent(page):
     assert snap["stats"]["interactive"] == sum(1 for n in snap["nodes"] if n["interactive"])
     assert snap["stats"]["unnamedControls"] == 1
     assert snap["title"] == "P"
+
+
+def test_a_ref_still_names_the_same_element_after_the_page_inserts_nodes(page):
+    """The regression that mattered most.
+
+    Refs used to be positional, so one inserted node shifted every later ref onto a
+    different control - and because the actor's identity check was computed from
+    that same re-read node, nothing looked wrong. It surfaced in the task runner,
+    where a click meant for "Pay ₹640" landed on an alert div and reported
+    'pressed' while the payment button was never touched."""
+    snap = snapshot(page, '<label for="a">Passenger Name</label><input id="a">'
+                         '<button>Pay ₹640</button>')
+    ref = find(snap, "Pay ₹640")["ref"]
+
+    page.evaluate("""() => {
+        const d = document.createElement('div');
+        d.setAttribute('role', 'alert');
+        d.textContent = 'Seat 12A held';
+        document.body.prepend(d);
+    }""")
+    after = json.loads(json.dumps(page.evaluate("() => AdaptiveAIAX.computeSnapshot(document)")))
+    matches = [n for n in after["nodes"] if n["ref"] == ref]
+    assert len(matches) == 1, [n["ref"] for n in after["nodes"]]
+    assert matches[0]["name"] == "Pay ₹640", matches[0]

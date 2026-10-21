@@ -385,6 +385,24 @@
     return out;
   }
 
+  // Refs must identify THE ELEMENT, not a position. A positional index looked
+  // harmless until a page inserted one node between snapshot and action: the
+  // ref then silently described a different control, and an identity check
+  // computed from that same fresh node could not detect it. Found by the runner
+  // tests, where "Pay ₹640" shifted onto an alert div after a click.
+  var refSeq = 0;
+  var refIds = new WeakMap();
+
+  function idFor(el) {
+    var id = refIds.get(el);
+    if (!id) {
+      refSeq += 1;
+      id = 'a' + refSeq;
+      refIds.set(el, id);
+    }
+    return id;
+  }
+
   function computeSnapshot(doc) {
     var nodes = [];
     var skippedHidden = 0;
@@ -392,7 +410,7 @@
     for (var i = 0; i < candidates.length; i++) {
       var el = candidates[i];
       if (!visibleToAssistiveTech(el)) { skippedHidden++; continue; }
-      var ref = 'n' + nodes.length;
+      var ref = idFor(el);
       var node = describe(el, ref);
       var declared = collapse(el.getAttribute('role') || '').split(' ')[0];
       // role=presentation/none is an explicit author instruction to remove the

@@ -20,9 +20,10 @@ assistant.
 | `src/watch.js` `await_change` | done — a click is only `verified` when the page changed the way it was predicted to; a wrong prediction fails and reports what did happen |
 | `src/vault.js` profile vault | done — values stay on the device, `availableLabels()` is the only export, and passwords/OTPs/CVV are refused for storage outright |
 | `src/privacy.js` snapshot redaction | done — plus `findLeaks()`, run against a page full of real values **and** a positive control proving the check would catch one |
+| `src/runner.js` task loop | done for control flow — budgets, gate pausing, and halting on a failed step are tested with a stubbed planner; **no planner is wired to it yet** |
 | `manifest.json`, `background.js`, `popup.html` | loads and runs; popup reports real counts |
 | voice in / speech out | not written |
-| task runner, `POST /api/extension/step` | not written |
+| `POST /api/extension/step`, real planner, recipes | not written |
 
 Plan: `docs/superpowers/plans/2026-10-21-plan-b-extension.md`. Design:
 `docs/superpowers/specs/2026-10-21-adaptiveai-real-user-extension-design.md`.
@@ -60,12 +61,12 @@ globally, and tested against NVDA rather than assumed.
 python -m pytest extension/test -p no:warnings
 ```
 
-All suites drive a **real Chromium** (72 tests): `test_ax.py` name/role/state
+All suites drive a **real Chromium** (81 tests): `test_ax.py` name/role/state
 computation, `test_actor.py` actions and their readbacks, `test_gate.py` what gets
 stopped (and what must not be), `test_watch.py` change verification,
-`test_vault_privacy.py` profile storage and redaction, and
-`test_extension_loads.py` for Chrome accepting the unpacked extension and driving an
-action from the service worker through to the page.
+`test_vault_privacy.py` profile storage and redaction, `test_runner.py` the task
+loop's control flow, and `test_extension_loads.py` for Chrome accepting the unpacked
+extension and driving an action from the service worker through to the page.
 `test_ax.py` includes a differential test that compares every accessible name this
 module produces against Chrome's own accessibility tree via CDP — Chrome is the
 engine NVDA reads, so where the two disagree, this module is wrong.
