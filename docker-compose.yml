@@ -170,6 +170,13 @@ services:
       # bundle. Vision requests go through the backend proxy (POST /v1/chat/completions),
       # which authenticates with NIM_API_KEY from backend/.env server-side.
     command: npm run dev -- --host 0.0.0.0 --port 5173
+    volumes:
+      # Same dev-loop affordance the backend already has: without it the
+      # container serves a build-time COPY of src/, so a frontend edit is
+      # invisible until the image is rebuilt and a UI proof can silently test
+      # the old bundle.
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
     healthcheck:
       # 127.0.0.1, not localhost: Vite binds 0.0.0.0 (IPv4 only) while
       # busybox wget resolves "localhost" to ::1 and reports connection refused.

@@ -19,6 +19,18 @@ else
   services=("$@")
 fi
 
+# Preflight: a dead Docker Desktop is an ENVIRONMENT failure, not a test failure.
+# Without this, every `docker compose exec` below returns "failed to connect to
+# the docker API", the suites all report exit 1, and a crashed daemon is
+# indistinguishable from broken code - the exact ambiguity this pass exists to
+# remove. Exit 2 means "verify nothing, fix the daemon".
+if ! docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
+  echo "verify.sh: cannot reach the Docker daemon." >&2
+  echo "  Start Docker Desktop and wait for it to report running, then re-run." >&2
+  echo "  Nothing below was tested; exit 2 means NOT VERIFIED, not FAILED." >&2
+  exit 2
+fi
+
 rc=0
 for svc in "${services[@]}"; do
   case "$svc" in
