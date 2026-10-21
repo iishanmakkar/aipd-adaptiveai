@@ -241,6 +241,7 @@ async def _handle_browser_intent(db, session, current_user, session_uuid, reques
                         + " Reply 'yes, open it' to proceed, or 'cancel'."),
                 agent_used="browser_agent", suggested_action="confirm_navigate",
                 sources_used=[], confidence=intent_result.confidence,
+                confidence_source=intent_result.confidence_source,
                 intent_label=intent_result.intent,
                 reasoning="sensitive domain held for confirmation",
                 message_count=message_count)
@@ -266,6 +267,7 @@ async def _handle_browser_intent(db, session, current_user, session_uuid, reques
             answer=_compose_inspect_answer(data, target),
             agent_used="browser_agent", suggested_action="none",
             sources_used=[], confidence=intent_result.confidence,
+            confidence_source=intent_result.confidence_source,
             intent_label="browser_inspect",
             reasoning=intent_result.reasoning,
             message_count=message_count,
@@ -1046,6 +1048,7 @@ def _demote_browser_intent(intent_result, page_present: bool):
             extracted_entity=intent_result.extracted_entity,
             reasoning=intent_result.reasoning + " [demoted: no live page open]",
             confidence=intent_result.confidence,
+            confidence_source=intent_result.confidence_source,
             ambiguous=intent_result.ambiguous,
         ), True)
     return intent_result, False
@@ -1063,7 +1066,8 @@ async def _finish_turn(db: AsyncSession, session, current_user, session_uuid: UU
                        answer: str, agent_used: str, suggested_action: str | None,
                        sources_used: list, confidence: float,
                        intent_label: str, reasoning: str,
-                       message_count: int) -> QueryResponse:
+                       message_count: int,
+                       confidence_source: str = "unknown") -> QueryResponse:
     """Shared tail: policy rewrite, persist both messages, respond."""
     if agent_used == "clarifier":
         # ponytail: fixed string needs no NIM rewrite or tip append
@@ -1127,6 +1131,7 @@ async def _finish_turn(db: AsyncSession, session, current_user, session_uuid: UU
         agent_used=agent_used,
         suggested_action=suggested_action,
         confidence=confidence,
+        confidence_source=confidence_source,
         sources_used=sources_used,
     )
 
@@ -1240,6 +1245,7 @@ async def process_query(
             suggested_action="none",
             sources_used=[],
             confidence=intent_result.confidence,
+            confidence_source=intent_result.confidence_source,
             intent_label=intent_result.intent,
             reasoning=f"{intent_result.reasoning} [limitation: no live page]",
             message_count=len(recent_messages) + 1,
@@ -1265,6 +1271,7 @@ async def process_query(
             suggested_action="clarify",
             sources_used=[],
             confidence=intent_result.confidence,
+            confidence_source=intent_result.confidence_source,
             intent_label=intent_result.intent,
             reasoning=f"{intent_result.reasoning} [clarifying: confidence {intent_result.confidence:.2f} below threshold]",
             message_count=len(recent_messages) + 1,
@@ -1318,6 +1325,7 @@ async def process_query(
         suggested_action=agent_result.suggested_action,
         sources_used=agent_result.sources_used,
         confidence=intent_result.confidence,
+        confidence_source=intent_result.confidence_source,
         intent_label=intent_result.intent,
         reasoning=_reasoning,
         message_count=len(recent_messages) + 1,
@@ -1374,6 +1382,7 @@ async def process_query_demo(http_request: Request, request: QueryRequest):
             agent_used="limitation",
             suggested_action="none",
             confidence=intent_result.confidence,
+            confidence_source=intent_result.confidence_source,
             sources_used=[],
         )
 
@@ -1417,5 +1426,6 @@ async def process_query_demo(http_request: Request, request: QueryRequest):
         agent_used=intent_result.target_agent,
         suggested_action=agent_result.suggested_action,
         confidence=intent_result.confidence,
+        confidence_source=intent_result.confidence_source,
         sources_used=agent_result.sources_used,
     )

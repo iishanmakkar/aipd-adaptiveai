@@ -25,6 +25,8 @@ export interface QueryResponse {
   agent_used: string;
   suggested_action: string | null;
   confidence: number;
+  // 'llm' | 'keyword' | 'default' | 'unknown' - who produced the confidence.
+  confidence_source?: string;
   /** Knowledge-base ids that grounded this answer (RAG sources). */
   sources_used?: string[];
 }

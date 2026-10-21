@@ -12,6 +12,7 @@ from app.schemas import ClassifyRequest, ClassifyResponse
 from app.classifier import (
     llm_classify,
     keyword_classify,
+    keyword_confidence_source,
     get_session_history,
     add_to_history,
     clear_session,
@@ -189,6 +190,7 @@ async def classify_intent(http_request: Request, request: ClassifyRequest):
             extracted_entity=entity,
             reasoning=f"LLM failed: {str(e)[:80]}, using keyword fallback: {reasoning}",
             confidence=confidence,
+            confidence_source=keyword_confidence_source(confidence),
             # Same contract as the in-classifier fallback: a no-match default
             # (0.3) is ambiguous, so the backend clarifies instead of guessing.
             ambiguous=(confidence <= 0.3),

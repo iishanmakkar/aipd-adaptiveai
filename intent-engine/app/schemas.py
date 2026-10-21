@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Literal
 
 
 class ClassifyRequest(BaseModel):
@@ -22,3 +22,9 @@ class ClassifyResponse(BaseModel):
     # The backend asks one clarifying question instead of guessing. LLM
     # self-reported confidence is useless for this — it says 0.9 on gibberish.
     ambiguous: bool = False
+    # WHO produced the number above. "llm" is the model's self-assessment;
+    # "keyword" is the fallback's match-strength formula; "default" is the
+    # no-match 0.3. A heuristic 0.9 and a model's 0.9 are not the same kind of
+    # claim, and the caller cannot tell them apart from the float alone. Set by
+    # the code that knows which path ran - never taken from model output.
+    confidence_source: Literal["llm", "keyword", "default"] = "llm"

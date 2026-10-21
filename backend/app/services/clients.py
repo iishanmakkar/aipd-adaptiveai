@@ -5,7 +5,8 @@ from app.schemas.query import QueryRequest
 
 class IntentResponse:
     def __init__(self, intent: str, target_agent: str, extracted_entity: str, reasoning: str,
-                 confidence: float = 0.5, ambiguous: bool = False):
+                 confidence: float = 0.5, ambiguous: bool = False,
+                 confidence_source: str = "unknown"):
         self.intent = intent
         self.target_agent = target_agent
         self.extracted_entity = extracted_entity
@@ -13,6 +14,10 @@ class IntentResponse:
         # Classifier-reported certainty (LLM self-assessment or keyword-match
         # strength). The API used to send a hardcoded 0.85 for every answer.
         self.confidence = confidence
+        # Who produced that number: "llm", "keyword" or "default". Unknown here
+        # means the intent service predates the field or omitted it - reported
+        # as unknown rather than quietly assumed to be a model judgment.
+        self.confidence_source = confidence_source
         # The classifier's own judgment that the input is not an actionable
         # request. LLM self-confidence is useless here (it reports 0.9 on
         # gibberish), so ambiguity travels as its own field.
@@ -159,6 +164,7 @@ async def classify_intent(
             extracted_entity=data.get("extracted_entity", ""),
             reasoning=data.get("reasoning", ""),
             confidence=data.get("confidence", 0.5) or 0.5,
+            confidence_source=data.get("confidence_source", "unknown"),
             ambiguous=bool(data.get("ambiguous", False)),
         )
 

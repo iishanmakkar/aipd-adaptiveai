@@ -50,6 +50,12 @@ class QueryResponse(BaseModel):
     agent_used: str
     suggested_action: str | None = None
     confidence: float = Field(ge=0.0, le=1.0)
+    # Who produced the confidence above: "llm" (model self-assessment),
+    # "keyword" (fallback match-strength formula), "default" (no-match 0.3) or
+    # "unknown" (a path that has not been wired to declare it). A heuristic 0.9
+    # and a model's 0.9 are different claims; the float alone cannot tell them
+    # apart, and the UI quotes this number to users.
+    confidence_source: str = "unknown"
     # Knowledge-base documents that grounded this answer (from the RAG layer),
     # surfaced so the UI can show *why* an answer can be trusted.
     sources_used: list[str] = []

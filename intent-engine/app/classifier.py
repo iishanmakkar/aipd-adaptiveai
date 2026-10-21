@@ -111,6 +111,18 @@ KEYWORD_RULES = [
 ]
 
 
+# The keyword classifier's no-match score. Every scored match is 0.4 or higher
+# (0.4 base + 0.1 per hit), so this value uniquely identifies "nothing matched" -
+# which the backend already treats as ambiguous, and which now gets labelled
+# "default" rather than passing as a measured confidence.
+NO_MATCH_CONFIDENCE = 0.3
+
+
+def keyword_confidence_source(confidence: float) -> str:
+    """Provenance for a confidence produced by keyword scoring."""
+    return "default" if confidence <= NO_MATCH_CONFIDENCE else "keyword"
+
+
 def keyword_classify(text: str, screen_context: str = "") -> Tuple[str, str, str, float, str]:
     """
     Keyword-based classification fallback (used when the LLM is unreachable).
@@ -172,7 +184,8 @@ def keyword_classify(text: str, screen_context: str = "") -> Tuple[str, str, str
     if best_rule is None:
         # Nothing matched: this is a low-confidence default, and saying so is
         # more useful to the caller than pretending certainty.
-        return "general_query", "general_agent", "general question", 0.3, "No specific intent keywords matched, defaulting to general query"
+        return ("general_query", "general_agent", "general question", NO_MATCH_CONFIDENCE,
+                "No specific intent keywords matched, defaulting to general query")
 
     intent, agent, entity_hint = best_rule
 
@@ -336,6 +349,11 @@ Classify this request."""
 
         payload = {**result, "confidence": confidence}
         payload["ambiguous"] = bool(result.get("ambiguous", False))
+        # Set here rather than inherited: this ran the model, so it is a model
+        # judgment. A response body that included its own "confidence_source"
+        # must not be able to relabel itself as a keyword match, or a fallback
+        # claim as a model score.
+        payload["confidence_source"] = "llm"
         return ClassifyResponse(**payload)
 
     except Exception as e:
@@ -350,9 +368,10 @@ Classify this request."""
             extracted_entity=entity,
             reasoning=reasoning,
             confidence=confidence,
+            confidence_source=keyword_confidence_source(confidence),
             # 0.3 is the keyword classifier's explicit no-match default: the
             # only score low enough to mean "nothing actionable was found".
-            ambiguous=confidence <= 0.3,
+            ambiguous=confidence <= NO_MATCH_CONFIDENCE,
         )
 
 

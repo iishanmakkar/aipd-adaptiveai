@@ -63,8 +63,23 @@ export function MessageBubble({ message, onReplay }: MessageBubbleProps) {
         )}
 
         {!isUser && message.confidence !== undefined && (
-          <span className="confidence-badge" aria-label={`Confidence ${Math.round(message.confidence * 100)}%`}>
+          // The percentage alone implied a model judged it. When the number came
+          // from the keyword fallback, say so - a 70% guess and a 70% judgment
+          // are not the same claim, and a user who cannot see the badge only
+          // gets what this label tells them.
+          <span
+            className="confidence-badge"
+            aria-label={`Confidence ${Math.round(message.confidence * 100)}%${
+              message.confidence_source === 'keyword'
+                ? ', estimated by keyword match, not judged by the model'
+                : message.confidence_source === 'default'
+                  ? ', nothing matched, treated as uncertain'
+                  : ''
+            }`}
+          >
             {Math.round(message.confidence * 100)}%
+            {message.confidence_source === 'keyword' ? ' (keyword match)' : ''}
+            {message.confidence_source === 'default' ? ' (no match)' : ''}
           </span>
         )}
 
