@@ -1,0 +1,20 @@
+{
+  "site": "mdn",
+  "url": "https://developer.mozilla.org/en-US/",
+  "loaded_extension": true,
+  "ms_to_first_snapshot": 5373,
+  "final_url": "https://developer.mozilla.org/en-US/",
+  "snapshot_ms": 11,
+  "dom_elements": 730,
+  "stats": {
+    "total": 108,
+    "interactive": 91,
+    "unnamedControls": 4,
+    "missingAlt": 0,
+    "hiddenSkipped": 107
+  },
+  "title": "MDN Web Docs",
+  "nodes_total": 108,
+  "gate_would_stop": [],
+  "blocked": null
+}

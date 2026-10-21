@@ -1,0 +1,4 @@
+# Extension test dependencies. Pinned to the same versions the services already
+# use in CI, so one resolver shape serves the whole repo.
+playwright==1.62.0
+pytest==8.4.2

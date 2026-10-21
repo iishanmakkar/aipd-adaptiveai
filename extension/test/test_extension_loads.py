@@ -151,8 +151,14 @@ def _wait_service_worker(ctx, timeout_s=20):
     return None
 
 
-def test_service_worker_registers(loaded_extension):
-    sw = _wait_service_worker(loaded_extension)
+def test_service_worker_registers(loaded_extension, site):
+    """An MV3 worker starts on an event, not on install. Opening a page makes the
+    content script announce itself, which is both what wakes the worker and what
+    the task runner will rely on to know which tabs are live."""
+    page = loaded_extension.new_page()
+    page.goto(site, wait_until="load")
+    sw = _wait_service_worker(loaded_extension, timeout_s=45)
+    page.close()
     assert sw is not None, (
         "Chrome never registered src/background.js - the manifest or the worker "
         "is invalid, so nothing downstream can work")

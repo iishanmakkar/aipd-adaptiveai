@@ -140,6 +140,10 @@
         sendResponse(snap);
         return false;
       }
+      if (message.type === 'adaptiveai:audit') {
+        sendResponse(audit());
+        return false;
+      }
       if (message.type === 'adaptiveai:act') {
         // A click with an expectation resolves only when the page has reacted, so
         // the channel stays open; returning false here would drop the reply.
@@ -158,18 +162,72 @@
     lastTakenAt = 0;
   }
 
+  function audit() {
+    // The page's main world cannot see anything here (content scripts run in an
+    // isolated world), so a probe of the extension has to ask it, the way the
+    // service worker does. Returns structure only - never field values.
+    var t0 = (globalThis.performance && globalThis.performance.now)
+      ? globalThis.performance.now() : Date.now();
+    var snap = snapshot(true);
+    var t1 = (globalThis.performance && globalThis.performance.now)
+      ? globalThis.performance.now() : Date.now();
+    var PRIV = globalThis.AdaptiveAIPrivacy;
+    var GATE = globalThis.AdaptiveAIGate;
+    var gated = [];
+    if (GATE) {
+      var ctx = gateContext();
+      for (var i = 0; i < snap.nodes.length; i++) {
+        var n = snap.nodes[i];
+        if (!n.interactive) continue;
+        var v = GATE.classify(n, ctx);
+        if (v.gated) {
+          gated.push({ name: v.name, why: v.reason, amount: v.amount });
+        }
+      }
+    }
+    return {
+      snapshotMs: Math.round(t1 - t0),
+      domElements: document.querySelectorAll('*').length,
+      stats: snap.stats,
+      url: snap.url,
+      title: snap.title,
+      redacted: PRIV ? PRIV.redactSnapshot(snap).nodes : null,
+      gated: gated,
+    };
+  }
+
   globalThis.__adaptiveai = {
     snapshot: snapshot,
     refresh: refresh,
     act: runAction,
+    audit: audit,
     // A page that changes under the assistant must not be navigated by an old
     // tree, so the loop needs a cheap way to say "forget the cache".
     invalidate: invalidate,
   };
 
+  // Tell the worker this tab exists. It also wakes the service worker: an MV3
+  // worker started lazily meant a cold profile could sit past any fixed timeout
+  // before registering, so "wait for the worker" becomes "be the thing that
+  // starts it" - which the task runner needs to know about anyway.
+  function announceTab() {
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) return;
+    try {
+      var p = chrome.runtime.sendMessage({
+        type: 'adaptiveai:tab-ready', url: document.location.href,
+      });
+      // No listener yet rejects the promise; an unread rejection is noise.
+      if (p && typeof p.catch === 'function') p.catch(function () {});
+    } catch (e) { /* no runtime in this context; the page hook still works */ }
+  }
+
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     refresh();
+    announceTab();
   } else {
-    document.addEventListener('DOMContentLoaded', refresh, { once: true });
+    document.addEventListener('DOMContentLoaded', function () {
+      refresh();
+      announceTab();
+    }, { once: true });
   }
 })();

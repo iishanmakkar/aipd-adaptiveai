@@ -1,0 +1,31 @@
+{
+  "site": "railyatri",
+  "url": "https://www.railyatri.in/",
+  "loaded_extension": true,
+  "ms_to_first_snapshot": 20777,
+  "final_url": "https://www.railyatri.in/",
+  "snapshot_ms": 15,
+  "dom_elements": 749,
+  "stats": {
+    "total": 207,
+    "interactive": 100,
+    "unnamedControls": 15,
+    "missingAlt": 3,
+    "hiddenSkipped": 12
+  },
+  "title": "IRCTC Train Ticket Booking, Live Status, Seat Availability & more - RailYatri",
+  "nodes_total": 207,
+  "gate_would_stop": [
+    {
+      "name": "Book Train Tickets",
+      "why": "it reserves and usually charges",
+      "amount": null
+    },
+    {
+      "name": "Book Bus Tickets",
+      "why": "it reserves and usually charges",
+      "amount": null
+    }
+  ],
+  "blocked": null
+}

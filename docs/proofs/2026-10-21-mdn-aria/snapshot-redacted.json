@@ -1,0 +1,20 @@
+{
+  "site": "mdn-aria",
+  "url": "https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA",
+  "loaded_extension": true,
+  "ms_to_first_snapshot": 5554,
+  "final_url": "https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA",
+  "snapshot_ms": 25,
+  "dom_elements": 1151,
+  "stats": {
+    "total": 296,
+    "interactive": 279,
+    "unnamedControls": 161,
+    "missingAlt": 0,
+    "hiddenSkipped": 107
+  },
+  "title": "ARIA - Accessibility | MDN",
+  "nodes_total": 296,
+  "gate_would_stop": [],
+  "blocked": null
+}

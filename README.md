@@ -371,7 +371,25 @@ Live proofs: §2 table + §2C (each row is a command
   it structurally cannot act on an authenticated site. That is the reason for the
   extension design, and §7.1 of the spec states per platform how far it will get and
   which walls (CAPTCHA, OTP, payment frames) stay with the user.
+- **The extension exists and can see real sites; it cannot yet act on their behalf.**
+  `extension/` is a working MV3 extension: accessible-name perception differential-tested
+  against Chrome's own AX tree, an actor that only reports success with a readback, a
+  spending gate enforced in the content script, change verification, a local profile
+  vault, and a task loop with budgets and halt-on-failure — 81 tests in real Chromium,
+  and a live-site proof (`docs/proofs/README.md`) that read 207 nodes on railyatri.in
+  in 15 ms and independently flagged "Book Train Tickets" as gated. What is missing is
+  the reason to install it: no voice input, no planner wired to the runner, no
+  `POST /api/extension/step`, so **no task can be completed end to end yet**.
+- **The booking vendors cannot be reached from an automated browser.** Measured
+  2026-10-21: BookMyShow served a Cloudflare challenge, IRCTC failed the HTTP/2
+  handshake, Swiggy returned an error status, and Wikipedia served an error page.
+  That is not a bug to route around — it is the evidence that a server-side bot could
+  never have done this honestly, and the reason the extension operates the user's own
+  logged-in session instead. Per §3 of the spec there is no CAPTCHA solving, no
+  credential storage and no payment automation here, so a fully hands-free IRCTC or
+  BookMyShow booking is out of reach by design, not by omission.
 - **Verification is currently partial.** `docs/verification-baseline.md` records 472
+
   passing tests measured on 2026-10-21 at Task 1 of the truth pass. Tests added since
   for `backend`, `agents` and `intent-engine` are **not re-verified** — this host's
   Docker Desktop died repeatedly during that session, and those suites only run in

@@ -1,0 +1,20 @@
+{
+  "site": "hackernews",
+  "url": "https://news.ycombinator.com/",
+  "loaded_extension": true,
+  "ms_to_first_snapshot": 6076,
+  "final_url": "https://news.ycombinator.com/",
+  "snapshot_ms": 22,
+  "dom_elements": 821,
+  "stats": {
+    "total": 233,
+    "interactive": 231,
+    "unnamedControls": 32,
+    "missingAlt": 2,
+    "hiddenSkipped": 0
+  },
+  "title": "Hacker News",
+  "nodes_total": 233,
+  "gate_would_stop": [],
+  "blocked": null
+}

@@ -13,7 +13,15 @@ chrome.runtime.onInstalled.addListener(function (details) {
 
 // Ask the active tab's content script for its accessibility snapshot.
 chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
-  if (!message || message.type !== 'adaptiveai:get-page-snapshot') return false;
+  if (!message) return false;
+  if (message.type === 'adaptiveai:tab-ready') {
+    // A tab announcing itself is also what wakes this worker on a cold profile.
+    // Recorded so the task runner knows which tabs are live without asking for
+    // the "tabs" permission (which would expose every URL the user visits).
+    sendResponse({ ok: true });
+    return false;
+  }
+  if (message.type !== 'adaptiveai:get-page-snapshot') return false;
   chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
     var tab = tabs && tabs[0];
     if (!tab || !tab.id) {

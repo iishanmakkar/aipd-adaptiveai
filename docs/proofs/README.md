@@ -15,22 +15,70 @@ already asserted and exited non-zero; they were left alone.
 | `r9_chat_loop_proof.py` | monitoring and chat share one context; stop spends nothing more | yes (11 assertions, added 2026-10-21) |
 | `r9_any_site_fill_proof.py` | guided slot-fill generalises across two different layouts | yes (5 assertions, added 2026-10-21) |
 | `tts_proof.py` (frontend/) | muted speech enqueues nothing; audible speech reaches `speechSynthesis` | yes (both directions required) |
+| `extension_live_site_proof.py` | the loaded extension sees and classifies real production pages, and the gate fires on real booking controls | yes (exit 3 = nothing proven, kept distinct from a failure) |
 
 ## What these scripts are NOT evidence about
 
-**No real vendor site is contacted by any of them.** The targets are this repository's
-own pages - `demo/book-tickets.html`, `demo/book-tickets-monitored.html`,
-`demo/gov-form-demo.html`, `demo/monitor-stress.html` - served by the `demo-forms`
-container. They prove the pipeline acts on a real Chromium DOM with real labels, real
-validation errors and real readbacks. They do **not** prove booking on BookMyShow,
-IRCTC, Swiggy or any other service, and none of those names appears anywhere in this
-repository. Operating a real site is the browser extension's job
-(`docs/superpowers/specs/2026-10-21-adaptiveai-real-user-extension-design.md` §7).
+**Except `extension_live_site_proof.py`, no script here contacts a real vendor
+site** - and that one only looks: nothing is clicked, filled, submitted or paid on
+a live site by anything in this repository.
+
+The other scripts target this repository's own pages - `demo/book-tickets.html`,
+`demo/book-tickets-monitored.html`, `demo/gov-form-demo.html`,
+`demo/monitor-stress.html` - served by the `demo-forms` container. They prove the
+pipeline acts on a real Chromium DOM with real labels, real validation errors and
+real readbacks. They do **not** prove booking on BookMyShow, IRCTC or Swiggy.
+
+`extension_live_site_proof.py` is the one place a real site is read, and what it
+proves is perception and gate identification on production markup - not a booking.
+Operating a real site end to end is the extension's job and is not yet possible:
+see the live-site table below for which vendors an automated browser can even reach.
 
 The demo pages' confirmation text now says so out loud, because it previously read
 "Booked 2 seats… Reference PNR101017" - indistinguishable from a completed purchase to
 someone who cannot see the "demo form" line above it. The reference number is a hash of
 the passenger's name.
+
+## Live-site perception proof
+
+`scripts/extension_live_site_proof.py` loads the unpacked extension into a real
+Chromium, visits actual production pages, and asks the extension itself what it can
+see. Nothing is clicked, filled or logged in to; artifacts are the **redacted**
+snapshot (structure, never values) plus a screenshot, under
+`docs/proofs/<date>-<site>/`.
+
+Measured 2026-10-21:
+
+| Site | Result | Nodes | Snapshot | Names agreeing with Chrome's own AX tree | Gate would stop |
+|---|---|---|---|---|---|
+| developer.mozilla.org | read | 108 | 9 ms | 69/70 (99%) | 0 |
+| MDN ARIA docs | read | 296 | 25 ms | 91/96 (95%) | 0 |
+| news.ycombinator.com | read | 233 | 22 ms | 129/157 (82%) | 0 |
+| **railyatri.in** (Indian train booking) | read | 207 | 15 ms | 136/150 (91%) | **2** — "Book Train Tickets", "Book Bus Tickets", reason "it reserves and usually charges" |
+| in.bookmyshow.com | **blocked** | — | — | — | — |
+| en.wikipedia.org | **error page** ("Wikimedia Error") | — | — | — | — |
+| irctc.co.in | **never loaded** (`ERR_HTTP2_PROTOCOL_ERROR`) | — | — | — | — |
+| swiggy.com | **never loaded** (`ERR_HTTP_RESPONSE_CODE_FAILURE`) | — | — | — | — |
+
+Two things this table has to be read as saying, and not more than that:
+
+1. **The perception layer works on real, complex, unauthored markup** - including a
+   live Indian ticketing site, where the gate independently identified the two
+   booking commitments by name and reason. That is the mechanism, measured.
+2. **The vendor sites cannot be reached from an automated browser at all.** That is
+   why the server-side design could never have booked a ticket honestly, and why
+   the extension runs in the user's own session. Reproducing these four rows needs
+   a real logged-in browser, which no script here can stand in for - and evading
+   the walls is refused by design (spec §3).
+
+The first run of this script **passed** against a 47-element Cloudflare interstitial,
+because it asserted on structure alone and a block page has perfectly good
+structure. It now detects challenge/error pages and reports them inconclusive
+(exit 3), and refuses to call a run a pass when no site served a real page.
+
+```bash
+python scripts/extension_live_site_proof.py            # exit 0 verified / 1 failed / 3 nothing proven
+```
 
 ## Running them
 
