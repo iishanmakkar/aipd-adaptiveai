@@ -21,10 +21,10 @@ class BrowserAgent:
             "vlm_analysis": VLMAnalysisTool(self.driver),
             "form_filling": FormFillingTool(self.driver),
         }
-        # Episodic memory: store successful workflows for replay
+        # Planning data only. A stored episode NEVER short-circuits execution:
+        # replay must not report a step it did not run (see execute_task).
         self.episodic_memory: List[Dict[str, Any]] = []
         self.max_memory_entries = 50
-        self.pattern_cache: Dict[str, Dict[str, Any]] = {}
         
     async def execute_task(self, intent: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """Execute a full task on a REAL browser (started here, stopped after)."""
@@ -45,18 +45,9 @@ class BrowserAgent:
                                     "tool": tool_name, "action": action})
                     continue
 
-                # Check pattern cache first
-                cache_key = f"{self.session_id}:{tool_name}:{action}"
-                if cache_key in self.pattern_cache:
-                    result = self.pattern_cache[cache_key].copy()
-                    result["cached"] = True
-                    results.append(result)
-                    continue
-
                 # Execute the tool (action is the first positional arg of every tool)
                 try:
                     result = await tool.execute(action, **args)
-                    result["cached"] = False
 
                     # Store in episodic memory if successful
                     if result.get("status") == "completed":
@@ -126,15 +117,7 @@ class BrowserAgent:
         self.episodic_memory.append(entry)
         if len(self.episodic_memory) > self.max_memory_entries:
             self.episodic_memory = self.episodic_memory[-self.max_memory_entries:]
-        
-        # Also cache for quick replay
-        cache_key = f"{self.session_id}:{tool_name}:{action}"
-        self.pattern_cache[cache_key] = {
-            "args": args,
-            "result": result,
-            "stored_at": datetime.utcnow().isoformat()
-        }
-    
+
     def _summarize_args(self, args: dict) -> str:
         """Summarize arguments for storage."""
         # Keep only non-sensitive keys
