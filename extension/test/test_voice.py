@@ -191,6 +191,42 @@ def test_the_audio_never_touches_storage(voice):
         assert sample.hex() not in values, f"upload {key} bytes appear in storage"
 
 
+def test_a_key_command_hears_a_goal_speaks_it_back_and_runs_it(voice):
+    """The whole hands-free loop, driven the way a keyboard shortcut drives it."""
+    reply = voice["sw"].evaluate("() => handleCommand('listen')")
+    assert reply["ok"] is True, reply
+    assert reply["text"] == "book two tickets", reply
+    assert reply["result"]["status"] == "completed", reply["result"]
+    log = voice["sw"].evaluate("() => speechLog()")
+    said = [a["text"] for a in log["attempts"]]
+    assert any(t.startswith("You said: book two tickets") for t in said), said
+
+
+def test_stop_talking_is_a_command_not_a_mystery(voice):
+    reply = voice["sw"].evaluate("() => handleCommand('stop-talking')")
+    assert reply["ok"] is True, reply
+
+
+def test_an_unknown_command_is_refused(voice):
+    reply = voice["sw"].evaluate("() => handleCommand('self-destruct')")
+    assert reply["ok"] is False and "unknown" in reply["reason"], reply
+
+
+def test_the_manifest_and_the_worker_agree_on_command_names():
+    """A command the worker does not handle is a key that does nothing, and a name
+    in only one of the two files is invisible to every test that drives the other."""
+    manifest = json.load(open(os.path.join(EXT_DIR, "manifest.json"), encoding="utf-8"))
+    source = open(os.path.join(EXT_DIR, "src", "background.js"), encoding="utf-8").read()
+    declared = sorted(manifest["commands"].keys())
+    assert declared == sorted(["listen", "stop-talking"]), declared
+    for name in declared:
+        assert "'%s'" % name in source, "manifest declares %r, worker never handles it" % name
+    # No default shortcut: Chrome refuses to install the extension when a
+    # Ctrl+Alt+* default is claimed (measured - see README).
+    for name, spec in manifest["commands"].items():
+        assert "suggested_key" not in spec, "%s would block installation" % name
+
+
 def test_the_worker_never_logs_the_transcript_of_a_privacy_field(voice):
     """The transcript becomes the *goal*, which is then sent to the planner as
     `goal`. That is by design - the user asked for it - but the transcript of

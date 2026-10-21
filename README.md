@@ -24,7 +24,7 @@ regardless). Those are fixed and locked by tests - see
 `docs/superpowers/specs/2026-10-21-adaptiveai-real-user-extension-design.md` §8 and
 `docs/proofs/README.md`. The suite baseline is measured, not asserted:
 `docs/verification-baseline.md`. The suite baseline is measured, not asserted:
-**664 passed / 1 skipped / 3 deselected** as of 2026-10-21, produced on this
+**668 passed / 1 skipped / 3 deselected** as of 2026-10-21, produced on this
 machine by `bash scripts/verify-host.sh` (and 472 in the containers, against the
 pinned dependency set, by `bash scripts/verify.sh`).
 
@@ -341,15 +341,16 @@ bash scripts/verify-host.sh intent-engine   # 134 passed, 2 deselected - keyword
                                        #   confidence provenance
 bash scripts/verify-host.sh browser-agent   # 62 passed - sessions, monitor gating/ceiling/consent,
                                        #   driver guards
-bash scripts/verify-host.sh extension       # 118 passed - every suite drives a real Chromium, incl.
-                                       #   the whole typed-goal loop and the microphone capture
+bash scripts/verify-host.sh extension       # 122 passed - every suite drives a real Chromium, incl.
+                                       #   the typed-goal loop end to end, the microphone
+                                       #   capture, and a key command that runs the whole thing
 cd frontend; npm run build             # tsc strict + vite pass
 python frontend/a11y_audit.py http://localhost:5173   # keyboard + ARIA contract (needs the stack up)
 docker compose config --quiet          # 7 services parse (6 + redis shared store)
 ```
 
-Total: **664 passed, 1 skipped, 3 deselected** (backend 248 + agents 102 +
-intent-engine 134 + browser-agent 62 + extension 118). Both runners exit non-zero
+Total: **668 passed, 1 skipped, 3 deselected** (backend 248 + agents 102 +
+intent-engine 134 + browser-agent 62 + extension 122). Both runners exit non-zero
 when a suite fails *or collects zero tests* — the previous host-only instructions
 could not tell those two apart, and both the missing `pytest.ini` mount and the
 TTL bug in `docs/verification-baseline.md` were invisible for that reason.
@@ -393,9 +394,10 @@ Live proofs: §2 table + §2C (each row is a command
   spending gate enforced in the content script, change verification, a local profile
   vault, a planner client that sends structure and resolves values on the device, a
   task loop that halts on a failed step and pauses at the gate, speech out through an
-  offscreen document, and speech in through a real capture path — 118 tests in real
+  offscreen document, and speech in through a real capture path — 122 tests in real
   Chromium, including the whole loop driven through an extension Chrome actually
-  loaded, plus `scripts/stt_local_proof.py` (the operating system's own voice speaks a
+  loaded (voice command → transcript → plan → act → verify → spoken result), plus
+  `scripts/stt_local_proof.py` (the operating system's own voice speaks a
   sentence, `/api/transcribe` returns "book 2 tickets for the 7 p.m. show.") and
   `scripts/extension_step_live_proof.py`. A live-site perception proof
   (`docs/proofs/README.md`) read 207 nodes on railyatri.in in 15 ms and independently

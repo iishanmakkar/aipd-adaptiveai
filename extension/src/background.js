@@ -335,6 +335,55 @@ chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
   return false;
 });
 
+// ---- keyboard commands -----------------------------------------------------
+//
+// A blind user should not have to find and open a popup to use a voice assistant,
+// and should always be able to shut it up. `listen` captures one utterance, says it
+// back so the user hears what was understood, and runs it; `stop-talking` cuts the
+// current announcement.
+//
+// The command is called `listen`, not `hold-listen`: MV3 commands deliver no
+// key-release event, so "hold to speak" cannot be implemented, and shipping a
+// name that promises it is a lie in the keyboard-shortcuts page. The take ends
+// after its ceiling or when silence is captured, whichever comes first.
+async function handleCommand(name) {
+  if (name === 'stop-talking') {
+    AdaptiveAISpeech.stopListening();
+    return AdaptiveAISpeech.stop();
+  }
+  if (name !== 'listen') return { ok: false, reason: 'unknown command ' + name };
+  if (ACTIVE) return { ok: false, reason: 'I am already working on: ' + ACTIVE };
+  var heard = await transcribe(8000);
+  if (!heard.ok) {
+    await AdaptiveAISpeech.speak('I could not hear you. ' + heard.reason);
+    return heard;
+  }
+  // Spoken back before it is acted on: the one moment to notice that the wrong
+  // thing was understood is before anything has been pressed.
+  await AdaptiveAISpeech.speak('You said: ' + heard.text);
+  var run = await runTask(heard.text);
+  return { ok: run.ok, text: heard.text, result: run.result, reason: run.reason };
+}
+
+chrome.commands.onCommand.addListener(function (name) {
+  handleCommand(name).then(null, function (e) {
+    // A command that dies silently leaves the user with no idea whether anything
+    // happened, so the failure is spoken rather than logged.
+    AdaptiveAISpeech.speak('Something went wrong: ' + String(e).slice(0, 80));
+  });
+});
+
+chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
+  if (!message) return false;
+  if (message.type === 'adaptiveai:command') {
+    handleCommand(message.name).then(sendResponse, function (e) {
+      sendResponse({ ok: false, reason: String(e).slice(0, 160) });
+    });
+    return true;
+  }
+  return false;
+});
+
 chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
   if (!message) return false;
   if (message.type === 'adaptiveai:speech-log') {

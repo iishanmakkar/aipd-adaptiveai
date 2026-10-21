@@ -18,8 +18,8 @@
   },
 
   "commands": {
-    "hold-listen": {
-      "description": "Hold to speak, release to send"
+    "listen": {
+      "description": "Listen for one command, then act on it"
     },
     "stop-talking": {
       "description": "Stop the current announcement"

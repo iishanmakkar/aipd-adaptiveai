@@ -30,6 +30,7 @@ Do not demonstrate this as "books tickets on BookMyShow". It has never done that
 | `src/background.js` the loop itself | done — one run at a time, live snapshot per step, confirmation that treats silence as a no, run transcript readable afterwards |
 | `src/speech.js` + `offscreen.html` narration | done — the worker has no speech engine, so an offscreen document owns it; every announcement reports what the engine did, and a document that answers nothing is reported rather than assumed |
 | microphone in → transcript → goal | done — `getUserMedia` + `MediaRecorder` capture in the offscreen document, uploaded as a multipart `/api/transcribe` call, and the words land in the goal field. Verified in Chromium against a fake capture device (real encoded audio, 24 KB of opus for a 2.5 s take); **not** yet verified with a real microphone, a noisy room, or a spoken confirmation |
+| key commands | done — `listen` hears one utterance, says it back, and runs it; `stop-talking` cuts the announcement. **Shipped with no default key**, because a `Ctrl+Alt+*` default makes Chrome refuse to install the extension at all (measured, below): assign one at `chrome://extensions/shortcuts`. The name is `listen`, not `hold-listen` — MV3 delivers no key-release, so "hold to speak" would be a promise the platform cannot keep |
 | `options.html` + `src/options.js` | done — the one place details are entered, batched into a single write, delete needs two deliberate presses |
 | `popup.html` typed goal + Listen + transcript + yes/no | done — labelled input, live regions, what happened listed per step |
 | `extension/recipes/*.json`, verified-trace memory | not written — no site knowledge exists yet, so no platform is supported |
@@ -78,19 +79,19 @@ globally, and tested against NVDA rather than assumed.
 python -m pytest extension/test -p no:warnings
 ```
 
-All suites drive a **real Chromium** (118 tests): `test_ax.py` name/role/state
+All suites drive a **real Chromium** (122 tests): `test_ax.py` name/role/state
 computation, `test_actor.py` actions and their readbacks, `test_gate.py` what gets
 stopped (and what must not be), `test_watch.py` change verification,
 `test_vault_privacy.py` profile storage and redaction, `test_options.py` the setup
 page and what the worker reads back from it, `test_runner.py` the task loop's
 control flow, `test_planner.py` what the step client puts on the wire and what it
 does with a reply it did not choose, `test_voice.py` the microphone through a real
-capture device into a real multipart upload, `test_extension_loads.py` for Chrome
-accepting the unpacked extension, the worker's script actually having run, and the
-offscreen document answering its own health check, and `test_task_loop.py` for the
-whole loop: a typed goal in a loaded extension produces a verified DOM change, a
-refusal it cannot talk itself out of, and a narration the speech engine reported
-back.
+capture device into a real multipart upload plus the key command that drives the
+whole loop, `test_extension_loads.py` for Chrome accepting the unpacked extension,
+the worker's script actually having run, and the offscreen document answering its
+own health check, and `test_task_loop.py` for the whole loop: a typed goal in a
+loaded extension produces a verified DOM change, a refusal it cannot talk itself
+out of, and a narration the speech engine reported back.
 `test_ax.py` includes a differential test that compares every accessible name this
 module produces against Chrome's own accessibility tree via CDP — Chrome is the
 engine NVDA reads, so where the two disagree, this module is wrong.

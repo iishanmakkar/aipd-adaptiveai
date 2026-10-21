@@ -15,8 +15,8 @@ bash scripts/verify-host.sh backend
 | agents | **102 passed**, 1 deselected |
 | intent-engine | **134 passed**, 2 deselected |
 | browser-agent | **62 passed** |
-| extension (real Chromium) | **118 passed** |
-| **Python total** | **664 passed**, 1 skipped, 3 deselected |
+| extension (real Chromium) | **122 passed** |
+| **Python total** | **668 passed**, 1 skipped, 3 deselected |
 
 Interpreter: `Python 3.14.7` in `.venv`, created with `--system-site-packages`.
 
