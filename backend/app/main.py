@@ -17,6 +17,7 @@ from app.api.routes_auth import router as auth_router
 from app.api.routes_session import router as session_router
 from app.api.routes_query import router as query_router
 from app.api.routes_transcribe import router as transcribe_router
+from app.api.routes_extension_step import router as extension_step_router
 from app.api.routes_vlm import router as vlm_router
 from app.api.routes_preferences import router as preferences_router
 from app.api.routes_behavior import router as behavior_router
@@ -246,7 +247,11 @@ async def add_middleware_process_time(request: Request, call_next):
     # budget instead of the shared 200/min bucket. Authenticated callers keep
     # their per-user split here too (same NAT reason as the global bucket);
     # anonymous callers fall back to per-IP.
-    _HEAVY_BUDGETS = {"/api/form-fill": 10, "/api/page-context": 30}
+    _HEAVY_BUDGETS = {"/api/form-fill": 10, "/api/page-context": 30,
+                      # A task loop calls this once per step, so one spoken goal
+                      # is 10-30 requests in a minute. 40 leaves room for retries
+                      # and still caps what one client can spend in NIM calls.
+                      "/api/extension/step": 40}
     check_global = True
     # Normalize trailing slashes before budget lookup: "/api/form-fill/"
     # otherwise bypassed the heavy budget entirely (exact-match miss).
@@ -367,6 +372,7 @@ app.include_router(pagecontext_router)
 app.include_router(monitor_router)
 app.include_router(share_router)
 app.include_router(alt_router)
+app.include_router(extension_step_router)
 
 
 @app.get("/health")

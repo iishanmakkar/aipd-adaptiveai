@@ -150,6 +150,22 @@ is a defect to be fixed on sight.
    profile + verbosity). Output: `next_action(s)`, `narration`,
    `expected_change` predicate, `gate_required` bool. Reuses the intent engine,
    policy engine and NIM client unchanged.
+
+   *As built (`backend/app/api/routes_extension_step.py`,
+   `app/services/step_planner.py`), three deviations from this paragraph:*
+   **(a)** there is **no `gate_required` in the response**. The only authority is
+   the local regex predicate in `extension/src/gate.js`; a second implementation in
+   Python — even one labelled advisory — gives a blind user two answers to "is this
+   irreversible", and the one they cannot override would be the copy. **(b)** the
+   intent engine is not on this path: a per-step action choice is not a
+   13-intent classification, and routing it through `classify_intent` would report
+   a keyword-matched intent as if it were the plan. The NIM client pattern is
+   reused (same `base_url`/`model`, its own 20 s `step_timeout_seconds`), and
+   `verbosity` arrives on the request as the field the device already reads from
+   the policy engine rather than being re-derived server-side. **(c)** requests are
+   refused, not sanitised: every model is `extra="forbid"`, so a client that posts
+   `value`, `selector`, `identity` or `bounds` gets a 422 that names the field —
+   quietly dropping a value that arrived is still a value that left the device.
 2. **`browser-agent` is demoted, not deleted.** It keeps a real job: page preview
    and Round 9 monitoring for a user who cannot authenticate, where a server-side
    browser is honest. It stops being presented as the thing that books tickets.

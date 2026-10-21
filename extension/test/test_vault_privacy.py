@@ -200,6 +200,41 @@ def test_redacted_snapshot_keeps_shape_and_drops_content(page):
     assert named["Password"]["sensitive"] is True
 
 
+def test_an_unlabeled_textbox_does_not_arrive_named_by_what_was_typed(page):
+    """The boundary that matters for a blind user on a real booking form: the
+    passenger field they just filled has no label at all, so an accessible-name
+    implementation that borrowed names from values would ship the value to the
+    planner inside the `name` field, past every `value`-dropping check.
+
+    `ax.js` follows AccName instead: a textbox gets no name from its own value and
+    is recorded as `value-only` with an empty name. This test pins that, because
+    redaction has nothing to withhold once the name is already right - and because
+    the `<input type=submit>` case below shows the same field must NOT be stripped.
+    """
+    page.set_content(
+        "<!doctype html><html><body>"
+        "<input id='u' value='asha@example.com'>"
+        "<input id='s' type='submit' value='Pay ₹640'>"
+        "</body></html>")
+    both = json.loads(json.dumps(page.evaluate(
+        """() => {
+            const snap = AdaptiveAIAX.computeSnapshot(document);
+            return { raw: snap, redacted: AdaptiveAIPrivacy.redactSnapshot(snap) };
+        }""")))
+    box = next(n for n in both["redacted"]["nodes"] if n["ref"] == "u"
+               or (n.get("nameSource") == "value-only"))
+    assert box["name"] == "", box
+    assert box["nameSource"] == "value-only"
+    assert box["hasValue"] is True, "the planner still needs to know it is filled"
+    assert "asha@example.com" not in json.dumps(both["redacted"])
+    # For a submit button the value IS the caption. Stripping every value-derived
+    # name would blind the gate to "Pay ₹640" and cost the user the confirmation
+    # question that protects them.
+    pay = next(n for n in both["redacted"]["nodes"]
+               if n.get("nameSource") == "input-value")
+    assert pay["name"] == "Pay ₹640" and pay["role"] == "button"
+
+
 def test_internal_option_codes_are_not_sent(page):
     both = build_snapshots(page)
     sel = next(n for n in both["redacted"]["nodes"] if n["role"] == "combobox")

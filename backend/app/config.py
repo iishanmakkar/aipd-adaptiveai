@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     intent_timeout_seconds: float = 45.0
     agent_timeout_seconds: float = 90.0
     rewrite_timeout_seconds: float = 30.0
+    # /api/extension/step is called once per step of a task, so it is judged by
+    # how long a user will wait mid-action rather than by the frontend's 180s
+    # request budget. 20s is already long for "what do I tap next"; past it the
+    # extension is better off reporting no plan than making the user wait.
+    step_timeout_seconds: float = 20.0
 
     # Frontend CORS
     frontend_url: str = "http://localhost:3000"

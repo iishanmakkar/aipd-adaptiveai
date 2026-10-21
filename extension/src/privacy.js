@@ -24,6 +24,12 @@
     // Keep the fact that something was entered without keeping what was entered:
     // the planner needs "this field is already filled" to decide what to ask next.
     out.hasValue = !!node.hasValue;
+    // An unlabeled textbox would otherwise arrive named by whatever the user
+    // typed into it. `ax.js` already refuses to do that - AccName gives a textbox
+    // no name from its own value, and `describe()` records `value-only` with an
+    // empty name - so there is nothing to withhold here. The case is pinned by
+    // test_vault_privacy, because the day that changes is the day this file has
+    // to start stripping names.
     if (node.options) {
       out.options = node.options.map(function (o) { return { text: o.text }; });
     }
