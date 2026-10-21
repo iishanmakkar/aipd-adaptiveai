@@ -4,10 +4,11 @@
 
 What exists: a real accessibility snapshot (accessible names computed the way the
 browser computes them), an actor that fills, selects, clicks and focuses **only
-with a readback that proves it landed**, and a message surface a service worker can
-drive — all verified end-to-end in real Chromium. What does not exist is the reason
-a user would install it: **no voice input, no planner, no spending gate, no backend
-call.** Ask it for a task and nothing happens. Do not demonstrate this as an
+with a readback that proves it landed**, a spending gate enforced in the content
+script itself, and a message surface a service worker can drive — all verified
+end-to-end in real Chromium. What does not exist is the reason a user would install
+it: **no voice input, no planner, no backend call, and nothing that decides the next
+step.** Ask it for a task and nothing happens. Do not demonstrate this as an
 assistant.
 
 | Piece | State |
@@ -15,8 +16,8 @@ assistant.
 | `src/ax.js` accessible-name snapshot | done, verified against Chrome's own AX tree |
 | `src/actor.js` fill / select / click / focus + readback | done, 18 tests incl. a controlled-input and a stale-reference case |
 | `src/content.js` bootstrap + action message surface | done, driven end-to-end from the service worker |
+| `src/gate.js` spending gate, enforced in the content script | done — a gated click cannot fire, and a missing gate script refuses **all** clicks |
 | `manifest.json`, `background.js`, `popup.html` | loads and runs; popup reports real counts |
-| gate (irreversible-action confirmation) | not written |
 | `await_change` — proving a click changed the page as expected | not written |
 | profile vault (where field values live) | not written |
 | voice in / speech out | not written |
@@ -58,10 +59,10 @@ globally, and tested against NVDA rather than assumed.
 python -m pytest extension/test -p no:warnings
 ```
 
-All three files drive a **real Chromium** (41 tests): `test_ax.py` for name/role/state
-computation, `test_actor.py` for actions and their readbacks, and
-`test_extension_loads.py` for Chrome accepting the unpacked extension and driving an
-action from the service worker through to the page.
+All suites drive a **real Chromium** (51 tests): `test_ax.py` for name/role/state
+computation, `test_actor.py` for actions and their readbacks, `test_gate.py` for what
+gets stopped (and what must not be), and `test_extension_loads.py` for Chrome accepting
+the unpacked extension and driving an action from the service worker through to the page.
 `test_ax.py` includes a differential test that compares every accessible name this
 module produces against Chrome's own accessibility tree via CDP — Chrome is the
 engine NVDA reads, so where the two disagree, this module is wrong.

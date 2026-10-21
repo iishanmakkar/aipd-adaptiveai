@@ -47,7 +47,24 @@
     for (var i = 0; i < snap.nodes.length; i++) {
       if (snap.nodes[i].ref === ref) return snap.nodes[i];
     }
+    // A miss is not proof the control is gone: the cached tree may predate a
+    // navigation the page did after it. Re-read once before reporting not_found,
+    // so a legitimate action is not refused because of the burst cache.
+    var fresh = snapshot(true);
+    for (var j = 0; j < fresh.nodes.length; j++) {
+      if (fresh.nodes[j].ref === ref) return fresh.nodes[j];
+    }
     return null;
+  }
+
+  function gateContext() {
+    var href = '';
+    var isTop = true;
+    try {
+      href = document.location.href;
+      isTop = globalThis.top === globalThis;
+    } catch (e) { /* sandboxed frame: fall through with what we have */ }
+    return { origin: document.location.origin, frameUrl: isTop ? '' : href, isTop: isTop };
   }
 
   function runAction(message) {
@@ -62,6 +79,30 @@
       return { status: 'not_found', ref: message.ref,
                reason: 'that control is not in the current page snapshot' };
     }
+
+    if (message.action === 'click') {
+      var GATE = globalThis.AdaptiveAIGate;
+      if (!GATE) {
+        // Fail closed. A page where the gate script failed to load is a page where
+        // nothing can vouch that "Pay ₹640" will not be pressed silently, so no
+        // click runs at all rather than every click running ungated.
+        return { status: 'refused', ref: node.ref,
+                 reason: 'the spending gate is unavailable on this page, so nothing is clicked' };
+      }
+      var verdict = GATE.classify(node, gateContext());
+      if (verdict.gated) {
+        if (message.confirm !== true) {
+          return { status: 'gated', ref: node.ref, name: node.name, gate: verdict,
+                   reason: 'this needs your explicit approval first: ' + verdict.reason };
+        }
+        if (verdict.exceedsCeiling && message.confirmStrong !== true) {
+          return { status: 'gated', ref: node.ref, name: node.name, gate: verdict,
+                   reason: 'that is above the spending limit you set, so it needs a second, ' +
+                           'separate confirmation' };
+        }
+      }
+    }
+
     if (message.action === 'fill') return ACTOR.fill(node, message.value, document);
     if (message.action === 'select') return ACTOR.select(node, message.value, document);
     if (message.action === 'click') return ACTOR.click(node, document);

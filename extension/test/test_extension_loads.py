@@ -35,6 +35,21 @@ FIXTURE = b"""<!doctype html><html lang="en"><head><title>Fixture booking</title
 </body></html>"""
 
 
+GATE_FIXTURE = b"""<!doctype html><html lang="en"><head><title>Pay</title></head><body>
+<main>
+<h1>Order summary</h1>
+<p>2 seats, New Delhi to Chandigarh.</p>
+<button id="pay">Pay \xe2\x82\xb9640</button>
+<button id="next">Continue</button>
+<script>
+  window.__paid = 0; window.__next = 0;
+  document.getElementById('pay').addEventListener('click', () => { window.__paid++; });
+  document.getElementById('next').addEventListener('click', () => { window.__next++; });
+</script>
+</main>
+</body></html>"""
+
+
 class _Handler(http.server.BaseHTTPRequestHandler):
     def _send(self, status, body=b"", ctype="text/html; charset=utf-8"):
         self.send_response(status)
@@ -50,6 +65,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             # Chrome always asks. Answering 204 keeps the connection tidy instead
             # of raising inside the handler.
             self._send(204)
+            return
+        if "case=gate" in self.path:
+            self._send(200, GATE_FIXTURE)
             return
         self._send(200, FIXTURE)
 
@@ -177,6 +195,43 @@ SW_FIND_AND_ACT_ON_GHOST = """async (siteUrl) => {
     return { status: 'error', reason: 'no fixture tab found' };
 }"""
 
+SW_GATE_CLICK = """async ({siteUrl, confirm}) => {
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+        let snap;
+        try {
+            snap = await chrome.tabs.sendMessage(tab.id,
+                { type: 'adaptiveai:snapshot', force: true });
+        } catch (e) { continue; }
+        if (!snap || !snap.url || !snap.url.startsWith(siteUrl)) continue;
+        const node = (snap.nodes || []).find(n => n.name && n.name.indexOf('Pay') === 0);
+        if (!node) continue;
+        const out = await chrome.tabs.sendMessage(tab.id,
+            { type: 'adaptiveai:act', ref: node.ref, action: 'click',
+              confirm: confirm });
+        return { out: out, name: node.name };
+    }
+    return { error: 'gate fixture tab not found' };
+}"""
+
+SW_NAV_CLICK = """async ({siteUrl}) => {
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+        let snap;
+        try {
+            snap = await chrome.tabs.sendMessage(tab.id,
+                { type: 'adaptiveai:snapshot', force: true });
+        } catch (e) { continue; }
+        if (!snap || !snap.url || !snap.url.startsWith(siteUrl)) continue;
+        const node = (snap.nodes || []).find(n => n.name === 'Continue');
+        if (!node) continue;
+        const out = await chrome.tabs.sendMessage(tab.id,
+            { type: 'adaptiveai:act', ref: node.ref, action: 'click' });
+        return { out: out };
+    }
+    return { error: 'gate fixture tab not found' };
+}"""
+
 
 def test_service_worker_drives_an_action_through_to_the_page(loaded_extension, site):
     """The whole path a real task would use: service worker -> content script ->
@@ -218,6 +273,36 @@ def test_service_worker_reports_a_ref_that_is_no_longer_in_the_snapshot(loaded_e
     sw = _wait_service_worker(loaded_extension)
     result = sw.evaluate(SW_FIND_AND_ACT_ON_GHOST, target)
     assert result["status"] == "not_found", result
+    page.close()
+
+
+def test_gated_payment_is_refused_and_the_handler_never_fires(loaded_extension, site):
+    """The point of the gate: it is enforced in the content script, so a planner
+    that decides to press "Pay ₹640" cannot do it by asking nicely. A refusal that
+    still ran the click would be worse than no gate at all, because it would look
+    like a safety feature - so the handler counter is the real assertion here."""
+    target = site + "?case=gate"
+    page = loaded_extension.new_page()
+    page.goto(target, wait_until="load")
+    page.wait_for_function(
+        "() => document.documentElement.hasAttribute('data-adaptiveai-nodes')", timeout=15000)
+    sw = _wait_service_worker(loaded_extension)
+
+    refused = sw.evaluate(SW_GATE_CLICK, {"siteUrl": target, "confirm": False})
+    assert "out" in refused, refused
+    assert refused["out"]["status"] == "gated", refused
+    assert refused["name"].startswith("Pay"), refused
+    assert refused["out"]["gate"]["amount"]["value"] == 640, refused["out"]["gate"]
+    assert page.evaluate("() => window.__paid") == 0, "a gated click still fired"
+
+    approved = sw.evaluate(SW_GATE_CLICK, {"siteUrl": target, "confirm": True})
+    assert approved["out"]["status"] == "pressed", approved
+    assert page.evaluate("() => window.__paid") == 1, "confirmed click did not land"
+
+    # Ordinary navigation must not be stopped, or the gate trains dismissal.
+    plain = sw.evaluate(SW_NAV_CLICK, {"siteUrl": target})
+    assert plain["out"]["status"] == "pressed", plain
+    assert page.evaluate("() => window.__next") == 1, plain
     page.close()
 
 
