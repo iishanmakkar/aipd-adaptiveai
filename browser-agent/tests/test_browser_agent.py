@@ -88,3 +88,43 @@ async def test_unknown_tool_is_reported_not_silently_skipped():
                             ).execute_task("snapshot", {})
     assert out["steps_failed"] == 1
     assert "Unknown tool" in out["results"][0]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_natural_language_intent_is_declared_exploratory_not_planned():
+    """_plan_task matched only literal verb keys (navigate_to_url, fill_field...)
+    and ran one fixed three-step page sniff for everything else, narrating it as
+    though it had planned the request. A goal like "book me two seats" is not a
+    key, so it must be declared as a look-around, not as a completed booking."""
+    driver = FakeDriver()
+    a = BrowserAgent(session_id="s4", driver=driver)
+    a.tools = {"accessibility_tree": CountingTool(), "browser": CountingTool()}
+    out = await a.execute_task("book me two seats to Chandigarh", {})
+
+    assert out["unsupported_intent"] is True
+    assert out["status"] == "exploratory"
+    assert "not a booking" in out["narration"]
+    assert driver.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_recognised_verb_is_not_marked_exploratory():
+    driver = FakeDriver()
+    a = BrowserAgent(session_id="s5", driver=driver)
+    a.tools = {"browser": CountingTool()}
+    out = await a.execute_task("navigate_to_url", {"url": "http://example.com"})
+    assert out["status"] == "planned"
+    assert out["unsupported_intent"] is False
+    assert out["steps_completed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_exploratory_path_does_not_call_the_vision_tool():
+    """The sniff used to include vlm_analysis, which hard-fails without an API
+    key and turned a clean "I only looked" into a 502-shaped step."""
+    a = BrowserAgent(session_id="s6", driver=FakeDriver())
+    vlm = CountingTool(status="error")
+    a.tools = {"accessibility_tree": CountingTool(), "browser": CountingTool(),
+               "vlm_analysis": vlm}
+    await a.execute_task("tell me about this page", {})
+    assert vlm.calls == 0

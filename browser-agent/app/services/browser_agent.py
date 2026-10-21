@@ -6,6 +6,11 @@ from datetime import datetime
 from app.tools.base import BrowserTool, AccessibilityTreeTool, VLMAnalysisTool, FormFillingTool
 from app.tools.driver import Driver
 
+# _plan_task returns this sentinel for any intent it does not actually
+# implement, so execute_task can declare the run exploratory instead of
+# narrating a fixed page sniff as a plan for what the user asked for.
+EXPLORATORY = "exploratory"
+
 
 class BrowserAgent:
     """Autonomous browser agent: one real Chromium per task, tools share it."""
@@ -30,6 +35,12 @@ class BrowserAgent:
         """Execute a full task on a REAL browser (started here, stopped after)."""
         # Parse intent and select tools
         steps = self._plan_task(intent, context or {})
+        exploratory = steps is EXPLORATORY
+        if exploratory:
+            steps = [
+                {"tool": "accessibility_tree", "action": "extract", "args": {}},
+                {"tool": "browser", "action": "extract", "args": {}},
+            ]
 
         results = []
         await self.driver.start()
@@ -65,13 +76,19 @@ class BrowserAgent:
             await self.driver.stop()
 
         # Consolidate results and return final status
+        sniff_note = (
+            "I looked the page over - structure and text only. I did not act, "
+            "and this is not a booking. "
+        ) if exploratory else ""
         return {
             "session_id": self.session_id,
             "intent": intent,
+            "status": "exploratory" if exploratory else "planned",
+            "unsupported_intent": exploratory,
             "steps_completed": len([r for r in results if r.get("status") == "completed"]),
             "steps_failed": len([r for r in results if r.get("status") == "error"]),
             "results": results,
-            "narration": self._generate_narration(results),
+            "narration": sniff_note + self._generate_narration(results),
             "completed_at": datetime.utcnow().isoformat()
         }
     
@@ -92,16 +109,18 @@ class BrowserAgent:
                            "args": {"fields": context.get("fields", [])}}],
         }
         
-        # Default: try to match intent or return exploratory steps
+        # Default: try to match intent or declare the run exploratory
         if intent in intent_tools:
             return intent_tools[intent]
-        
-        # Fallback: exploratory sequence
-        return [
-            {"tool": "accessibility_tree", "action": "extract", "args": {}},
-            {"tool": "vlm_analysis", "action": "describe", "args": {}},
-            {"tool": "browser", "action": "extract", "args": {}},  # Get page HTML/snapshot
-        ]
+
+        # No natural-language understanding lives here: this map matches literal
+        # verb keys, so anything else gets the fixed sniff and must SAY so. Real
+        # step-by-step planning arrives with the extension's
+        # POST /api/extension/step (design spec 4.2); until then claiming a plan
+        # for "book me two seats" would be the exact fake this repo is removing.
+        # The sniff deliberately excludes vlm_analysis, which hard-fails without
+        # an API key and turned a clean "I only looked" into an error step.
+        return EXPLORATORY
     
     def _store_episode(self, tool_name: str, action: str, args: dict, result: dict):
         """Store a successful workflow episode in episodic memory."""

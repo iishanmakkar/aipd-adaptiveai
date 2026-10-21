@@ -267,9 +267,18 @@ async def fill(req: FillRequest):
         await driver.stop()
 
 
-@app.post("/agent/browse")
+@app.post("/agent/browse", summary="Exploratory page read (not multi-step task execution)")
 async def agent_browse(req: AgentBrowseRequest):
-    """Run the orchestrator (plan -> REAL tools -> narrated result)."""
+    """Read a page with REAL tools and return what was found.
+
+    Recognised intents are the literal verb keys in BrowserAgent._plan_task
+    (navigate_to_url, click_element, fill_field, extract_text, analyze_page,
+    snapshot, fill_form). Anything else - including natural-language goals like
+    "book me two seats" - runs a fixed structure-and-text sniff and comes back
+    with `status: "exploratory"` and `unsupported_intent: true`. This route does
+    not plan or complete multi-step tasks; step-by-step execution arrives with
+    the browser extension's POST /api/extension/step.
+    """
     agent = BrowserAgent(session_id=req.session_id)
     try:
         return await agent.execute_task(req.intent, req.context)
