@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "AdaptiveAI",
+  "version": "0.1.0",
+  "description": "Context-aware voice assistant that acts in the page you are already using, for blind and low-vision users.",
+
+  "permissions": ["storage", "activeTab", "scripting", "offscreen"],
+
+  "background": {
+    "service_worker": "src/background.js"
+  },
+
+  "action": {
+    "default_title": "AdaptiveAI",
+    "default_popup": "popup.html"
+  },
+
+  "commands": {
+    "hold-listen": {
+      "description": "Hold to speak, release to send"
+    },
+    "stop-talking": {
+      "description": "Stop the current announcement"
+    }
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/ax.js", "src/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

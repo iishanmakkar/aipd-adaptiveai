@@ -1,0 +1,162 @@
+"""Does Chrome accept this as a real MV3 extension, and does the content script run?
+
+Everything else in this directory tests a module inside a harness. This one loads
+the actual unpacked extension into Chromium the way a user would, because a
+manifest that Chrome rejects, a service worker that fails to register, or a
+content script that never runs are all failures no unit test can see - and they
+are the kind that only surface on demo day.
+
+Run:  python -m pytest extension/test/test_extension_loads.py -p no:warnings -v
+"""
+import http.server
+import os
+import socketserver
+import threading
+import time
+
+import pytest
+from playwright.sync_api import sync_playwright
+
+EXT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+FIXTURE = b"""<!doctype html><html lang="en"><head><title>Fixture booking</title></head>
+<body>
+<main>
+<h1>Choose seats</h1>
+<form>
+  <label for="pname">Passenger name</label><input id="pname" name="pname">
+  <label for="seats">Seats</label><input id="seats" name="seats">
+  <label><input type="checkbox" id="ins"> I accept insurance</label>
+  <button type="submit">Book tickets</button>
+</form>
+<img src="data:image/gif;base64,R0lGODlhAQABAAACAP///w==">
+<div aria-live="polite" aria-label="Booking status"></div>
+</main>
+</body></html>"""
+
+
+class _Handler(http.server.BaseHTTPRequestHandler):
+    def _send(self, status, body=b"", ctype="text/html; charset=utf-8"):
+        self.send_response(status)
+        if body:
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if body:
+            self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path.startswith("/favicon.ico"):
+            # Chrome always asks. Answering 204 keeps the connection tidy instead
+            # of raising inside the handler.
+            self._send(204)
+            return
+        self._send(200, FIXTURE)
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture(scope="module")
+def site():
+    # Threading, not the plain TCPServer: Chrome opens the page and asks for
+    # /favicon.ico concurrently, and a single-threaded server aborts the second
+    # connection ("WinError 10053"), which made this suite pass alone and fail in
+    # a full run. That is a harness bug, not a product one, and it is exactly the
+    # kind of flake that trains people to ignore red tests.
+    httpd = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _Handler)
+    httpd.daemon_threads = True
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{port}/"
+    httpd.shutdown()
+    httpd.server_close()
+
+
+@pytest.fixture(scope="module")
+def loaded_extension():
+    """A persistent context is required: --load-extension is ignored by an
+    incognito-style ephemeral context, and the extension must be attached before
+    the first navigation.
+
+    channel="chromium" is not optional. Playwright's default headless build is
+    the chromium headless *shell*, which cannot load extensions at all - it
+    silently runs with none installed, so every assertion below would fail with
+    no error anywhere. Measured on this machine: headless shell = never loads,
+    channel="chromium" headless = loads and runs."""
+    with sync_playwright() as p:
+        ctx = p.chromium.launch_persistent_context(
+            "",
+            headless=True,
+            channel="chromium",
+            args=[
+                f"--disable-extensions-except={EXT_DIR}",
+                f"--load-extension={EXT_DIR}",
+            ],
+        )
+        yield ctx
+        ctx.close()
+
+
+def _wait_service_worker(ctx, timeout_s=20):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        for sw in ctx.service_workers:
+            if "chrome-extension://" in sw.url:
+                return sw
+        time.sleep(0.4)
+    return None
+
+
+def test_service_worker_registers(loaded_extension):
+    sw = _wait_service_worker(loaded_extension)
+    assert sw is not None, (
+        "Chrome never registered src/background.js - the manifest or the worker "
+        "is invalid, so nothing downstream can work")
+    assert sw.url.startswith("chrome-extension://"), sw.url
+
+
+def test_content_script_runs_and_reports_real_counts(loaded_extension, site):
+    page = loaded_extension.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)[:200]))
+    page.goto(site, wait_until="load")
+
+    root = page.locator("html")
+    # content.js publishes its findings as attributes, so this asserts the script
+    # really executed inside the extension world rather than in my test harness.
+    page.wait_for_function(
+        "() => document.documentElement.hasAttribute('data-adaptiveai-nodes')",
+        timeout=15000)
+
+    assert int(root.get_attribute("data-adaptiveai-interactive")) == 4, \
+        "2 inputs + 1 checkbox + 1 button expected"
+    assert int(root.get_attribute("data-adaptiveai-missing-alt")) == 1
+    assert int(root.get_attribute("data-adaptiveai-unnamed")) == 0
+    # A live region is content, not a control: it must be collected without
+    # inflating the act-able count.
+    assert int(root.get_attribute("data-adaptiveai-nodes")) >= 6
+    assert errors == [], f"extension scripts threw on a real page: {errors}"
+
+
+def test_popup_page_loads_without_errors(loaded_extension):
+    sw = _wait_service_worker(loaded_extension)
+    assert sw is not None
+    ext_id = sw.url.split("/")[2]
+    page = loaded_extension.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)[:200]))
+    page.goto(f"chrome-extension://{ext_id}/popup.html", wait_until="load")
+    # The popup's own status line is the evidence it ran. Opened as a plain tab
+    # it cannot see a content-scripted page, and it must SAY that rather than
+    # showing zero counts as if the page were empty - that distinction is the
+    # difference between an honest failure and a silent one.
+    status = page.locator("#status")
+    page.wait_for_function(
+        "() => document.getElementById('status').textContent.length > 0", timeout=10000)
+    text = status.inner_text()
+    assert text != "Reading this page…", "popup never resolved its request"
+    assert ("cannot read this page" in text or "no controls" in text.lower()
+            or "act-able" in text), f"unexpected popup status: {text!r}"
+    assert errors == [], f"popup scripts threw: {errors}"
+    page.close()
