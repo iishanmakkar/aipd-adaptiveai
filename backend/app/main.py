@@ -56,6 +56,15 @@ if (_prod or not settings.debug) and settings.jwt_secret.strip() in ("", _JWT_PL
         "shipped default. Set a random 32+ char JWT_SECRET in backend/.env."
     )
 
+# Same fail-closed rule for the shared store: without Redis, share tokens,
+# pending confirmations and monitor cursors live in one process and vanish on a
+# second replica. The reason is recorded at import by session_memory (which a
+# router pulls in before this line runs) and reported here, with the other
+# refusals, rather than as a traceback from a service module.
+from app.services import session_memory as _session_memory  # noqa: E402
+if (_prod or not settings.debug) and _session_memory.production_refusal():
+    raise RuntimeError("Refusing to start: " + _session_memory.production_refusal())
+
 
 # ---- lightweight in-process metrics (visible at GET /api/metrics) ----
 _METRICS = {

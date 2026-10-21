@@ -27,6 +27,7 @@ def _redis_url() -> str:
 _REDIS_URL = _redis_url()
 _client = None
 _fallback = True
+_production_refusal: "str | None" = None
 
 
 def _production_declared() -> bool:
@@ -42,10 +43,21 @@ def _connect() -> None:
     bug for a multi-replica deployment: a share token minted by replica A would be
     unreadable by replica B, and a pending confirmation would live on exactly one
     process, with nothing anywhere reporting the loss. So a deployment that
-    declares production refuses to start on that path instead of warning.
+    declares production records a boot refusal instead of warning.
     """
-    global _client, _fallback
+    global _client, _fallback, _production_refusal
+    _production_refusal = None
     if not _REDIS_URL:
+        # An unconfigured store is the same partitioning bug as an unreachable
+        # one, and the more likely way to hit it: a deploy that simply never set
+        # REDIS_URL starts fine, looks healthy, and quietly keeps share tokens
+        # and pending confirmations on one process.
+        if _production_declared():
+            _production_refusal = (
+                "no REDIS_URL is set, so the in-memory fallback would silently "
+                "partition share tokens, pending confirmations and monitor cursors "
+                "across replicas. Set REDIS_URL, or unset ADAPTIVEAI_PRODUCTION."
+            )
         _client, _fallback = None, True
         logger.info("no REDIS_URL set - in-memory TTL store (single process only)")
         return
@@ -62,17 +74,28 @@ def _connect() -> None:
         _fallback = False
     except Exception as e:
         if _production_declared():
-            raise RuntimeError(
-                f"shared store unreachable ({e}): this deployment declares "
-                f"production, and the in-memory fallback would silently partition "
-                f"share tokens, pending confirmations and monitor cursors across "
-                f"replicas. Start Redis, or unset ADAPTIVEAI_PRODUCTION."
-            ) from e
+            _production_refusal = (
+                f"shared store unreachable ({e}): the in-memory fallback would "
+                f"silently partition share tokens, pending confirmations and "
+                f"monitor cursors across replicas. Start Redis, or unset "
+                f"ADAPTIVEAI_PRODUCTION."
+            )
         logger.warning("redis unavailable (%s) - using in-memory TTL fallback", e)
         _client, _fallback = None, True
 
 
 _connect()
+
+
+def production_refusal() -> str | None:
+    """Why a declared-production boot must not serve traffic, or None.
+
+    Recorded rather than raised from import: app/main.py owns the boot refusal, so
+    this reports once in the same shape as the DEBUG and JWT_SECRET guards instead
+    of as a traceback out of a service module that a router imported first. Raising
+    here preempted those guards and cost two refusal tests their message.
+    """
+    return _production_refusal
 
 
 class SharedStore:
