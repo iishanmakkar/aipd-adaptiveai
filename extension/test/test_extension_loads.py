@@ -50,6 +50,28 @@ GATE_FIXTURE = b"""<!doctype html><html lang="en"><head><title>Pay</title></head
 </body></html>"""
 
 
+SPA_FIXTURE = b"""<!doctype html><html lang="en"><head><title>Checkout</title></head><body>
+<main>
+<h1>Checkout</h1>
+<div id="slot"></div>
+<button id="proceed">Proceed</button>
+<script>
+  // The exact shape that fooled the old pipeline: pressing "Proceed" changes no
+  // URL and no title, and shows an inline validation error that a sighted user
+  // reads at a glance and a blind user only hears if the assistant notices.
+  window.__presses = 0;
+  document.getElementById('proceed').addEventListener('click', () => {
+    window.__presses++;
+    const d = document.createElement('div');
+    d.setAttribute('role', 'alert');
+    d.textContent = 'Please choose a date';
+    document.getElementById('slot').appendChild(d);
+  });
+</script>
+</main>
+</body></html>"""
+
+
 class _Handler(http.server.BaseHTTPRequestHandler):
     def _send(self, status, body=b"", ctype="text/html; charset=utf-8"):
         self.send_response(status)
@@ -68,6 +90,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return
         if "case=gate" in self.path:
             self._send(200, GATE_FIXTURE)
+            return
+        if "case=spa" in self.path:
+            self._send(200, SPA_FIXTURE)
             return
         self._send(200, FIXTURE)
 
@@ -303,6 +328,69 @@ def test_gated_payment_is_refused_and_the_handler_never_fires(loaded_extension, 
     plain = sw.evaluate(SW_NAV_CLICK, {"siteUrl": target})
     assert plain["out"]["status"] == "pressed", plain
     assert page.evaluate("() => window.__next") == 1, plain
+    page.close()
+
+
+SW_CLICK_PROCEED = """async ({ siteUrl, expect, timeoutMs }) => {
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+        let snap;
+        try {
+            snap = await chrome.tabs.sendMessage(tab.id,
+                { type: 'adaptiveai:snapshot', force: true });
+        } catch (e) { continue; }
+        if (!snap || !snap.url || !snap.url.startsWith(siteUrl)) continue;
+        const node = (snap.nodes || []).find(n => n.name === 'Proceed');
+        if (!node) continue;
+        const out = await chrome.tabs.sendMessage(tab.id,
+            { type: 'adaptiveai:act', ref: node.ref, action: 'click',
+              expect: expect, timeoutMs: timeoutMs });
+        return { out: out };
+    }
+    return { error: 'spa fixture tab not found' };
+}"""
+
+
+def test_a_silent_page_reacts_are_reported_honestly_end_to_end(loaded_extension, site):
+    """The Plan A failure mode, reproduced through the real extension.
+
+    Pressing "Proceed" here changes no URL and no title; it shows an inline
+    validation error. Without await_change the click reports "pressed" and a
+    planner could tell the user they are one step closer, when in fact the page
+    refused them. Correct expectation -> verified; wrong expectation -> failed,
+    and the reason has to say what the page actually did."""
+    target = site + "?case=spa"
+    page = loaded_extension.new_page()
+    page.goto(target, wait_until="load")
+    page.wait_for_function(
+        "() => document.documentElement.hasAttribute('data-adaptiveai-nodes')", timeout=15000)
+    sw = _wait_service_worker(loaded_extension)
+
+    good = sw.evaluate(SW_CLICK_PROCEED, {
+        "siteUrl": target, "timeoutMs": 3000,
+        "expect": {"kind": "node_appears", "role": "alert", "name": "Please choose a date"}})
+    assert good["out"]["status"] == "verified", good
+    assert "Please choose a date" in good["out"]["readback"], good
+
+    bad = sw.evaluate(SW_CLICK_PROCEED, {
+        "siteUrl": target, "timeoutMs": 900,
+        "expect": {"kind": "url_changed"}})
+    assert bad["out"]["status"] == "failed", bad
+    assert "url_changed" in bad["out"]["reason"], bad
+    assert page.evaluate("() => window.__presses") >= 1
+    page.close()
+
+
+def test_a_click_without_an_expectation_stays_pressed_not_verified(loaded_extension, site):
+    """No prediction, no verification: the honest ceiling for a bare click."""
+    target = site + "?case=spa"
+    page = loaded_extension.new_page()
+    page.goto(target, wait_until="load")
+    page.wait_for_function(
+        "() => document.documentElement.hasAttribute('data-adaptiveai-nodes')", timeout=15000)
+    sw = _wait_service_worker(loaded_extension)
+    res = sw.evaluate(SW_CLICK_PROCEED, {"siteUrl": target, "expect": None, "timeoutMs": 500})
+    assert res["out"]["status"] == "pressed", res
     page.close()
 
 

@@ -105,8 +105,28 @@
 
     if (message.action === 'fill') return ACTOR.fill(node, message.value, document);
     if (message.action === 'select') return ACTOR.select(node, message.value, document);
-    if (message.action === 'click') return ACTOR.click(node, document);
     if (message.action === 'focus') return ACTOR.focus(node, document);
+    if (message.action === 'click') {
+      var WATCH = globalThis.AdaptiveAIWatch;
+      // Baseline before the click: "what changed" is only meaningful against what
+      // was there when the user agreed to the action.
+      var baseline = WATCH ? WATCH.capture(document, node) : null;
+      var out = ACTOR.click(node, document);
+      if (out.status !== 'pressed' || !message.expect || !WATCH) {
+        // No expectation means no upgrade: a bare click stays "pressed", because
+        // nothing has proven the page reacted.
+        return out;
+      }
+      return WATCH.waitFor(document, baseline, message.expect, message.timeoutMs)
+        .then(function (res) {
+          if (res.verified) {
+            return { status: 'verified', action: 'click', ref: node.ref,
+                     name: node.name, readback: res.evidence };
+          }
+          return { status: 'failed', action: 'click', ref: node.ref,
+                   name: node.name, reason: res.reason };
+        });
+    }
     return { status: 'failed', ref: message.ref,
              reason: 'unknown action ' + String(message.action) };
   }
@@ -121,13 +141,13 @@
         return false;
       }
       if (message.type === 'adaptiveai:act') {
-        var result = runAction(message);
-        // The tree may have changed under us (validation message appeared, row
-        // re-rendered), so the next snapshot must be built fresh rather than
-        // served from the 250ms cache.
-        invalidate();
-        sendResponse(result);
-        return false;
+        // A click with an expectation resolves only when the page has reacted, so
+        // the channel stays open; returning false here would drop the reply.
+        Promise.resolve(runAction(message)).then(function (result) {
+          invalidate();
+          sendResponse(result);
+        });
+        return true;
       }
       return false;
     });

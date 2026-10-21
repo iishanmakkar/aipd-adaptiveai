@@ -17,8 +17,8 @@ assistant.
 | `src/actor.js` fill / select / click / focus + readback | done, 18 tests incl. a controlled-input and a stale-reference case |
 | `src/content.js` bootstrap + action message surface | done, driven end-to-end from the service worker |
 | `src/gate.js` spending gate, enforced in the content script | done — a gated click cannot fire, and a missing gate script refuses **all** clicks |
+| `src/watch.js` `await_change` | done — a click is only `verified` when the page changed the way it was predicted to; a wrong prediction fails and reports what did happen |
 | `manifest.json`, `background.js`, `popup.html` | loads and runs; popup reports real counts |
-| `await_change` — proving a click changed the page as expected | not written |
 | profile vault (where field values live) | not written |
 | voice in / speech out | not written |
 | task runner, `POST /api/extension/step` | not written |
@@ -59,10 +59,11 @@ globally, and tested against NVDA rather than assumed.
 python -m pytest extension/test -p no:warnings
 ```
 
-All suites drive a **real Chromium** (51 tests): `test_ax.py` for name/role/state
-computation, `test_actor.py` for actions and their readbacks, `test_gate.py` for what
-gets stopped (and what must not be), and `test_extension_loads.py` for Chrome accepting
-the unpacked extension and driving an action from the service worker through to the page.
+All suites drive a **real Chromium** (62 tests): `test_ax.py` name/role/state
+computation, `test_actor.py` actions and their readbacks, `test_gate.py` what gets
+stopped (and what must not be), `test_watch.py` change verification, and
+`test_extension_loads.py` for Chrome accepting the unpacked extension and driving an
+action from the service worker through to the page.
 `test_ax.py` includes a differential test that compares every accessible name this
 module produces against Chrome's own accessibility tree via CDP — Chrome is the
 engine NVDA reads, so where the two disagree, this module is wrong.
