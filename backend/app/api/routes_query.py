@@ -1029,20 +1029,34 @@ def _demote_browser_intent(intent_result, page_present: bool):
     """Shared by /api/query and /query-demo: a browser_* intent with no open
     page demotes to its informational equivalent instead of 502ing against
     the agents service (whose registry has no browser_agent). The ambiguity
-    signal survives so the clarifier can still fire on word salad."""
+    signal survives so the clarifier can still fire on word salad.
+
+    Returns (result, demoted). The flag exists because the routing decision is
+    correct but the user's REQUEST was for an action: the caller must say out
+    loud that nothing was clicked, instead of letting an informational agent
+    answer as though it had been.
+    """
     if intent_result.target_agent == "browser_agent" and not page_present:
         fallback = {
             "browser_inspect": ("web_navigation_help", "web_agent"),
             "browser_act": ("form_help", "form_agent"),
         }.get(intent_result.intent, ("web_navigation_help", "web_agent"))
-        return IntentResponse(
+        return (IntentResponse(
             intent=fallback[0], target_agent=fallback[1],
             extracted_entity=intent_result.extracted_entity,
             reasoning=intent_result.reasoning + " [demoted: no live page open]",
             confidence=intent_result.confidence,
             ambiguous=intent_result.ambiguous,
-        )
-    return intent_result
+        ), True)
+    return intent_result, False
+
+
+LIMITATION_NO_PAGE = (
+    "I can't do that from here. You asked me to act on a page, and I have no "
+    "page open for this session. Open the page and ask me to read it, or give "
+    "me its address, and I'll work with it. I have not clicked or filled "
+    "anything."
+)
 
 
 async def _finish_turn(db: AsyncSession, session, current_user, session_uuid: UUID,
@@ -1208,13 +1222,28 @@ async def process_query(
     # Guardrail: the model may jump to browser_* with no page anywhere (no live
     # session, no URL in this turn). Demote deterministically to the
     # informational equivalent instead of failing or hallucinating a page.
-    intent_result = _demote_browser_intent(
+    intent_result, demoted = _demote_browser_intent(
         intent_result,
         page_present=(
             _live_pages.get(request.session_id) is not None
             or _extract_url(request.input_text, request.screen_context) is not None
         ),
     )
+    if demoted:
+        # The reroute keeps the turn answerable, but the user asked for an
+        # action. Say what did not happen rather than speaking an essay about
+        # buttons as if one had been pressed.
+        return await _finish_turn(
+            db, session, current_user, session_uuid,
+            answer=LIMITATION_NO_PAGE,
+            agent_used="limitation",
+            suggested_action="none",
+            sources_used=[],
+            confidence=intent_result.confidence,
+            intent_label=intent_result.intent,
+            reasoning=f"{intent_result.reasoning} [limitation: no live page]",
+            message_count=len(recent_messages) + 1,
+        )
     if intent_result.target_agent == "browser_agent":
         browser_turn = await _handle_browser_intent(
             db, session, current_user, session_uuid, request,
@@ -1335,10 +1364,18 @@ async def process_query_demo(http_request: Request, request: QueryRequest):
     # demotes to the informational equivalent. The demo never opens pages
     # (no _maybe_browser_turn), so page_present is the stored live page only -
     # otherwise browser_agent goes straight to the agents registry and 502s.
-    intent_result = _demote_browser_intent(
+    intent_result, demoted = _demote_browser_intent(
         intent_result,
         page_present=_live_pages.get(request.session_id) is not None,
     )
+    if demoted:
+        return QueryResponse(
+            response_text=LIMITATION_NO_PAGE,
+            agent_used="limitation",
+            suggested_action="none",
+            confidence=intent_result.confidence,
+            sources_used=[],
+        )
 
     # Step 2: Call appropriate Task Agent
     try:
