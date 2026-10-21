@@ -13,6 +13,8 @@ import os
 import time
 from collections import OrderedDict
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 def _redis_url() -> str:
@@ -24,22 +26,53 @@ def _redis_url() -> str:
 
 _REDIS_URL = _redis_url()
 _client = None
+_fallback = True
 
-if _REDIS_URL:
+
+def _production_declared() -> bool:
+    """The same rule app/main.py enforces: an explicit flag, or simply not DEBUG."""
+    return (os.getenv("ADAPTIVEAI_PRODUCTION", "").strip() in ("1", "true", "True")
+            or not settings.debug)
+
+
+def _connect() -> None:
+    """Connect to the shared store, or fall back to a per-process TTL dict.
+
+    The fallback is correct for one dev process and a silent data-partitioning
+    bug for a multi-replica deployment: a share token minted by replica A would be
+    unreadable by replica B, and a pending confirmation would live on exactly one
+    process, with nothing anywhere reporting the loss. So a deployment that
+    declares production refuses to start on that path instead of warning.
+    """
+    global _client, _fallback
+    if not _REDIS_URL:
+        _client, _fallback = None, True
+        logger.info("no REDIS_URL set - in-memory TTL store (single process only)")
+        return
     try:
         import redis  # type: ignore
 
         # Bounded sockets: without timeouts a dead Redis stalls every request
-        # path (and the import-time ping below) instead of failing fast to
-        # the in-memory fallback.
+        # path (and the ping below) instead of failing fast.
         _client = redis.Redis.from_url(
             _REDIS_URL, decode_responses=True,
             socket_connect_timeout=2.0, socket_timeout=2.0,
         )
         _client.ping()
+        _fallback = False
     except Exception as e:
+        if _production_declared():
+            raise RuntimeError(
+                f"shared store unreachable ({e}): this deployment declares "
+                f"production, and the in-memory fallback would silently partition "
+                f"share tokens, pending confirmations and monitor cursors across "
+                f"replicas. Start Redis, or unset ADAPTIVEAI_PRODUCTION."
+            ) from e
         logger.warning("redis unavailable (%s) - using in-memory TTL fallback", e)
-        _client = None
+        _client, _fallback = None, True
+
+
+_connect()
 
 
 class SharedStore:
@@ -52,6 +85,13 @@ class SharedStore:
 
     def _key(self, key: str) -> str:
         return f"{self.namespace}:{key}"
+
+    @property
+    def backend(self) -> str:
+        """Which store answers this instance: 'redis' (shared) or 'memory'
+        (this process only). Reported so callers and tests can tell a value that
+        is genuinely shared from one that merely looks identical."""
+        return "redis" if _client is not None else "memory"
 
     def set(self, key: str, value: dict | str, ttl_seconds: float | None = None) -> None:
         payload = value if isinstance(value, str) else json.dumps(value)
