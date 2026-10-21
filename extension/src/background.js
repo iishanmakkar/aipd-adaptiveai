@@ -259,6 +259,82 @@ function speechLog() {
   });
 }
 
+// ---- voice in --------------------------------------------------------------
+
+function storageRead(key) {
+  return new Promise(function (resolve) {
+    try {
+      chrome.storage.local.get([key], function (data) {
+        resolve(chrome.runtime.lastError ? '' : (data && data[key]) || '');
+      });
+    } catch (e) { resolve(''); }
+  });
+}
+
+// One utterance in, words out. The audio exists only inside this call: it is
+// posted to the user's own backend for transcription and never written to storage,
+// put in the run transcript, or logged - a recording is the user's voice, and a
+// "helpful" debug line that includes it is a leak with good intentions behind it.
+async function transcribe(maxMs) {
+  var capture = await AdaptiveAISpeech.listen(maxMs || 8000);
+  if (!capture || !capture.ok) {
+    return { ok: false, reason: (capture && capture.reason) || 'the microphone did not work' };
+  }
+  var bytes = capture.audioB64;
+  capture.audioB64 = null;
+  if (!bytes || !capture.bytes) {
+    return { ok: false, reason: 'the microphone captured nothing' };
+  }
+  var binary = atob(bytes);
+  var buffer = new Uint8Array(binary.length);
+  for (var i = 0; i < binary.length; i++) buffer[i] = binary.charCodeAt(i);
+  var base = await storageRead('adaptiveai_backend') || 'http://localhost:8000';
+  var token = await storageRead('adaptiveai_token');
+  var form = new FormData();
+  form.append('audio', new Blob([buffer], { type: capture.mime || 'audio/webm' }),
+              'utterance.webm');
+  try {
+    var response = await fetch(base.replace(/\/+$/, '') + '/api/transcribe', {
+      method: 'POST',
+      headers: token ? { authorization: 'Bearer ' + token } : {},
+      body: form,
+    });
+  } catch (e) {
+    return { ok: false, reason: 'I could not reach the transcriber at ' + base };
+  }
+  if (!response.ok) {
+    var detail = '';
+    try { detail = String((await response.json()).detail || ''); } catch (e) { /* */ }
+    return { ok: false, reason: 'the transcriber answered ' + response.status +
+                                (detail ? ': ' + detail.slice(0, 120) : '') };
+  }
+  var data = await response.json();
+  // The route's field is `transcript`. Reading `text` here returned '' for every
+  // successful transcription, which the user experienced as "I heard no words in
+  // that" while the server had answered correctly - the kind of bug only an
+  // end-to-end call to the real route finds.
+  var text = String(data.transcript || data.text || '').trim();
+  if (!text) return { ok: false, reason: 'I heard no words in that' };
+  return { ok: true, text: text, language: data.language || null,
+           duration: data.duration || null };
+}
+
+chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
+  if (!message) return false;
+  if (message.type === 'adaptiveai:voice') {
+    transcribe(message.maxMs).then(sendResponse, function (e) {
+      sendResponse({ ok: false, reason: String(e).slice(0, 160) });
+    });
+    return true;
+  }
+  if (message.type === 'adaptiveai:stop-listening') {
+    AdaptiveAISpeech.stopListening();
+    sendResponse({ ok: true });
+    return false;
+  }
+  return false;
+});
+
 chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
   if (!message) return false;
   if (message.type === 'adaptiveai:speech-log') {

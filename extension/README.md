@@ -1,16 +1,20 @@
 # AdaptiveAI browser extension
 
-**Status: tell it a goal in typing and it plans, acts, verifies and speaks. It cannot
-yet hear you.**
+**Status: say what you want, or type it, and it plans, acts, verifies and speaks back.**
 
 What exists: a real accessibility snapshot (accessible names computed the way the
 browser computes them), an actor that fills, selects, clicks and focuses **only
 with a readback that proves it landed**, a spending gate enforced in the content
 script itself, a planner client that posts structure and resolves values from the
-local vault, a service worker that runs the step → act → verify → narrate loop, and
-an offscreen document that owns the speech engine. All of it is driven end-to-end in
-real Chromium, including what went to the wire. What does not exist is the microphone:
-**you type the goal in the popup; saying it out loud is the next task.**
+local vault, a service worker that runs the step → act → verify → narrate loop, an
+offscreen document that owns the speech engine **and the microphone**, and a
+transcription path that turns recorded audio into the goal. All of it is driven
+end-to-end in real Chromium, including what went to the wire.
+
+What is not real yet: nobody has done this on a booking site. There are no
+`extension/recipes/*.json` and no verified-trace memory, so no platform is
+supported, and the human-with-NVDA acceptance pass has not happened (spec §12).
+Do not demonstrate this as "books tickets on BookMyShow". It has never done that.
 
 | Piece | State |
 |---|---|
@@ -25,9 +29,9 @@ real Chromium, including what went to the wire. What does not exist is the micro
 | `src/runner.js` task loop | done — budgets, gate pausing, halting on a failed step, and the planner's `done`/`ask_user`/`cannot` replies, all tested with a scripted planner **and** driven against a real step endpoint |
 | `src/background.js` the loop itself | done — one run at a time, live snapshot per step, confirmation that treats silence as a no, run transcript readable afterwards |
 | `src/speech.js` + `offscreen.html` narration | done — the worker has no speech engine, so an offscreen document owns it; every announcement reports what the engine did, and a document that answers nothing is reported rather than assumed |
+| microphone in → transcript → goal | done — `getUserMedia` + `MediaRecorder` capture in the offscreen document, uploaded as a multipart `/api/transcribe` call, and the words land in the goal field. Verified in Chromium against a fake capture device (real encoded audio, 24 KB of opus for a 2.5 s take); **not** yet verified with a real microphone, a noisy room, or a spoken confirmation |
 | `options.html` + `src/options.js` | done — the one place details are entered, batched into a single write, delete needs two deliberate presses |
-| `popup.html` typed goal + transcript + yes/no | done — labelled input, live regions, what happened listed per step |
-| microphone in, push-to-talk, spoken yes/no | **not written** — the offscreen document has the health check and the message surface; capture and `/api/transcribe` wiring are next |
+| `popup.html` typed goal + Listen + transcript + yes/no | done — labelled input, live regions, what happened listed per step |
 | `extension/recipes/*.json`, verified-trace memory | not written — no site knowledge exists yet, so no platform is supported |
 
 Plan: `docs/superpowers/plans/2026-10-21-plan-b-extension.md`. Design:
@@ -74,17 +78,19 @@ globally, and tested against NVDA rather than assumed.
 python -m pytest extension/test -p no:warnings
 ```
 
-All suites drive a **real Chromium** (112 tests): `test_ax.py` name/role/state
+All suites drive a **real Chromium** (118 tests): `test_ax.py` name/role/state
 computation, `test_actor.py` actions and their readbacks, `test_gate.py` what gets
 stopped (and what must not be), `test_watch.py` change verification,
 `test_vault_privacy.py` profile storage and redaction, `test_options.py` the setup
 page and what the worker reads back from it, `test_runner.py` the task loop's
 control flow, `test_planner.py` what the step client puts on the wire and what it
-does with a reply it did not choose, `test_extension_loads.py` for Chrome accepting
-the unpacked extension, the worker's script actually having run, and the offscreen
-document answering its own health check, and `test_task_loop.py` for the whole loop:
-a typed goal in a loaded extension produces a verified DOM change, a refusal it
-cannot talk itself out of, and a narration the speech engine reported back.
+does with a reply it did not choose, `test_voice.py` the microphone through a real
+capture device into a real multipart upload, `test_extension_loads.py` for Chrome
+accepting the unpacked extension, the worker's script actually having run, and the
+offscreen document answering its own health check, and `test_task_loop.py` for the
+whole loop: a typed goal in a loaded extension produces a verified DOM change, a
+refusal it cannot talk itself out of, and a narration the speech engine reported
+back.
 `test_ax.py` includes a differential test that compares every accessible name this
 module produces against Chrome's own accessibility tree via CDP — Chrome is the
 engine NVDA reads, so where the two disagree, this module is wrong.

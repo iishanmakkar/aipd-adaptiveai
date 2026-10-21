@@ -16,6 +16,8 @@ already asserted and exited non-zero; they were left alone.
 | `r9_any_site_fill_proof.py` | guided slot-fill generalises across two different layouts | yes (5 assertions, added 2026-10-21) |
 | `tts_proof.py` (frontend/) | muted speech enqueues nothing; audible speech reaches `speechSynthesis` | yes (both directions required) |
 | `extension_live_site_proof.py` | the loaded extension sees and classifies real production pages, and the gate fires on real booking controls | yes (exit 3 = nothing proven, kept distinct from a failure) |
+| `stt_local_proof.py` | the OS voice speaks a sentence, `/api/transcribe` decodes it locally and the words come back | yes (exit 3 when this machine has no TTS voice or no local model) |
+| `extension_step_live_proof.py` | a real model returns a step the device could act on, obeying the ref/value/password rules | yes (exit 3 when no NIM key is configured - which is the case on this host) |
 
 ## What these scripts are NOT evidence about
 
@@ -33,6 +35,12 @@ real readbacks. They do **not** prove booking on BookMyShow, IRCTC or Swiggy.
 proves is perception and gate identification on production markup - not a booking.
 Operating a real site end to end is the extension's job and is not yet possible:
 see the live-site table below for which vendors an automated browser can even reach.
+
+`extension_step_live_proof.py` sends nothing to a vendor either: it calls NVIDIA's
+own completion endpoint with a **structure-only** snapshot (refs, roles, accessible
+names, states, value kinds) built by the proof script itself, and asserts the reply
+obeys the contract. `stt_local_proof.py` sends nothing anywhere - the audio is
+decoded by the local model, which is why it can be run on a machine with no API key.
 
 The demo pages' confirmation text now says so out loud, because it previously read
 "Booked 2 seats… Reference PNR101017" - indistinguishable from a completed purchase to

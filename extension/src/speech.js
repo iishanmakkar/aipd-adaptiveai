@@ -49,8 +49,13 @@
         // result, so announcements would have failed with nothing recorded.
         chrome.offscreen.createDocument({
           url: URL,
-          reasons: ['AUDIO_PLAYBACK'],
-          justification: 'Reading page state aloud to a blind user',
+          // Both, created once: AUDIO_PLAYBACK for narration and USER_MEDIA for the
+          // microphone. Chrome will not let a document that was opened for audio
+          // playback call getUserMedia, and only one offscreen document may exist,
+          // so the second half would have failed with a permission error no caller
+          // could explain to a user.
+          reasons: ['AUDIO_PLAYBACK', 'USER_MEDIA'],
+          justification: 'Reading page state aloud, and listening for a spoken command',
         }, function () {
           if (chrome.runtime.lastError) {
             var msg = String(chrome.runtime.lastError.message || '');
@@ -135,7 +140,26 @@
     return send({ type: 'adaptiveai:stop-speaking' });
   }
 
-  var AdaptiveAISpeech = { speak: speak, stop: stop, log: log,
+  // Capture is the same document's other job. The bytes are handed straight back
+  // to the worker, which posts them to the user's own backend for transcription and
+  // then forgets them: nothing here writes audio to storage, and nothing here keeps
+  // a transcript beyond the caller's answer.
+  function listen(maxMs) {
+    return ensureLive().then(function (state) {
+      if (!state || !state.ok) {
+        return { ok: false, reason: 'speech document unavailable: ' +
+               (state && state.reason || 'not created') };
+      }
+      return send({ type: 'adaptiveai:listen', maxMs: maxMs });
+    });
+  }
+
+  function stopListening() {
+    return send({ type: 'adaptiveai:stop-listening' });
+  }
+
+  var AdaptiveAISpeech = { speak: speak, stop: stop, log: log, listen: listen,
+                           stopListening: stopListening,
                            ensureDocument: ensureDocument, URL: URL };
   global.AdaptiveAISpeech = AdaptiveAISpeech;
   if (typeof module !== 'undefined' && module.exports) module.exports = AdaptiveAISpeech;

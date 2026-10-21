@@ -119,6 +119,19 @@
   }
 
   document.getElementById('run').addEventListener('click', runTask);
+  document.getElementById('listen').addEventListener('click', async function () {
+    say('Listening. Speak now.');
+    // The capture and the transcription both happen in the worker; this page only
+    // shows the words. If the microphone, the permission or the transcriber
+    // failed, the reason is said plainly rather than leaving an empty box.
+    var reply = await send({ type: 'adaptiveai:voice', maxMs: 8000 });
+    if (!reply || !reply.ok) {
+      say('I could not hear you: ' + ((reply && reply.reason) || 'no answer'));
+      return;
+    }
+    goalEl.value = reply.text;
+    say('You said: ' + reply.text);
+  });
   goalEl.addEventListener('keydown', function (event) {
     if (event.key === 'Enter') { event.preventDefault(); runTask(); }
   });

@@ -87,8 +87,82 @@
     return { ok: true };
   }
 
+  // ---- microphone ----------------------------------------------------------
+  //
+  // This document is the only place in the extension with `navigator.mediaDevices`,
+  // which is why the offscreen document owns both directions of the voice path.
+  // Audio goes back to the worker as bytes and no further: it is posted straight to
+  // the user's own backend for transcription and is never written to storage, never
+  // logged, and never part of the run transcript.
+  var recording = null;
+
+  function listen(maxMs) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return Promise.resolve({ ok: false, reason: 'this browser exposes no microphone here' });
+    }
+    if (recording) return Promise.resolve({ ok: false, reason: 'already listening' });
+    var limit = Math.min(Math.max(Number(maxMs) || 8000, 500), 60000);
+    return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      var chunks = [];
+      var mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus' : '';
+      var recorder = mime ? new MediaRecorder(stream, { mimeType: mime })
+                          : new MediaRecorder(stream);
+      recorder.ondataavailable = function (event) {
+        if (event.data && event.data.size) chunks.push(event.data);
+      };
+      var stopped = new Promise(function (resolve) {
+        recorder.onstop = function () {
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          var blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+          recording = null;
+          resolve(blob.arrayBuffer().then(function (buffer) {
+            // Base64, not the ArrayBuffer: extension messaging hands a worker an
+            // `{}` where an ArrayBuffer was sent, so the first version of this
+            // reported "the microphone captured nothing" for a microphone that had
+            // recorded 24 KB. The byte count travels beside it so a caller can tell
+            // an empty take from a working one without decoding anything.
+            var view = new Uint8Array(buffer);
+            var binary = '';
+            for (var i = 0; i < view.length; i++) binary += String.fromCharCode(view[i]);
+            return { ok: true, mime: blob.type, bytes: buffer.byteLength,
+                     audioB64: btoa(binary) };
+          }));
+        };
+      });
+      // The 250 ms timeslice is not a nicety: `start()` with no timeslice fired no
+      // `dataavailable` before `stop` on this Chromium, so the recorder produced a
+      // valid webm header with zero audio and the extension reported "the
+      // microphone captured nothing" for a microphone that was working.
+      recorder.start(250);
+      recording = { recorder: recorder, stopped: stopped, stream: stream };
+      // A hard ceiling, not a guess at how long the user needs: a held-open
+      // microphone keeps recording into a buffer with no bound and no notice.
+      var timer = setTimeout(function () { stopListening(); }, limit);
+      return stopped.then(function (result) { clearTimeout(timer); return result; });
+    }, function (e) {
+      // A refused or absent device is reported as itself. "I could not hear you"
+      // and "you did not grant the microphone" are different instructions.
+      return { ok: false, reason: String(e && e.name || e).slice(0, 120) };
+    });
+  }
+
+  function stopListening() {
+    if (!recording) return { ok: false, reason: 'not listening' };
+    try { recording.recorder.stop(); } catch (e) { return { ok: false, reason: String(e) }; }
+    return { ok: true };
+  }
+
   chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
     if (!message || !message.type) return false;
+    if (message.type === 'adaptiveai:listen') {
+      listen(message.maxMs).then(sendResponse);
+      return true;
+    }
+    if (message.type === 'adaptiveai:stop-listening') {
+      sendResponse(stopListening());
+      return false;
+    }
     if (message.type === 'adaptiveai:ping') {
       // A health check, not a no-op: `createDocument` resolves before this script
       // has run, so the worker's first announcement used to arrive at a document

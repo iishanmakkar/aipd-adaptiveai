@@ -2,10 +2,11 @@
 
 ## Current: this host, no Docker
 
-Measured **2026-10-21** on the working tree at `17e838e` + the extension task loop, with
+Measured **2026-10-21** on the working tree at `1fc6aba` + the voice path, with
 
 ```bash
 bash scripts/verify-host.sh        # all five suites, non-zero on any failure
+bash scripts/verify-host.sh backend
 ```
 
 | Suite | Result |
@@ -14,8 +15,33 @@ bash scripts/verify-host.sh        # all five suites, non-zero on any failure
 | agents | **102 passed**, 1 deselected |
 | intent-engine | **134 passed**, 2 deselected |
 | browser-agent | **62 passed** |
-| extension (real Chromium) | **112 passed** |
-| **Python total** | **658 passed**, 1 skipped, 3 deselected |
+| extension (real Chromium) | **118 passed** |
+| **Python total** | **664 passed**, 1 skipped, 3 deselected |
+
+Interpreter: `Python 3.14.7` in `.venv`, created with `--system-site-packages`.
+
+## The two proofs that leave the suite
+
+```bash
+.venv/Scripts/python.exe scripts/stt_local_proof.py           # exit 0 here
+.venv/Scripts/python.exe scripts/extension_step_live_proof.py # exit 3 here
+```
+
+`stt_local_proof.py` speaks "book two tickets for the seven pm show" through the
+operating system's own text-to-speech, uploads the WAV to the real
+`/api/transcribe`, and gets back **"book 2 tickets for the 7 p.m. show."** —
+decoded locally by faster-whisper, no cloud key involved. It found two things on
+the way: `faster-whisper` calls `av.open(..., metadata_errors=...)`, which
+**PyAV 19 removed**, so the host needs `av==15.1.0` (the pinned `av==13.0.0` has
+no Python 3.14 wheel at all); and the route's response field is `transcript`, while
+the extension's worker was reading `text` — so every successful transcription would
+have come back as "I heard no words in that". The second is fixed; the first is an
+environment deviation, not the shipped dependency set.
+
+`extension_step_live_proof.py` exits **3, inconclusive**: `backend/.env` on this
+machine holds `NIM_API_KEY=your-nim-api-key`, a placeholder, so NIM answers 401 and
+no live-model claim in this repository is reproducible here. It is not a pass, and
+the script says so rather than falling through to green.
 
 Interpreter: `Python 3.14.7` in `.venv`, created with `--system-site-packages`.
 
@@ -35,6 +61,8 @@ python -m venv --system-site-packages .venv
 .venv/Scripts/python.exe -m pip install "python-jose[cryptography]==3.4.0" bcrypt==5.0.0 \
   redis==5.2.1 email-validator==2.2.0 openai==1.54.0 httpx==0.27.2 pytest==8.4.2 \
   pytest-asyncio==0.26.0 "sentence-transformers==3.2.0" faiss-cpu
+# only for scripts/stt_local_proof.py - see "The two proofs that leave the suite"
+.venv/Scripts/python.exe -m pip install "faster-whisper==1.1.1" "av==15.1.0"
 ```
 
 `asyncpg` cannot be installed here at all (no wheel for Python 3.14 and no C
