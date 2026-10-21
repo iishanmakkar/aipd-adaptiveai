@@ -314,16 +314,33 @@ class ReplayAgent:
                         await page.wait_for_load_state("load", timeout=10000)
                     except Exception:
                         pass
-                else:
-                    # Choice click: verify checked state when exposed.
+                    return {"status": "success", "action": action_type,
+                            "field_id": field_id, "label": label}
+
+                # Choice click. Nobody is looking at the screen, so the checked
+                # state IS the success signal - a click that leaves the box
+                # unchecked must never be reported as done. Some radios and
+                # checkboxes only flip on a second pass (label wiring), so retry
+                # once before failing.
+                checked = False
+                for attempt in (1, 2):
                     try:
                         checked = await field.is_checked()
-                        if not checked:
-                            pass  # radio may need second pass; report success w/ state
                     except Exception:
-                        pass
-                return {"status": "success", "action": action_type, "field_id": field_id,
-                        "label": label}
+                        checked = False
+                    if checked:
+                        break
+                    if attempt == 1:
+                        try:
+                            await field.click(timeout=5000)
+                        except Exception:
+                            break
+                if not checked:
+                    return {"status": "failed", "action": action_type,
+                            "field_id": field_id, "label": label,
+                            "reason": "still not checked after two click passes"}
+                return {"status": "success", "action": action_type,
+                        "field_id": field_id, "label": label}
 
             elif action_type == "select":
                 # Handle dropdown selection
