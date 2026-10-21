@@ -43,7 +43,7 @@ def test_register_and_login_are_503_without_db(client):
 def test_me_without_token_is_401(client):
     """Auth must reject a missing token. Without a DB the dependency chain
     short-circuits to 503, so override get_db to reach the credential check."""
-    from conftest import FakeSession
+    from tests.conftest import FakeSession
     from app.database import get_db
 
     async def fake_db():
@@ -59,7 +59,7 @@ def test_me_without_token_is_401(client):
 
 
 def test_me_with_garbage_token_is_401(client):
-    from conftest import FakeSession
+    from tests.conftest import FakeSession
     from app.database import get_db
 
     async def fake_db():

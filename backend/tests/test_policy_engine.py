@@ -77,7 +77,7 @@ async def test_first_time_user_gets_welcome(rewrites):
 async def test_established_standard_user_is_untouched(rewrites):
     """Only an established session (>= 3 messages) skips every rule; db=None
     means 'no history', which is itself the first-time-user case."""
-    from conftest import FakeResult, FakeSession
+    from tests.conftest import FakeResult, FakeSession
     out = await adjust_response(
         raw_answer="Plain answer", user_prefs=_prefs(VerbosityLevel.standard),
         clarifying_count=0, session_context={"message_count": 10},
@@ -145,7 +145,7 @@ async def test_no_db_means_zero_counts():
 
 def _established_db():
     """FakeSession reporting >= 3 messages so Rule 4 (first-time user) passes through."""
-    from conftest import FakeResult, FakeSession
+    from tests.conftest import FakeResult, FakeSession
     return FakeSession([FakeResult(["m1", "m2", "m3", "m4"])])
 
 

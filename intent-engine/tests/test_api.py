@@ -148,7 +148,9 @@ def test_response_is_always_schema_valid(client, monkeypatch):
     monkeypatch.setattr(service, "llm_classify", boom)
     data = client.post("/intent/classify", json=_body()).json()
     assert set(data) == {"intent", "target_agent", "extracted_entity",
-                         "reasoning", "confidence", "ambiguous"}
+                         "reasoning", "confidence", "confidence_source",
+                         "ambiguous"}
+    assert data["confidence_source"] in ("llm", "keyword", "default")
     assert isinstance(data["confidence"], (int, float))
     assert isinstance(data["ambiguous"], bool)
     ClassifyResponse(**data)  # raises if the service emitted an invalid label

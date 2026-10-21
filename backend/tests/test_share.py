@@ -8,7 +8,7 @@ import time
 import uuid
 from types import SimpleNamespace
 
-from conftest import FakeResult, FakeSession
+from tests.conftest import FakeResult, FakeSession
 from app.api.auth import get_current_user
 from app.database import get_db
 from app.models.message import MessageRole

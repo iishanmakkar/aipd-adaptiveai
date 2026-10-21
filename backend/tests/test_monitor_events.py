@@ -2,7 +2,7 @@
 import uuid
 from types import SimpleNamespace
 
-from conftest import FakeResult, FakeSession
+from tests.conftest import FakeResult, FakeSession
 from app.api.auth import get_current_user_optional
 from app.database import get_db
 import app.api.routes_monitor as rm

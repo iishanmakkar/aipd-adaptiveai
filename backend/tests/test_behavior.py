@@ -6,7 +6,7 @@ check as /api/query: unknown sessions 404, bad UUIDs 400, no DB 503s.
 import pytest
 from types import SimpleNamespace
 
-from conftest import FakeResult, FakeSession
+from tests.conftest import FakeResult, FakeSession
 from app.database import get_db
 
 

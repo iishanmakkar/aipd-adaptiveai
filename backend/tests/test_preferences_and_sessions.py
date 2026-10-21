@@ -8,7 +8,7 @@ is locked here without a database; the real-Postgres flow is covered by the
 import pytest
 from types import SimpleNamespace
 
-from conftest import FakeResult, FakeSession
+from tests.conftest import FakeResult, FakeSession
 from app.database import get_db
 from app.models.preference import VerbosityLevel
 
