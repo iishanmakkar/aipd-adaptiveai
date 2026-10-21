@@ -97,6 +97,15 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
+      # The runtime image deliberately ships no test suite or test deps, so
+      # without this mount `docker compose exec backend python -m pytest` finds
+      # zero tests and exits 5 - which reads like a pass unless you check the
+      # exit code. Mounted read-only; see scripts/verify.sh.
+      - ./backend/tests:/app/tests:ro
+      # Also absent from the image, and it is what sets asyncio_mode = auto.
+      # Without it every async test fails as "async def functions are not
+      # natively supported", which looks like a codebase of 46 broken tests.
+      - ./backend/pytest.ini:/app/pytest.ini:ro
     environment:
       - INTENT_SERVICE_URL=http://intent-engine:8001
       - AGENT_SERVICE_URL=http://agents:8002

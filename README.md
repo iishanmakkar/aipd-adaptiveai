@@ -306,18 +306,28 @@ real browser and reports each action.
 ## 5. Testing
 
 ```powershell
-# Verified 2026-10-06 on host (all Phase 1-4 completions + Round 10 wiring):
-cd intent-engine; python -m pytest     # 129 passed, 2 deselected (live) - keyword + HTTP contract + rate-limit bound + 13-intent routing
-cd agents; python -m pytest            # 98 passed, 1 deselected - RAG seed reconciliation, registry (11 agents), orchestrate, API, prompt contracts,
-                                       #   vector store (faiss, or the numpy exact-IP fallback when Smart App Control blocks the faiss DLL)
-cd browser-agent; python -m pytest -m "not live"   # 42 passed - sessions, monitor gating/ceiling/consent, driver guards
-cd backend; python -m pytest           # 185 passed, 1 skipped - policy (Rules 1-5), clients, auth,
+# Verified 2026-10-21 with `bash scripts/verify.sh` (suites run INSIDE the service
+# containers - see docs/verification-baseline.md for why the host cannot run them):
+bash scripts/verify.sh backend         # 198 passed, 1 skipped - policy (Rules 1-5), clients, auth,
                                        #   degrade, behavior + form-fill + SSRF contracts, hardening,
-                                       #   clarify-on-unsure rule, UnifiedContext/SharedDict/braille/share/orchestrate
-cd frontend; npm run build             # tsc strict + vite pass (135 modules; verified 2026-10-06)
+                                       #   clarify-on-unsure, UnifiedContext/SharedDict/braille/share/
+                                       #   orchestrate, millisecond shared-store TTLs
+bash scripts/verify.sh agents          # 101 passed, 1 deselected - RAG seed reconciliation, registry
+                                       #   (11 agents), orchestrate, API, prompt contracts, vector store
+                                       #   (faiss, or the numpy exact-IP fallback when Smart App Control
+                                       #   blocks the faiss DLL)
+bash scripts/verify.sh intent-engine   # 129 passed, 2 deselected - keyword + HTTP contract +
+                                       #   rate-limit bound + 13-intent routing
+bash scripts/verify.sh browser-agent   # 44 passed - sessions, monitor gating/ceiling/consent, driver guards
+cd frontend; npm run build             # tsc strict + vite pass
 python frontend/a11y_audit.py http://localhost:5173   # keyboard + ARIA contract (needs the stack up)
 docker compose config --quiet          # 7 services parse (6 + redis shared store)
 ```
+
+Total: **472 passed, 1 skipped, 3 deselected**. `verify.sh` exits non-zero when a
+suite fails *or collects zero tests* — the previous host-only instructions could not
+tell those two apart, and both the missing `pytest.ini` mount and the TTL bug in
+`docs/verification-baseline.md` were invisible for that reason.
 
 At `v1.0` the total was **218 offline green** (68 + 64 + 86); the 2026-09-21
 re-verification totals **256 passed + 1 skipped**; the 2026-10-06
