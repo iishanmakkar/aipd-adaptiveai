@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import os
 import time
 from collections import OrderedDict
@@ -64,9 +63,16 @@ class SharedStore:
         if _client is not None:
             try:
                 if ttl_seconds:
-                    # Redis takes whole seconds: ceil (min 1) so sub-second
-                    # TTLs survive instead of int() truncating them to 0.
-                    _client.setex(self._key(key), max(1, math.ceil(ttl_seconds)), payload)
+                    # PX (milliseconds), not SETEX (whole seconds). Rounding up
+                    # with ceil() gave a 0.05 s TTL a 1 s life in Redis while the
+                    # local copy expired immediately, and get() reads Redis first
+                    # - so dead confirmations and expired share tokens kept
+                    # reading back as live. max(1, ...) keeps a sub-millisecond
+                    # TTL from rounding down to 0.
+                    _client.set(
+                        self._key(key), payload,
+                        px=max(1, round(ttl_seconds * 1000)),
+                    )
                 else:
                     _client.set(self._key(key), payload)
             except Exception as e:

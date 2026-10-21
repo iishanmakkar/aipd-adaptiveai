@@ -118,27 +118,40 @@ def test_vlm_single_route_registered():
     assert paths == [], "trailing-slash duplicate must be gone"
 
 
-def test_shared_store_ttl_ceiling_minimum_one(monkeypatch):
+def test_shared_store_ttl_is_millisecond_precise_and_never_zero(monkeypatch):
+    """Two contracts, both real: a TTL must keep sub-second precision, and it must
+    never round down to 0 (Redis treats that as no expiry).
+
+    This replaces the old ceil-to-1s SETEX assertion. Rounding UP was that test's
+    fix for rounding down, but it made Redis outlive the local copy on short
+    TTLs, and get() reads Redis first - so expired confirmations and share tokens
+    kept reading back as live. PX milliseconds satisfies both."""
     import app.services.session_memory as sm
     sm._client = None
-    store = sm.SharedStore(namespace="t1")
     calls = {}
 
     class FakeRedis:
-        def setex(self, k, ttl, payload):
-            calls["ttl"] = ttl
-
-        def set(self, k, payload):
-            calls["ttl"] = "no-expire"
+        def set(self, k, payload, ex=None, px=None):
+            calls["ex"], calls["px"] = ex, px
 
         def ttl(self, k):
             return 5
 
     monkeypatch.setattr(sm, "_client", FakeRedis())
+    store = sm.SharedStore(namespace="t1")
+
     store.set("k", {"a": 1}, ttl_seconds=0.4)
-    assert calls["ttl"] == 1
+    assert calls["px"] == 400 and calls["ex"] is None
+
     store.set("k", {"a": 1}, ttl_seconds=1.2)
-    assert calls["ttl"] == 2
+    assert calls["px"] == 1200
+
+    store.set("k", {"a": 1}, ttl_seconds=0.0001)
+    assert calls["px"] >= 1, "a live TTL must never round down to 0"
+
+    calls.clear()
+    store.set("k", {"a": 1})
+    assert calls["px"] is None and calls["ex"] is None, "no TTL means no expiry arg"
 
 
 def test_shared_dict_rewrite_preserves_absolute_expiry():
