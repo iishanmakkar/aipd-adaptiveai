@@ -161,7 +161,10 @@ async def _navigate_session(session, url: str, request_id: Optional[str]) -> Dic
     session.url = nav["url"]
     session.title = nav.get("title", "")
     session.touch()
-    robots_ok, robots_reason = True, "no host to check"
+    # A non-http target has no robots.txt to consult, which is NOT the same
+    # statement as "allowed": logging the default as an allow made every data:
+    # and file: navigation look robots-cleared in the session log.
+    robots_ok, robots_reason = True, "not_applicable (non-http target)"
     if url.startswith(("http://", "https://")):
         robots_ok, robots_reason = await sessions.robots.allowed(url)
     session.log("navigate", url=url, http_status=nav.get("http_status"),
