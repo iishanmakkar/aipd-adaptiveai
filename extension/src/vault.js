@@ -108,6 +108,33 @@
     });
   }
 
+  /**
+   * Save several fields in one read + one write.
+   *
+   * set() is read-modify-write, so N concurrent calls each start from the same
+   * snapshot and the LAST write wins - saving a whole form silently kept one
+   * field out of four (found by the options page test, where only 'email'
+   * survived). Batch writes are the only safe shape for a form.
+   */
+  function setMany(pairs) {
+    var map = {};
+    var skipped = [];
+    (pairs || []).forEach(function (pair) {
+      var label = pair[0], value = pair[1];
+      if (isNeverStored(label)) { skipped.push(label); return; }
+      var key = canonical(label);
+      if (!key || value === null || value === undefined || String(value).trim() === '') return;
+      map[key] = String(value);
+    });
+    if (!Object.keys(map).length) return Promise.resolve({ ok: true, saved: 0, skipped: skipped });
+    return read().then(function (existing) {
+      Object.keys(map).forEach(function (k) { existing[k] = map[k]; });
+      return write(existing).then(function () {
+        return { ok: true, saved: Object.keys(map).length, skipped: skipped };
+      });
+    });
+  }
+
   function set(label, value) {
     if (isNeverStored(label)) {
       return Promise.resolve({ ok: false, reason: 'AdaptiveAI never stores ' + label });
@@ -137,14 +164,46 @@
   function wipe() {
     var s = store();
     if (!s) return Promise.resolve(false);
-    return new Promise(function (resolve) { s.remove([STORE_KEY], function () { resolve(true); }); });
+    return new Promise(function (resolve) {
+      s.remove([STORE_KEY, CEILING_KEY], function () { resolve(true); });
+    });
+  }
+
+  // The spending ceiling is a user decision, not a default the code invents, so it
+  // is stored separately from profile values and read only when present.
+  var CEILING_KEY = 'adaptiveai_spend_ceiling';
+
+  function setSpendCeiling(value) {
+    var s = store();
+    if (!s) return Promise.resolve(false);
+    var n = Number(value);
+    if (!isFinite(n) || n <= 0) return Promise.resolve(false);
+    return new Promise(function (resolve) {
+      var payload = {};
+      payload[CEILING_KEY] = n;
+      s.set(payload, function () { resolve(n); });
+    });
+  }
+
+  function spendCeiling() {
+    var s = store();
+    if (!s) return Promise.resolve(null);
+    return new Promise(function (resolve) {
+      s.get([CEILING_KEY], function (data) {
+        var v = data && data[CEILING_KEY];
+        resolve(typeof v === 'number' && v > 0 ? v : null);
+      });
+    });
   }
 
   var AdaptiveAIVault = {
     set: set,
+    setMany: setMany,
     resolve: resolve,
     availableLabels: availableLabels,
     wipe: wipe,
+    setSpendCeiling: setSpendCeiling,
+    spendCeiling: spendCeiling,
     canonical: canonical,
     normalise: normalise,
     isNeverStored: isNeverStored,

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AdaptiveAI — my details</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 15px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 46rem; padding: 16px 20px 48px; }
+    h1 { font-size: 1.35rem; }
+    fieldset { border: 1px solid #8884; border-radius: 6px; margin: 0 0 18px; padding: 12px 14px 16px; }
+    legend { font-weight: 600; padding: 0 4px; }
+    .row { display: grid; grid-template-columns: 1fr; gap: 4px; margin: 10px 0; }
+    label { font-weight: 600; }
+    .hint { font-size: .86rem; opacity: .8; margin: 0; }
+    input { font: inherit; padding: 8px 10px; border-radius: 6px; border: 1px solid #8888; width: 100%; box-sizing: border-box; }
+    input:focus-visible, button:focus-visible { outline: 3px solid Highlight; outline-offset: 2px; }
+    button { font: inherit; padding: 9px 14px; border-radius: 6px; border: 1px solid #8888; background: buttonface; cursor: pointer; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    #status { margin: 14px 0; font-weight: 600; }
+    .danger { border-color: #b00020; color: #b00020; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AdaptiveAI — my details</h1>
+    <p id="privacy" class="hint">
+      These values are kept on this computer by this extension. They are not sent to
+      AdaptiveAI's server, which only ever sees the names of the fields you have
+      filled in. Nothing here is filled in for you on password or one-time-code
+      fields, and the extension cannot spend money without you saying yes.
+    </p>
+
+    <p id="status" role="status" aria-live="polite"></p>
+
+    <form id="details">
+      <fieldset>
+        <legend>Identity</legend>
+        <div class="row">
+          <label for="f-full-name">Full name</label>
+          <input id="f-full-name" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="row">
+          <label for="f-date-of-birth">Date of birth</label>
+          <input id="f-date-of-birth" autocomplete="off" spellcheck="false">
+          <p class="hint">Type it however you like; the assistant matches what the page asks for.</p>
+        </div>
+        <div class="row">
+          <label for="f-pan-number">PAN number</label>
+          <input id="f-pan-number" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="row">
+          <label for="f-aadhaar-number">Aadhaar number</label>
+          <input id="f-aadhaar-number" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="row">
+          <label for="f-passport">Passport number</label>
+          <input id="f-passport" autocomplete="off" spellcheck="false">
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Contact and place</legend>
+        <div class="row">
+          <label for="f-email">Email</label>
+          <input id="f-email" type="email" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="row">
+          <label for="f-phone">Phone</label>
+          <input id="f-phone" type="tel" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="row">
+          <label for="f-address">Address</label>
+          <input id="f-address" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="row">
+          <label for="f-city">City</label>
+          <input id="f-city" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="row">
+          <label for="f-pin-code">PIN code</label>
+          <input id="f-pin-code" autocomplete="off" spellcheck="false">
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Spending</legend>
+        <div class="row">
+          <label for="f-ceiling">Ask me twice above this amount (rupees)</label>
+          <input id="f-ceiling" type="number" min="1" step="1" inputmode="numeric">
+          <p class="hint">Optional. Nothing is ever paid for you: any payment or booking
+          button stops and asks first. This only adds a second confirmation for
+          larger amounts.</p>
+        </div>
+      </fieldset>
+
+      <div class="actions">
+        <button type="submit" id="save">Save my details</button>
+        <button type="button" id="wipe" class="danger">Delete everything</button>
+      </div>
+    </form>
+  </main>
+  <script src="src/vault.js"></script>
+  <script src="src/options.js"></script>
+</body>
+</html>

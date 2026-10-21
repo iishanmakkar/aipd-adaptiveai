@@ -125,6 +125,36 @@ def test_only_labels_may_ever_leave_the_device(page):
     assert "123456789012" not in out["blob"]
 
 
+def test_batched_save_keeps_every_field(page):
+    """set() is read-modify-write, so N of them in flight each start from the same
+    snapshot and the last write wins. That is how a four-field profile form ended up
+    storing one field; setMany does one read and one write."""
+    out = json.loads(json.dumps(page.evaluate("""async () => {
+        await AdaptiveAIVault.wipe();
+        const res = await AdaptiveAIVault.setMany([
+            ['Passenger name', 'Asha Sharma'],
+            ['Email address', 'asha@example.com'],
+            ['Phone', '9876543210'],
+            ['City', 'Chandigarh'],
+        ]);
+        return { saved: res.saved, labels: await AdaptiveAIVault.availableLabels() };
+    }""")))
+    assert out["saved"] == 4, out
+    assert set(out["labels"]) == {"full name", "email", "phone", "city"}, out
+
+
+def test_batched_save_still_refuses_credentials(page):
+    out = json.loads(json.dumps(page.evaluate("""async () => {
+        await AdaptiveAIVault.wipe();
+        const res = await AdaptiveAIVault.setMany([
+            ['Password', 'hunter2'], ['Enter OTP', '123456'], ['Email address', 'a@b.co'],
+        ]);
+        return { skipped: res.skipped, labels: await AdaptiveAIVault.availableLabels() };
+    }""")))
+    assert out["skipped"] == ["Password", "Enter OTP"], out
+    assert out["labels"] == ["email"], out
+
+
 def test_wipe_removes_everything(page):
     out = json.loads(json.dumps(page.evaluate(
         """async () => {

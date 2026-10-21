@@ -50,5 +50,8 @@
   }
 
   document.getElementById('recheck').addEventListener('click', request);
+  document.getElementById('setup').addEventListener('click', function () {
+    chrome.runtime.openOptionsPage();
+  });
   request();
 })();
