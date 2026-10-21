@@ -3,6 +3,7 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 import bcrypt
+import logging
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -107,6 +108,9 @@ async def get_current_user_optional(
                 detail="Not authenticated",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        # Covers every demo path below, ephemeral or persistent: this caller sent
+        # no credential, so nothing makes their data theirs.
+        log_demo_identity_in_use("tokenless request served in DEBUG")
         if not is_db_available():
             return DemoUser()
         # Try to get or create persistent demo user for real DB mode (no fake random id each request)
@@ -181,13 +185,28 @@ async def get_current_user_optional(
     return user
 
 
-# Demo mode: mock user for testing without database
+# Ephemeral DEBUG identity for the no-token path in get_current_user_optional,
+# used when there is no database to look a real user up in. Never a dependency,
+# never a production identity: get_demo_user() was deleted because a helper that
+# mints a random-UUID user with no credential behind it does not belong in an
+# auth module - and nothing in the repo ever called it.
 class DemoUser:
     def __init__(self):
         self.id = uuid4()
         self.email = "demo@example.com"
 
 
-async def get_demo_user() -> DemoUser:
-    """Return a mock user for demo mode (no DB required)."""
-    return DemoUser()
+_demo_notice_logged = False
+
+
+def log_demo_identity_in_use(reason: str) -> None:
+    """Say it once, loudly: every tokenless DEBUG caller shares this identity, so
+    "history" and "preferences" are one shared bucket, not per-user state.
+    Production refuses to boot in DEBUG, so this cannot fire there."""
+    global _demo_notice_logged
+    if not _demo_notice_logged:
+        _demo_notice_logged = True
+        logging.getLogger("adaptiveai.auth").warning(
+            "DEBUG demo identity in use (%s): history and preferences are shared "
+            "by every tokenless caller. Production refuses DEBUG boot by design.",
+            reason)
