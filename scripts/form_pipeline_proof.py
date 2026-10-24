@@ -148,7 +148,7 @@ def main() -> int:
         print("\nchecks:")
         for name, ok in checks.items():
             print(f"  [{'PASS' if ok else 'FAIL'}] {name}")
-        return 0 if all(checks.values()) else 1
+        exit_code = 0 if all(checks.values()) else 1
     finally:
         with open(DEMO_FILE, "wb") as handle:
             handle.write(original)
@@ -157,7 +157,13 @@ def main() -> int:
         print(f"\n[demo page restored, byte-identical: {identical}]")
         if not identical:
             print("  WARNING: the demo file did not come back unchanged")
-            return 1
+            # A `return` HERE would be a return inside `finally`: it would
+            # swallow any exception raised above (reporting a restore problem
+            # instead of the real failure) and override the checks' exit code.
+            # Flag it instead, and let the exception propagate if there was
+            # one; either way the caller sees a failure.
+            exit_code = 1
+    return exit_code
 
 
 if __name__ == "__main__":

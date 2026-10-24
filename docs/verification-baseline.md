@@ -10,12 +10,12 @@ bash scripts/verify-host.sh        # all five suites, non-zero on any failure
 
 | Suite | Result |
 |---|---|
-| backend | **253 passed** |
+| backend | **253 passed**, 1 skipped |
 | agents | **103 passed**, 1 deselected |
 | intent-engine | **135 passed**, 2 deselected |
 | browser-agent | **63 passed** |
 | extension (real Chromium) | **140 passed** |
-| **Python total** | **694 passed**, 3 deselected |
+| **Python total** | **694 passed**, 1 skipped, 3 deselected |
 
 Frontend `npm run build` (tsc strict + Vite) is clean on the same tree. Every
 number above was produced by running the suites on this host, each exiting 0;
@@ -48,6 +48,13 @@ Interpreter: `Python 3.14.7` in `.venv`, created with `--system-site-packages`.
 .venv/Scripts/python.exe scripts/stt_local_proof.py           # exit 0 here
 .venv/Scripts/python.exe scripts/extension_step_live_proof.py # exit 3 here
 ```
+
+Re-run **2026-10-24** on this tree: `stt_local_proof.py` exited **0** — the OS
+voice spoke "book two tickets for the seven pm show" (135 KB WAV), the real
+`/api/transcribe` route decoded it with faster-whisper and returned **"book 2
+tickets for the 7 p.m. show."**; `extension_step_live_proof.py` exited **3**,
+inconclusive: `backend/.env` still holds the placeholder key, NIM answered 401
+("Invalid JWT serialization"), and the script said so instead of passing.
 
 `stt_local_proof.py` speaks "book two tickets for the seven pm show" through the
 operating system's own text-to-speech, uploads the WAV to the real

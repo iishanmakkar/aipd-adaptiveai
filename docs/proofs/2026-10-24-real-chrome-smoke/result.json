@@ -64,7 +64,7 @@
         "Booked."
       ],
       "stepsVerified": 6,
-      "elapsedMs": 1244,
+      "elapsedMs": 11568,
       "historyLength": 6
     }
   },
@@ -80,5 +80,5 @@
   "narration_sample": [
     "About to Booking now.. This it reserves and usually charges. Say yes to go ahead, or no to stop."
   ],
-  "elapsed_s": 13
+  "elapsed_s": 46
 }
