@@ -327,11 +327,12 @@ real browser and reports each action.
 # .venv with --system-site-packages, so these runs use the host's newer fastapi/
 # pydantic/faiss - see docs/verification-baseline.md for what that does and does
 # not prove, and for the pinned-set run inside the containers):
-bash scripts/verify-host.sh backend         # 248 passed, 1 skipped - policy (Rules 1-5), clients,
+bash scripts/verify-host.sh backend         # 250 passed (re-measured 2026-10-24) - policy (Rules 1-5), clients,
                                        #   auth, degrade, behavior + form-fill + SSRF contracts,
                                        #   hardening, clarify-on-unsure, UnifiedContext/SharedDict/
                                        #   braille/share/orchestrate, millisecond shared-store TTLs,
                                        #   production boot refusals, the /api/extension/step contract
+                                       #   with step provenance (recipe vs model)
 bash scripts/verify-host.sh agents          # 102 passed, 1 deselected - RAG seed reconciliation,
                                        #   registry (11 agents), orchestrate, API, prompt contracts,
                                        #   vector store (faiss, or the numpy exact-IP fallback when
@@ -341,16 +342,18 @@ bash scripts/verify-host.sh intent-engine   # 134 passed, 2 deselected - keyword
                                        #   confidence provenance
 bash scripts/verify-host.sh browser-agent   # 62 passed - sessions, monitor gating/ceiling/consent,
                                        #   driver guards
-bash scripts/verify-host.sh extension       # 122 passed - every suite drives a real Chromium, incl.
-                                       #   the typed-goal loop end to end, the microphone
-                                       #   capture, and a key command that runs the whole thing
-cd frontend; npm run build             # tsc strict + vite pass
+bash scripts/verify-host.sh extension       # 140 passed (re-measured 2026-10-24) - every suite drives a real
+                                       #   Chromium, incl. the typed-goal loop end to end, the recipe
+                                       #   provenance e2e, the spoken yes/no at the spending gate
+                                       #   through the real capture path, and the microphone capture
+cd frontend; npm run build             # tsc strict + vite pass (re-verified 2026-10-24)
 python frontend/a11y_audit.py http://localhost:5173   # keyboard + ARIA contract (needs the stack up)
 docker compose config --quiet          # 7 services parse (6 + redis shared store)
 ```
 
-Total: **668 passed, 1 skipped, 3 deselected** (backend 248 + agents 102 +
-intent-engine 134 + browser-agent 62 + extension 122). Both runners exit non-zero
+Total: **688 passed** on 2026-10-24, every suite re-run on this host with exit 0
+(backend 250 + agents 102 + intent-engine 134 + browser-agent 62 + extension
+140). Both runners exit non-zero
 when a suite fails *or collects zero tests* — the previous host-only instructions
 could not tell those two apart, and both the missing `pytest.ini` mount and the
 TTL bug in `docs/verification-baseline.md` were invisible for that reason.
@@ -378,49 +381,62 @@ Live proofs: §2 table + §2C (each row is a command
 
 ## 6. Honest gaps (runbooks included, nothing faked)
 
-- **No real platform is supported yet.** The extension can now carry a typed goal all
-  the way through (plan → act → verify → speak) on a page it was pointed at, but no
-  site knowledge exists: there are no `extension/recipes/*.json`, no verified-trace
-  memory, and no task has ever been completed on BookMyShow, IRCTC, Swiggy/Zomato or
-  any other vendor. The only booking flow ever executed end to end is against this
-  repository's own demo form. The server-side browser has no cookies, no logged-in
-  session and no anti-bot handling, so it structurally cannot act on an authenticated
-  site. That is the reason for the extension design, and §7.1 of the spec states per
+- **No real booking has ever been completed on a vendor site.** The extension can
+  carry a typed or spoken goal all the way through (plan → act → verify → speak)
+  on a page it was pointed at, and site knowledge now exists as data:
+  `extension/recipes/*.json` (train / movie / food flows, roles + accessible-name
+  words only — never selectors or values) plus a verified-trace memory that only
+  records steps the page confirmed. RailYatri's live homepage has been **read** by
+  the loaded extension — 207 elements, 91% of names agreeing with Chrome's own AX
+  tree, the gate flagging both booking controls (`docs/proofs/2026-10-24-railyatri`)
+  — and the whole loop, gate and voice confirmation have been driven in the
+  machine's **installed browser** (`scripts/real_browser_smoke.py`,
+  `docs/proofs/2026-10-24-real-chrome-smoke/`). But the only booking flow ever
+  executed end to end is against this repository's own demo form, and the
+  recipes' step sequences say so in their `verifiedOn`. The server-side browser
+  has no cookies, no logged-in session and no anti-bot handling, so it
+  structurally cannot act on an authenticated site. That is the reason for the
+  extension design, and §7.1 of the spec states per
   platform how far it will get and which walls (CAPTCHA, OTP, payment frames) stay
   with the user.
-- **The extension works; nobody has used it to book anything.** `extension/` is a
+- **The extension works; nobody has used it to book anything on a vendor.** `extension/` is a
   working MV3 extension: accessible-name perception differential-tested against
   Chrome's own AX tree, an actor that only reports success with a readback, a
   spending gate enforced in the content script, change verification, a local profile
-  vault, a planner client that sends structure and resolves values on the device, a
+  vault, a planner client that sends structure and resolves values on the device,
+  site recipes that propose steps and label their provenance on the wire, a
   task loop that halts on a failed step and pauses at the gate, speech out through an
-  offscreen document, and speech in through a real capture path — 122 tests in real
-  Chromium, including the whole loop driven through an extension Chrome actually
-  loaded (voice command → transcript → plan → act → verify → spoken result), plus
+  offscreen document, and speech in through a real capture path — **140 tests in
+  real Chromium (2026-10-24)**, including the recipe provenance e2e, the spoken
+  yes/no at the gate through the real capture path (a misheard answer is asked
+  again, silence is still a no), and the whole loop driven through an extension
+  Chrome actually loaded (voice command → transcript → plan → act → verify →
+  spoken result), plus the real-browser smoke in the machine's installed Edge,
   `scripts/stt_local_proof.py` (the operating system's own voice speaks a
   sentence, `/api/transcribe` returns "book 2 tickets for the 7 p.m. show.") and
   `scripts/extension_step_live_proof.py`. A live-site perception proof
-  (`docs/proofs/README.md`) read 207 nodes on railyatri.in in 15 ms and independently
+  (`docs/proofs/README.md`) read 207 nodes on railyatri.in in 15 ms, reproduced on
+  2026-10-24, and independently
   flagged "Book Train Tickets" as gated. Not verified anywhere: a real microphone in
   a real room, NVDA reading this UI, and any completed task on a site this
   repository did not write.
 - **The booking vendors cannot be reached from an automated browser.** Measured
-  2026-10-21: BookMyShow served a Cloudflare challenge, IRCTC failed the HTTP/2
-  handshake, Swiggy returned an error status, and Wikipedia served an error page.
+  2026-10-21 and re-measured 2026-10-24: BookMyShow served a Cloudflare challenge,
+  IRCTC and Zomato failed the HTTP/2 handshake, Swiggy returned an error status,
+  and Wikipedia served an error page.
   That is not a bug to route around — it is the evidence that a server-side bot could
   never have done this honestly, and the reason the extension operates the user's own
   logged-in session instead. Per §3 of the spec there is no CAPTCHA solving, no
   credential storage and no payment automation here, so a fully hands-free IRCTC or
   BookMyShow booking is out of reach by design, not by omission.
-- **Verification is currently partial.** `docs/verification-baseline.md` records 472
-
-  passing tests measured on 2026-10-21 at Task 1 of the truth pass. Tests added since
-  for `backend`, `agents` and `intent-engine` are **not re-verified** — this host's
-  Docker Desktop died repeatedly during that session, and those suites only run in
-  containers. `bash scripts/verify.sh` is the command to re-establish the number, and
-  `browser-agent` (55 passed on the host) and `npm run build` are the two suites that do
-  run on the host. Treat any test total in this file older than the baseline document as
-  unconfirmed.
+- **Verification totals by surface.** `docs/verification-baseline.md` records 472
+  passing tests measured on 2026-10-21 at Task 1 of the truth pass. On
+  **2026-10-24** all five Python suites plus the frontend build were re-run on
+  this host and all exited 0: backend 250, agents 102, intent-engine 134,
+  browser-agent 62, extension 140, `npm run build` clean — 688 tests. The
+  container-runner number (`bash scripts/verify.sh`, last measured 472) has not
+  been re-established since that Docker Desktop session; treat it as the in-image
+  figure, and the 2026-10-24 host run as the current one.
 - **Several confidence numbers are still constants.** Browser and monitor turns answer
   with hardcoded 0.9/0.95 values. They now report `confidence_source: "unknown"` rather
   than pretending to be a model judgment, but the honest fix is to stop emitting a number
