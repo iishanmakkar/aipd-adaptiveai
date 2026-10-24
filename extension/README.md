@@ -60,6 +60,14 @@ extension says so and does nothing — it never plans locally.
 the popup reports how many controls it found, how many have no accessible name, and
 how many images have no alt text.
 
+That flow is also proven automatically in the machine's installed browser:
+`python scripts/real_browser_smoke.py` loads the unpacked extension into installed
+Edge (branded Chrome 137+ ignores `--load-extension`, measured), then drives the
+real surfaces — options page into the vault, a typed goal through the task loop,
+the recipe filling the passenger name, the gate asked and answered with the
+popup's own Yes button, and the Listen button putting transcribed words in the
+goal field. Latest proof: `docs/proofs/2026-10-24-real-chrome-smoke/result.json`.
+
 ## No default keyboard shortcut, on purpose
 
 `commands` entries ship **without** `suggested_key`, because a `Ctrl+Alt+…` default
