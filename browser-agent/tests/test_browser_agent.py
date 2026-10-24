@@ -108,13 +108,31 @@ async def test_natural_language_intent_is_declared_exploratory_not_planned():
 
 
 @pytest.mark.asyncio
-async def test_recognised_verb_is_not_marked_exploratory():
+async def test_commit_class_intents_are_refused_not_executed():
+    """click / fill / navigate on this route have NO consent gate, no CAPTCHA
+    check, no robots.txt, no budget and no audit entry - executing "Pay now"
+    here was a confirmation-free path around the session API's own gates. The
+    commit-class intents are refused; the read-only ones still run."""
     driver = FakeDriver()
     a = BrowserAgent(session_id="s5", driver=driver)
     a.tools = {"browser": CountingTool()}
     out = await a.execute_task("navigate_to_url", {"url": "http://example.com"})
-    assert out["status"] == "planned"
-    assert out["unsupported_intent"] is False
+    assert out["status"] == "refused", out
+    assert out["unsupported_intent"] is True
+    assert out["results"] == []
+    assert driver.started is False, "the driver must not even start for a refusal"
+    click = await a.execute_task("click_element", {"selector": "#pay-now"})
+    assert click["status"] == "refused", click
+    assert a.tools["browser"].calls == 0, "a refused intent must not reach any tool"
+
+
+@pytest.mark.asyncio
+async def test_read_only_intents_still_execute():
+    driver = FakeDriver()
+    a = BrowserAgent(session_id="s5b", driver=driver)
+    a.tools = {"accessibility_tree": CountingTool(), "browser": CountingTool()}
+    out = await a.execute_task("snapshot", {})
+    assert out["status"] == "planned", out
     assert out["steps_completed"] == 1
 
 

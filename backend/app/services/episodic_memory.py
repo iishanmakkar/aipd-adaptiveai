@@ -290,6 +290,16 @@ class EpisodicMemory:
             if episode.site_domain != host:
                 continue
             if episode.metadata.get("url") == url:
+                # An exact-URL match still has to be about the fields the
+                # caller asked for. Without this, the first episode cached for
+                # a URL - whoever cached it, for whatever fields - is replayed
+                # for any request to that URL, executing cached clicks the
+                # caller's request never described.
+                if query_words:
+                    field_words = set(episode_field_tokens(episode.actions))
+                    coverage = len(query_words & field_words) / len(query_words)
+                    if coverage < min_coverage:
+                        continue
                 await self.access_episode(episode.episode_id)
                 return episode, 1.0
             if not query_words:

@@ -60,7 +60,11 @@ class LLMClient:
         choices = getattr(response, "choices", None) or []
         content = choices[0].message.content if choices else None
         if not content:
-            raise ValueError("empty LLM response (no content)")
+            # RuntimeError, not ValueError: an empty/refusal completion is
+            # an UPSTREAM condition. ValueError was caught by the route's
+            # caller-error branch and reported 422 ("do not retry") for a
+            # model outage - the exact misreported failure class.
+            raise RuntimeError("empty LLM response (no content)")
         return content.strip()
 
     def _chat_anthropic(self, messages: List[Dict[str, str]]) -> str:
@@ -77,5 +81,5 @@ class LLMClient:
         texts = [getattr(b, "text", "") for b in blocks if getattr(b, "type", "text") == "text"]
         text = "".join(texts)
         if not text:
-            raise ValueError("empty LLM response (no text blocks)")
+            raise RuntimeError("empty LLM response (no text blocks)")
         return text.strip()

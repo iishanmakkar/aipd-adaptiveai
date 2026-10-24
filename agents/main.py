@@ -42,6 +42,12 @@ async def lifespan(app: FastAPI):
     # agent_registry` never sees the initial None at request time.
     import agents.registry as _registry_module
     _registry_module.agent_registry = agent_registry
+    # ...and on the package attribute: `from agents import agent_registry`
+    # (advertised in agents/__init__.py's __all__) otherwise stays bound to
+    # the import-time None forever - the same latent None the registry-module
+    # rebinding above exists to fix.
+    import agents as _agents_package
+    _agents_package.agent_registry = agent_registry
     
     print(f"Agent service started on port {settings.PORT}")
     print(f"Available agents: {agent_registry.get_all_names()}")
@@ -91,7 +97,10 @@ async def agent_respond(request: Request):
         # 422 for malformed JSON; without this it would 500.
         return JSONResponse(status_code=422, content={"detail": "Invalid JSON body"})
     try:
-        validated = AgentRespondRequest(**body)
+        # model_validate, not **body: a valid-JSON non-object body (a list,
+        # a string, null - one buggy client line) raised TypeError on **body,
+        # and TypeError is not ValidationError, so it surfaced as a 500.
+        validated = AgentRespondRequest.model_validate(body)
     except ValidationError as e:
         # Preserve FastAPI's 422 for a malformed body now that the handler
         # parses manually (to read X-Request-ID); without this it would 500.
@@ -118,7 +127,7 @@ async def agent_respond(request: Request):
             "error": str(e)[:200],
             "latency_ms": round((time.time() - started) * 1000, 1),
         }))
-        raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Agent error: {str(e)[:300]}")
 
     logger.info(json.dumps({
         "event": "agent_respond",
@@ -152,7 +161,7 @@ async def agent_orchestrate(request: Request):
     except Exception:
         return JSONResponse(status_code=422, content={"detail": "Invalid JSON body"})
     try:
-        validated = OrchestrateRequest(**body)
+        validated = OrchestrateRequest.model_validate(body)
     except ValidationError as e:
         return JSONResponse(status_code=422, content={"detail": json.loads(e.json())})
     # LLM routing with keyword fallback lives inside llm_route. The sync LLM
@@ -173,7 +182,7 @@ async def agent_orchestrate(request: Request):
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=422, detail=str(e)[:200])
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Agent error: {str(e)[:300]}")
     logger.info(json.dumps({
         "event": "agent_orchestrate",
         "request_id": request.headers.get("X-Request-ID"),

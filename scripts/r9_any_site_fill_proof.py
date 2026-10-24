@@ -129,14 +129,21 @@ def main():
     out1 = guided_fill(token, sid, "demo/gov-form-demo.html",
                        ["Ravi Kumar", "9876543210", "roads",
                         "Street light not working near block 4 for two weeks."])
-    _require(out1.strip(), "site 1 finished with an empty final answer")
+    # The old assertions passed for ANY non-empty prose - including "Sorry, I
+    # encountered an error." A proof whose fill loop can report an error page
+    # as success is not a proof: the answer must name the OUTCOME the demo
+    # page itself prints on a real submit (or the fill must have demonstrably
+    # happened). Anything else fails here.
+    _require("Grievance" in out1 or "Ticket" in out1 or "submitted" in out1.lower(),
+             f"site 1 never confirmed a submission, got: {out1[:200]!r}")
 
     print("== SITE 2: train ticket booking (text, email, select, radios)")
     sid2 = req(f"{BACKEND}/api/session", {}, token=token)["session_id"]
     _require(sid2 != sid, "the second page reused the first session - state leaked")
     out2 = guided_fill(token, sid2, "demo/book-tickets-monitored.html",
                        ["Asha Sharma", "asha@example.com", "2", "skip"])
-    _require(out2.strip(), "site 2 finished with an empty final answer")
+    _require("Booked" in out2 or "PNR" in out2,
+             f"site 2 never confirmed a booking, got: {out2[:200]!r}")
     print("== done")
     raise SystemExit(0)
 

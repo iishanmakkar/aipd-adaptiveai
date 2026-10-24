@@ -48,10 +48,14 @@ class ReplayAgent:
             return {"status": "failed", "reason": "Cached episode has no actions",
                     "episode_id": episode_id, "action": "re_discover"}
 
-        # Check TTL
+        # Check TTL against the memory's own configured value, not a second
+        # literal: the two disagreed only by accident (both 24h), and any
+        # other configuration silently split replay behaviour in two.
+        ttl = getattr(self.memory, "ttl_seconds", 86400)
         age = __import__("time").time() - episode.created_at
-        if age < 0 or age > 86400:  # 24 hours (future = clock skew, expire)
-            return {"status": "expired", "reason": "Episode older than 24 hours", "action": "re_discover",
+        if age < 0 or age > ttl:  # future = clock skew, expire
+            return {"status": "expired", "reason": f"Episode older than {int(ttl)} seconds",
+                    "action": "re_discover",
                     "episode_id": episode_id}
 
         # try/finally: any exception used to leak a live Chromium process (the
@@ -193,7 +197,16 @@ class ReplayAgent:
                     "action": action_type, "field_id": field_id, "label": label}
 
         field = None
-        if action.get("selector"):
+        # A cached SUBMIT click is the one action that can do real damage on a
+        # page whose content the requester does not control (the episode cache
+        # is anonymous, host-scoped). So the stored structural selector is
+        # never trusted for it: the button must be re-identified by its
+        # accessible name on the LIVE page - the same name a screen reader
+        # would announce. A poisoned "button:nth-of-type(2)" cannot survive
+        # that; a renamed button honestly fails instead of clicking whatever
+        # now occupies the position.
+        is_action_button = action_type == "click" and action.get("is_action_button", False)
+        if action.get("selector") and not is_action_button:
             # NOTE: this Playwright build's Page.query_selector(selector, strict)
             # takes NO timeout kwarg - passing one raises TypeError. It used to
             # be swallowed by the except below, so every element located ONLY
@@ -234,9 +247,34 @@ class ReplayAgent:
                             field = await loc2.element_handle()
             except Exception:
                 field = None
+
+        if not field and is_action_button and label:
+            # Buttons often have no <label for>; their accessible name comes
+            # from their own text. get_by_label misses those - resolve by
+            # role + name (exact first, then a unique substring), the way the
+            # live page actually describes the button now.
+            try:
+                get_by_role = getattr(page, "get_by_role", None)
+                if get_by_role is not None:
+                    loc = get_by_role("button", name=label, exact=True)
+                    if await loc.count() == 1:
+                        field = await loc.element_handle()
+                    else:
+                        loc = get_by_role("button", name=label, exact=False)
+                        if await loc.count() == 1:
+                            field = await loc.element_handle()
+            except Exception:
+                field = None
         
         if not field:
-            return {"status": "failed", "reason": f"Field {field_id} not found on page", "action": "skip"}
+            reason = f"Field {field_id} not found on page"
+            if is_action_button:
+                # Say WHY: a cached submit that can no longer be identified by
+                # its accessible name is refused, never clicked by position.
+                reason = (f"the submit control {label!r} cannot be identified by its "
+                          "accessible name on the current page")
+            return {"status": "failed", "reason": reason, "action": "skip",
+                    "field_id": field_id, "label": label}
         
         # Check if field is enabled/interactable (inside try: detached nodes
         # raise here and must fail just this action, not the whole loop).

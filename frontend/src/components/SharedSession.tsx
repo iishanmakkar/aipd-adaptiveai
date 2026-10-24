@@ -47,9 +47,17 @@ export function SharedSession({ token }: { token: string }) {
       } catch (err) {
         if (stopped) return;
         const status = (err as { response?: { status?: number } }).response?.status;
-        setError(status === 404
-          ? 'This share link has expired or was never valid. Ask the user to create a new one.'
-          : 'Cannot reach AdaptiveAI right now - retrying.');
+        if (status === 404) {
+          // Expired (the normal 24h end of life) or never valid: polling a
+          // permanently-dead route every 8s used to run FOREVER - hundreds
+          // of dead requests from a forgotten tab. Stop; a new link remounts
+          // this component with a new token.
+          setError('This share link has expired or was never valid. Ask the user to create a new one.');
+          stopped = true;
+          window.clearInterval(timer);
+          return;
+        }
+        setError('Cannot reach AdaptiveAI right now - retrying.');
         seen.current = seen.current ?? { messages: 0, annotations: 0 };
       }
     }

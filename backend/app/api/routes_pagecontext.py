@@ -33,9 +33,11 @@ async def page_context(req: PageContextRequest):
     browser = BrowserTool()
     try:
         await browser.start()
-    except RuntimeError as e:
+    except Exception as e:
         # Missing Chromium / misconfiguration is a 503, not a 500 (mirrors
-        # /api/form-fill's honest config errors).
+        # /api/form-fill's honest config errors). Playwright raises its own
+        # Error type for a missing binary - not RuntimeError - and that was
+        # escaping as a 500 exactly when Chromium was absent.
         raise HTTPException(status_code=503, detail=str(e)[:300])
     try:
         try:

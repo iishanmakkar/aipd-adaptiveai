@@ -75,6 +75,14 @@ def _monitor_lock(chat_id: str) -> asyncio.Lock:
         if len(_monitor_locks) > 2000:
             for old in sorted(_monitor_locks_used,
                               key=_monitor_locks_used.__getitem__)[:500]:
+                held = _monitor_locks.get(old)
+                # Evicting a lock that is CURRENTLY HELD reopens the exact
+                # duplicate-narration race this registry exists to prevent:
+                # a poll can hold its lock across a 120s browser pull, and
+                # its used-stamp goes stale while it waits. Locked entries
+                # stay until they are free.
+                if held is not None and held.locked():
+                    continue
                 _monitor_locks.pop(old, None)
                 _monitor_locks_used.pop(old, None)
         lock = asyncio.Lock()
@@ -287,9 +295,15 @@ async def _pull_and_persist_events(db, session, current_user,
         # and the browser re-delivers buffered events: skip ids already stored
         # or the same narration is persisted twice (the duplicate-message class
         # the server-side cursor exists to prevent).
+        # Bounded to the newest 500 narration rows: a session watched for hours
+        # accumulates rows forever, and this query ran on EVERY delivered
+        # event - a 1 Hz poll turning into an ever-growing table scan. The
+        # browser's re-delivery buffer is itself recent (cursor reset replays
+        # the buffer, not history), so the newest window covers dedup.
         stored = await db.execute(
             select(Message.meta).where(Message.session_id == session.id,
-                                       Message.agent_used == "browser_agent"))
+                                       Message.agent_used == "browser_agent")
+            .order_by(Message.created_at.desc()).limit(500))
         for row in stored.all():
             meta = row[0] if not isinstance(row, dict) else row.get("meta")
             if isinstance(meta, dict) and meta.get("kind") == "narration":

@@ -38,12 +38,16 @@ async def vlm_proxy(request: Request):
         raise HTTPException(status_code=413, detail="Payload too large: screenshots are capped at 15MB including base64 encoding")
 
     images = []
+    valid_images = 0
     for message in (body.get("messages") or [] if isinstance(body, dict) else []):
         if not isinstance(message, dict) or not isinstance(message.get("content"), list):
             continue
         for part in message["content"]:
             if isinstance(part, dict) and part.get("type") == "image_url":
-                images.append((part.get("image_url") or {}).get("url", ""))
+                url = (part.get("image_url") or {}).get("url", "")
+                images.append(url)
+                if url.startswith(ALLOWED_IMAGE_PREFIXES):
+                    valid_images += 1
     if len(images) > 4:
         raise HTTPException(status_code=413, detail="Too many images in one request (max 4)")
     for url in images:
@@ -73,9 +77,10 @@ async def vlm_proxy(request: Request):
     if body["model"] not in _ALLOWED_MODELS:
         raise HTTPException(status_code=400,
                             detail="model not allowed on this proxy (vision models only)")
-    # ...and require at least one image part: this is a VISION proxy, not a
-    # general chat relay.
-    if not images:
+    # ...and require at least one REAL image part: this is a VISION proxy, not
+    # a general chat relay. An empty or non-image image_url previously passed
+    # this gate, making it a pure-text relay on the operator's key.
+    if not valid_images:
         raise HTTPException(status_code=400,
                             detail="this proxy only accepts vision requests with images")
 

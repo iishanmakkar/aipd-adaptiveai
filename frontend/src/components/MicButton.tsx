@@ -77,7 +77,14 @@ export function MicButton({
   useEffect(() => {
     if (!isRecording) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCancelRecording();
+      if (event.key === 'Escape') {
+        // Discarding the dictation must not ALSO close the host dialog on
+        // the same keypress (it used to throw away every value the user had
+        // already typed). stopImmediatePropagation keeps the later-registered
+        // window listeners - the dialog's close-on-Escape - out of this press.
+        event.stopImmediatePropagation();
+        onCancelRecording();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

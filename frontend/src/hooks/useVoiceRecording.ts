@@ -39,6 +39,9 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
   const chunkCountRef = useRef(0);
   // Cleanup runs after state is gone, so "was I recording?" must live in a ref.
   const isRecordingRef = useRef(false);
+  // Set by the unmount cleanup; the pending getUserMedia continuation checks
+  // it, because the permission prompt can outlive the component.
+  const unmountedRef = useRef(false);
 
   useEffect(() => {
     isRecordingRef.current = isRecording;
@@ -56,14 +59,23 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
     chunkCountRef.current = 0;
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
-        } 
+        }
       });
-      
+
+      // The permission prompt can outlive this component: an unmount while
+      // getUserMedia is pending used to orphan the continuation - it started
+      // a recorder nobody could stop and left the OS microphone HOT with no
+      // way for the user to know (they cannot see the indicator). If the
+      // component is gone, release the device immediately.
+      if (unmountedRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       streamRef.current = stream;
       
       const mt = typeof MediaRecorder !== 'undefined' && (MediaRecorder as unknown as { isTypeSupported?: (t: string) => boolean }).isTypeSupported?.('audio/webm;codecs=opus')
@@ -238,6 +250,10 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
     return () => {
       window.removeEventListener('pagehide', onPageHide);
       if (isRecordingRef.current) persistDraft();
+      // A pending getUserMedia (permission prompt still up) must release the
+      // device when its continuation resumes, instead of starting an
+      // unstoppable recorder on an unmounted component.
+      unmountedRef.current = true;
     };
   }, [persistDraft]);
 

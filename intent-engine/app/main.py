@@ -15,6 +15,7 @@ from app.classifier import (
     keyword_confidence_source,
     get_session_history,
     add_to_history,
+    session_turn_lock,
     clear_session,
     clear_all_sessions,
 )
@@ -139,6 +140,11 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
+
+def _trust_proxy() -> bool:
+    from app.config import settings
+    return str(getattr(settings, "trust_proxy_headers", "")).strip().lower() in ("1", "true", "yes")
+
 @app.post("/intent/classify", response_model=ClassifyResponse)
 async def classify_intent(http_request: Request, request: ClassifyRequest):
     """
@@ -150,10 +156,18 @@ async def classify_intent(http_request: Request, request: ClassifyRequest):
     """
     http_request.state.started_at = time.time()
     # `request` is the validated body model; headers/client live on the ASGI Request.
-    client_ip = (
-        http_request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        or (http_request.client.host if http_request.client else "unknown")
-    )
+    # Key on the socket peer. The first X-Forwarded-For hop is
+    # CLIENT-SUPPLIED: a direct caller rotated a fresh value per request and
+    # got a fresh bucket every time, making the 60/min LLM-burning cap
+    # decorative. XFF is only honoured when the deployment says a trusted
+    # proxy overwrites it (TRUST_PROXY_HEADERS=1).
+    if _trust_proxy():
+        client_ip = (
+            http_request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or (http_request.client.host if http_request.client else "unknown")
+        )
+    else:
+        client_ip = http_request.client.host if http_request.client else "unknown"
     
     # Rate limiting
     if not check_rate_limit(client_ip, max_requests=60, window_sec=60):
@@ -174,30 +188,37 @@ async def classify_intent(http_request: Request, request: ClassifyRequest):
     # appends every turn after classifying): when it has history, the
     # client's copy is stale duplicate weight that also pushes real turns
     # out of the LLM window - use the client's only as a cold-start seed.
-    session_history = get_session_history(request.session_id)
-    request.history = session_history if session_history else request.history
-    
-    # Classify with fallback
+    turn_lock = session_turn_lock(request.session_id)
+    await turn_lock.acquire()
     try:
-        result = await llm_classify(request)
-    except Exception as e:
-        logger.warning(f"LLM classification failed, using fallback: {str(e)[:100]}")
-        intent, agent, entity, confidence, reasoning = keyword_classify(
-            request.input_text, request.screen_context or "")
-        result = ClassifyResponse(
-            intent=intent,
-            target_agent=agent,
-            extracted_entity=entity,
-            reasoning=f"LLM failed: {str(e)[:80]}, using keyword fallback: {reasoning}",
-            confidence=confidence,
-            confidence_source=keyword_confidence_source(confidence),
-            # Same contract as the in-classifier fallback: a no-match default
-            # (0.3) is ambiguous, so the backend clarifies instead of guessing.
-            ambiguous=(confidence <= 0.3),
-        )
-    
-    # Update session memory
-    add_to_history(request.session_id, request.input_text, result)
+        session_history = get_session_history(request.session_id)
+        request.history = session_history if session_history else request.history
+
+        # Classify with fallback
+        try:
+            result = await llm_classify(request)
+        except Exception as e:
+            logger.warning(f"LLM classification failed, using fallback: {str(e)[:100]}")
+            intent, agent, entity, confidence, reasoning = keyword_classify(
+                request.input_text, request.screen_context or "")
+            result = ClassifyResponse(
+                intent=intent,
+                target_agent=agent,
+                extracted_entity=entity,
+                reasoning=f"LLM failed: {str(e)[:80]}, using keyword fallback: {reasoning}",
+                confidence=confidence,
+                confidence_source=keyword_confidence_source(confidence),
+                # Same contract as the in-classifier fallback: a no-match default
+                # (0.3) is ambiguous, so the backend clarifies instead of guessing.
+                ambiguous=(confidence <= 0.3),
+            )
+
+        # Update session memory
+        add_to_history(request.session_id, request.input_text, result)
+    finally:
+        # A raise inside the window must not hold the lock forever - the
+        # session's next turn would deadlock on acquire.
+        turn_lock.release()
 
     started = getattr(http_request.state, "started_at", None)
     latency_ms = round((time.time() - started) * 1000, 1) if started else None

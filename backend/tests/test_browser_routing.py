@@ -21,6 +21,23 @@ def test_extract_url_never_reads_rag_output():
     assert rq._extract_url("the docs mention example.com often", None) is None
 
 
+def test_extract_url_keeps_a_balanced_trailing_paren():
+    """"https://en.wikipedia.org/wiki/Python_(programming_language)" is an
+    extremely common URL shape. The old character class stopped at the first
+    '(' and the assistant opened a wrong page with no error."""
+    assert rq._extract_url(
+        "open https://en.wikipedia.org/wiki/Python_(programming_language)", None
+    ) == "https://en.wikipedia.org/wiki/Python_(programming_language)"
+
+
+def test_extract_url_still_strips_unbalanced_sentence_parens():
+    assert rq._extract_url("see https://a.example/x) thanks", None) \
+        == "https://a.example/x"
+    assert rq._extract_url("see https://a.example/x.", None) == "https://a.example/x"
+    assert rq._extract_url("open https://a.example/x_(y) then.", None) \
+        == "https://a.example/x_(y)"
+
+
 def test_confirm_needs_exact_single_words():
     assert rq._is_confirm("submit")
     assert rq._is_confirm("yes")

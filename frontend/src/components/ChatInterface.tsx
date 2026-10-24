@@ -272,6 +272,10 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
 
   // Handle form submit
   const submitInFlightRef = useRef(false);
+  // Mirror of the current session id for in-flight turn guards (useSession
+  // keeps its own copy internal).
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
 
   const runSubmit = useCallback(async (messageText: string, source: 'voice' | 'text') => {
     // User input outranks any narration in flight: cut speech immediately.
@@ -377,8 +381,16 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
       },
     };
 
+    const forSession = sessionId;
     try {
       const response = await sendQuery(request);
+
+      // The answer belongs to the session it was asked in. NIM latency runs
+      // 30-90s: switch sessions (or let a 401 expire this one) while the
+      // query is in flight and the old answer used to be SPOKEN into the new
+      // conversation - indistinguishable from the app answering something
+      // the user never asked. Same guard every async path in useSession has.
+      if (sessionIdRef.current !== forSession) return;
 
       // Update assistant message with response
       updateMessage(assistantId, {
@@ -764,19 +776,30 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
   // Caregiver loop, user side: a helper note is written to the session from
   // ANOTHER browser, so nothing pushes it here — poll quietly while the tab
   // is visible and the app is idle, and speak any note that arrives.
+  // The interval must NOT depend on history (or the busy flags): it used to
+  // be torn down and restarted on every appended message, resetting the
+  // 15s countdown - during an active exchange (exactly when a helper is
+  // typing) the note poll never fired. Latest values travel via a ref.
+  const pollStateRef = useRef({ isQuerying, isTranscribing, isDescribing, history });
+  pollStateRef.current = { isQuerying, isTranscribing, isDescribing, history };
+  const pollRemoteRef = useRef(pollRemoteMessages);
+  pollRemoteRef.current = pollRemoteMessages;
+  const speakRef = useRef(speak);
+  speakRef.current = speak;
   useEffect(() => {
     if (!sessionReady) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return;
-      if (isQuerying || isTranscribing || isDescribing) return;
-      if (history.some((m) => m.is_loading)) return;
-      void pollRemoteMessages().then((added) => {
+      const state = pollStateRef.current;
+      if (state.isQuerying || state.isTranscribing || state.isDescribing) return;
+      if (state.history.some((m) => m.is_loading)) return;
+      void pollRemoteRef.current().then((added) => {
         added.filter((m) => m.role === 'assistant' && /^Helper note:/i.test(m.content))
-          .forEach((m) => void speak(m.content));
+          .forEach((m) => void speakRef.current(m.content));
       });
     }, 15000);
     return () => window.clearInterval(timer);
-  }, [sessionReady, isQuerying, isTranscribing, isDescribing, history, pollRemoteMessages, speak]);
+  }, [sessionReady]);
 
   // Welcome message, once per session. Gated on the session bootstrap finishing
   // (restoring history or creating the session server-side) so the greeting can

@@ -31,8 +31,32 @@ class BrowserAgent:
         self.episodic_memory: List[Dict[str, Any]] = []
         self.max_memory_entries = 50
         
+    # These intents COMMIT on a live page. The session API holds them behind
+    # consent, CAPTCHA checks, robots.txt, submit/nav budgets and the audit
+    # log; this route has none of those gates, so executing them here was a
+    # confirmation-free path to "Pay now" - one endpoint away from the
+    # invariant the session API enforces. They are refused; the read-only
+    # intents (extract_text, analyze_page, snapshot) stay.
+    REFUSED_INTENTS = ("navigate_to_url", "click_element", "fill_field", "fill_form")
+
     async def execute_task(self, intent: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """Execute a full task on a REAL browser (started here, stopped after)."""
+        if intent in self.REFUSED_INTENTS:
+            return {
+                "session_id": self.session_id,
+                "intent": intent,
+                "status": "refused",
+                "unsupported_intent": True,
+                "steps_completed": 0,
+                "steps_failed": 0,
+                "results": [],
+                "narration": (
+                    "I will not click, fill or navigate on this route: it has "
+                    "no spending or consent gate. The session API "
+                    "(/session/open, /session/{id}/navigate, /session/{id}/act) "
+                    "carries those checks - use it for anything that acts."),
+                "completed_at": datetime.utcnow().isoformat(),
+            }
         # Parse intent and select tools
         steps = self._plan_task(intent, context or {})
         exploratory = steps is EXPLORATORY

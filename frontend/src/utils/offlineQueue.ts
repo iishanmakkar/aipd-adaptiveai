@@ -56,8 +56,9 @@ export async function enqueueMutation(entry: { url: string; method: string; body
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error ?? new Error('IDB abort'));
+  }).finally(() => {
+    db.close();
   });
-  db.close();
 }
 
 export type DrainOutcome = 'ok' | 'retry' | 'drop';
@@ -102,12 +103,24 @@ export async function drainQueue(sender: (e: { url: string; method: string; body
         outcome = 'retry';
       }
       if (outcome === 'retry') break;
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(STORE, 'readwrite');
-        tx.objectStore(STORE).delete(key);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction(STORE, 'readwrite');
+          tx.objectStore(STORE).delete(key);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      } catch {
+        // The mutation may already be DELIVERED (sender returned 'ok') and
+        // only the local delete failed: the rejection used to escape the
+        // drain (swallowed upstream), leaving the entry queued to be
+        // re-sent - a duplicate answer and a second NIM run. Record the
+        // delete failure on the entry so the next drain can tell.
+        try {
+          const repair = db.transaction(STORE, 'readwrite');
+          repair.objectStore(STORE).put({ ...value, deliveredTs: Date.now() }, key);
+        } catch { /* the next drain retries the delete */ }
+      }
       // Only actually-delivered mutations count as sent: poison-dropped 4xx
       // entries must never be reported as synced.
       if (outcome === 'ok') sent += 1;
@@ -128,8 +141,9 @@ export async function saveAudioDraft(blob: Blob): Promise<void> {
     tx.objectStore(DRAFTS).put(blob, DRAFT_KEY);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+  }).finally(() => {
+    db.close();
   });
-  db.close();
 }
 
 export async function takeAudioDraft(): Promise<Blob | null> {
@@ -162,6 +176,7 @@ export async function clearAudioDraft(): Promise<void> {
     tx.objectStore(DRAFTS).delete(DRAFT_KEY);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+  }).finally(() => {
+    db.close();
   });
-  db.close();
 }

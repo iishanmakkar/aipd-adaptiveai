@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { apiService } from '../services/api';
 import type { Message } from '../types/chat';
 import { renderMarkdown } from '../utils/markdown';
+import { stripMarkdownForSpeech } from '../utils/speechQueue';
 
 interface MessageBubbleProps {
   message: Message;
@@ -19,10 +20,14 @@ export function MessageBubble({ message, onReplay }: MessageBubbleProps) {
     return message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }, [message.timestamp]);
 
+  // The accessible name is announced IN PLACE OF the article when a screen
+  // reader navigates by article - raw markdown ('**', backticks, '#') was
+  // spoken symbol-by-symbol. Same stripping the speech path uses.
   const getAriaLabel = () => {
     if (message.is_loading) return 'Loading response';
-    if (message.role === 'user') return `You said: ${message.content}`;
-    return `Assistant: ${message.content}`;
+    const spoken = stripMarkdownForSpeech(message.content);
+    if (message.role === 'user') return `You said: ${spoken}`;
+    return `Assistant: ${spoken}`;
   };
 
   const handleCopy = async () => {

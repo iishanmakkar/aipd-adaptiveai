@@ -6,6 +6,7 @@ pixels, fills write into real elements. Failures raise or return error dicts.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from typing import Any, Dict, List, Optional
@@ -122,12 +123,27 @@ class Driver:
         if route is None:
             return  # test doubles without interception support
 
+        # validate_browse_url() resolves DNS with a BLOCKING socket call. Run
+        # per subresource on the event loop, one slow resolver turn froze the
+        # WHOLE service (health checks, other sessions, the monitor loop) for
+        # minutes; a hostile page with hundreds of hosts amplified it into a
+        # loop-wide DoS. Two mitigations: the verdict is cached per host (a
+        # page's fifteenth script does not pay for a fifteenth lookup), and
+        # the first lookup per host runs in a worker thread.
+        validated_hosts: dict = {}
+
         async def _check(route):
             url = route.request.url
+            host = urlparse(url).hostname
             try:
                 if urlparse(url).scheme in ("http", "https"):
-                    validate_browse_url(url)
+                    verdict = validated_hosts.get(host)
+                    if verdict is None:
+                        verdict = await asyncio.to_thread(validate_browse_url, url)
+                        validated_hosts[host] = verdict
             except ValueError:
+                if host:
+                    validated_hosts[host] = False
                 await route.abort()
                 return
             await route.continue_()

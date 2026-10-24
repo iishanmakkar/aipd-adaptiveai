@@ -27,5 +27,11 @@ class Settings(BaseSettings):
     max_sessions: int = 1000
     session_ttl_seconds: int = 3600
 
+    # Set "1" ONLY when a trusted reverse proxy overwrites X-Forwarded-For.
+    # Default off: the rate-limit key is the socket peer, because the first
+    # XFF hop is client-supplied and a direct caller could rotate a fresh
+    # bucket per request.
+    trust_proxy_headers: str = "0"
+
 
 settings = Settings()

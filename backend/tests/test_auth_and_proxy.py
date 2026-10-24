@@ -105,6 +105,22 @@ def test_vlm_server_key_beats_client_supplied_bearer(client, nim, monkeypatch):
     assert calls[0]["headers"]["Authorization"] == "Bearer nvapi-server-side"
 
 
+def test_vlm_empty_image_url_is_not_a_vision_request(client, monkeypatch):
+    """The vision-only gate counted every image_url PART, and an empty URL
+    passed its own prefix check by skipping it - so a body with one empty
+    image part was pure text relayed on the operator's key."""
+    monkeypatch.setattr(settings, "nim_api_key", "nvapi-server-side")
+    calls = []
+    monkeypatch.setattr(routes_vlm.httpx, "AsyncClient",
+                        lambda **kw: _Client(calls, _Resp(200, {})))
+    r = client.post("/v1/chat/completions",
+                    json={"messages": [{"role": "user", "content": [
+                        {"type": "text", "text": "just chat"},
+                        {"type": "image_url", "image_url": {"url": ""}}]}]})
+    assert r.status_code == 400, r.text
+    assert calls == [], "an empty-image request reached the upstream"
+
+
 def test_vlm_client_key_only_used_when_server_unconfigured(client, nim, monkeypatch):
     monkeypatch.setattr(settings, "nim_api_key", "")
     monkeypatch.delenv("NIM_API_KEY", raising=False)

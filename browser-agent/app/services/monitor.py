@@ -149,7 +149,11 @@ class PageMonitor:
         if abs(len(new_text) - len(self.described_text)) > MIN_CHANGE_CHARS:
             return True  # ratio tests hide small additions on huge pages
         sm = difflib.SequenceMatcher(None, self.described_text, new_text)
-        return sm.quick_ratio() < self.min_change_ratio
+        # quick_ratio() is an UPPER bound on ratio(): a swap that leaves the
+        # character multiset unchanged ($45 -> $54, reordered list items)
+        # measures 1.0 while the text meaningfully changed - exactly the
+        # change a blind user must hear. The real ratio decides.
+        return sm.ratio() < self.min_change_ratio
 
     async def poll_once(self, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
         """Run one poll cycle. Returns a narration event when a NIM call fired.

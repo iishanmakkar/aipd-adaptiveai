@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import time
@@ -47,6 +48,9 @@ BROWSER_INSPECT_VERBS = (
 )
 
 
+_LIVE_MARKER_RE = re.compile(r"(?m)^live page:", re.IGNORECASE)
+
+
 def _browser_route(text_lower: str, context_lower: str):
     """(intent, agent, entity_hint) or None. Live-page marker is mandatory.
 
@@ -54,7 +58,11 @@ def _browser_route(text_lower: str, context_lower: str):
     the submit button and click it"), the read-only path wins and the user
     confirms the action explicitly on the next turn.
     """
-    if "live page:" not in context_lower:
+    # The marker is the backend's own emitted line ("Live page: <title> (url)"),
+    # anchored to a line start. As a bare substring, any page whose VISIBLE
+    # text contained "live page:" (a news live-blog, help copy) minted the
+    # consent marker out of page content.
+    if not _LIVE_MARKER_RE.search(context_lower):
         return None
     if any(_kw_in(text_lower, v) for v in BROWSER_INSPECT_VERBS):
         return ("browser_inspect", "browser_agent", "live page element")
@@ -373,6 +381,32 @@ Classify this request."""
             # only score low enough to mean "nothing actionable was found".
             ambiguous=confidence <= NO_MATCH_CONFIDENCE,
         )
+
+
+# One in-flight turn per session: the classify endpoint awaits the LLM
+# between reading the history and appending the turn, so two overlapping
+# requests for one session (a blind user's natural double-submit while the
+# model is slow) both read the same base history and the second write
+# overwrote the first - that turn silently vanished from all future LLM
+# context. Bounded with the same sweep shape as the rate-limit keys.
+_session_turn_locks: "OrderedDict[str, asyncio.Lock]" = OrderedDict()
+_SESSION_LOCK_MAX_KEYS = 5000
+
+
+def session_turn_lock(session_id: str) -> asyncio.Lock:
+    lock = _session_turn_locks.get(session_id)
+    if lock is None:
+        if len(_session_turn_locks) > _SESSION_LOCK_MAX_KEYS:
+            for _ in range(500):
+                if not _session_turn_locks:
+                    break
+                _sid, _lk = _session_turn_locks.popitem(last=False)
+                if _lk.locked():
+                    _session_turn_locks[_sid] = _lk
+                    _session_turn_locks.move_to_end(_sid)
+        lock = asyncio.Lock()
+        _session_turn_locks[session_id] = lock
+    return lock
 
 
 def get_session_history(session_id: str) -> List[str]:

@@ -74,8 +74,15 @@ def _env_int(name: str, default: int) -> int:
 
 
 def is_sensitive_url(url: str) -> bool:
-    host = (urlparse(url).hostname or "").lower()
-    return any(p in host for p in SENSITIVE_PATTERNS)
+    """Sensitive pages overwhelmingly live on PATHS of ordinary domains
+    (anystore.example/checkout), not on hosts with "bank" in the name - a
+    hostname-only check made the navigate-confirmation gate almost never
+    fire in practice. Path and query join the haystack."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    where = parsed.path.lower() + "?" + (parsed.query or "").lower()
+    return (any(p in host for p in SENSITIVE_PATTERNS)
+            or any(("/" + p) in where for p in SENSITIVE_PATTERNS))
 
 
 def is_submit_text(label: str, tag: str = "", input_type: str = "") -> bool:
@@ -202,6 +209,17 @@ class RobotsCache:
         if self._fetch is not None:
             return await self._fetch(host, scheme)
         import httpx
+        # Same guard the browser traffic gets, per fetch: robots.txt is
+        # fetched by this plain httpx client, OUTSIDE the Playwright request
+        # interceptor, so without this a domain whose DNS flips between a
+        # public address (validated at navigation) and an internal one had
+        # its robots.txt fetched from whatever DNS now said - 10.x,
+        # 172.16.x, or a cloud metadata address.
+        from app.tools.url_guard import validate_browse_url
+        try:
+            await validate_browse_url(f"{scheme}://{host}/robots.txt")
+        except ValueError:
+            return None
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
                 resp = await client.get(f"{scheme}://{host}/robots.txt")
@@ -271,7 +289,10 @@ class RobotsCache:
         path = parsed.path or "/"
         for prefix in disallows:
             if path.startswith(prefix):
-                return False, f"disallowed by robots.txt ({prefix})"
+                # The prefix itself is remote content (fetched from whatever
+                # host DNS pointed at); echoing it into an API error would be
+                # a content channel back to the caller.
+                return False, "disallowed by robots.txt"
         return True, "allowed by robots.txt"
 
 
@@ -279,7 +300,7 @@ class SessionManager:
     """Registry of live sessions with idle sweep and capacity cap."""
 
     def __init__(self, driver_factory=None,
-                 ttl_seconds: float = 600.0, max_sessions: int = 20,
+                 ttl_seconds: Optional[float] = None, max_sessions: int = 20,
                  nav_per_hour: int = 30, submits_per_hour: int = 5,
                  robots: Optional[RobotsCache] = None):
         if ttl_seconds is None:

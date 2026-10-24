@@ -357,7 +357,14 @@ class BrowserTool:
                 ), timeout=30)
             except _aio.TimeoutError:
                 raise RuntimeError("VLM timed out")
-            resp.raise_for_status()
+            # A NIM refusal (401/429/5xx - the key rotation and quota spikes
+            # this deployment actually hits) is a service-availability fact,
+            # not a raw httpx exception: unwrapped, it escaped the route's
+            # RuntimeError handler and surfaced as a bare 500.
+            if resp.status_code >= 400:
+                raise RuntimeError(
+                    f"VLM answered {resp.status_code}: "
+                    f"{resp.text[:120]}")
             try:
                 data = resp.json()
                 text = data["choices"][0]["message"]["content"]

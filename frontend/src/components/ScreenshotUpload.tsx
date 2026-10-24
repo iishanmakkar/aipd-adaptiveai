@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { validateImageFile } from '../utils/image';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 
 interface ScreenshotUploadProps {
   onImageUpload: (file: File) => Promise<void>;
@@ -24,17 +25,18 @@ export function ScreenshotUpload({
   const [enlarged, setEnlarged] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [inverted, setInverted] = useState(false);
-  const enlargeCloseRef = useRef<HTMLButtonElement>(null);
+  const enlargeRef = useRef<HTMLDivElement>(null);
+  // aria-modal="true" promises a Tab trap and focus restored to the opener:
+  // the manual focus-in effect here only half-delivered (Tab fell straight
+  // out of the viewer into the page behind it, and Escape dropped focus on
+  // <body>). Same hook every other dialog in the app uses.
+  useDialogFocus(enlarged, enlargeRef);
 
   const openEnlarged = useCallback(() => {
     setZoom(1);
     setInverted(false);
     setEnlarged(true);
   }, []);
-
-  useEffect(() => {
-    if (enlarged) enlargeCloseRef.current?.focus();
-  }, [enlarged]);
 
   useEffect(() => {
     if (!enlarged) return;
@@ -157,6 +159,7 @@ export function ScreenshotUpload({
 
       {enlarged && displayImage && (
         <div
+          ref={enlargeRef}
           className="image-viewer-backdrop"
           role="dialog"
           aria-modal="true"
@@ -181,7 +184,6 @@ export function ScreenshotUpload({
           </div>
           <button
             type="button"
-            ref={enlargeCloseRef}
             className="image-viewer-close"
             onClick={() => setEnlarged(false)}
           >

@@ -237,8 +237,11 @@ class VectorStore:
             # serves the old text, and count() inflates without bound).
             fresh = [d for d in documents
                      if d.get("id", None) not in self._id_to_idx]
-            # ...except id-less docs, which always get a fresh uuid below.
-            fresh += [d for d in documents if "id" not in d]
+            # (id-less docs are already in `fresh`: their .get yields None,
+             # which is never a key of _id_to_idx. The extra "id" not in d
+             # append used to add every id-less document a SECOND time, each
+             # twin with its own uuid - one document then occupied two
+             # retrieval slots.)
             seen: set[str] = set()
             unique = []
             for d in fresh:

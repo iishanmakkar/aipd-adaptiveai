@@ -102,13 +102,31 @@ def test_classify_survives_llm_returning_invalid_labels(client, monkeypatch):
 
 def test_client_ip_is_read_from_forwarded_header(client, monkeypatch):
     """Regression: the route used to read headers off the Pydantic body model,
-    which raised AttributeError and 500-iced every single request."""
+    which raised AttributeError and 500-iced every single request. XFF is only
+    honoured behind a trusted proxy (TRUST_PROXY_HEADERS=1)."""
+    monkeypatch.setattr(service.settings, "trust_proxy_headers", "1")
     _stub_llm(monkeypatch, ClassifyResponse(
         intent="general_query", target_agent="general_agent",
         extracted_entity="greeting", reasoning="stub"))
     r = client.post("/intent/classify", json=_body(), headers={"X-Forwarded-For": "203.0.113.7, 70.41.3.18"})
     assert r.status_code == 200
     assert "203.0.113.7" in service._rate_limit_store
+
+
+def test_forwarded_header_cannot_mint_rate_limit_buckets(client, monkeypatch):
+    """Default deployment (no trusted proxy): a direct caller rotating
+    X-Forwarded-For per request used to get a fresh bucket every time, making
+    the 60/min LLM-burning cap decorative. The key is the socket peer."""
+    _stub_llm(monkeypatch, ClassifyResponse(
+        intent="general_query", target_agent="general_agent",
+        extracted_entity="greeting", reasoning="stub"))
+    for i in range(3):
+        r = client.post("/intent/classify", json=_body(),
+                        headers={"X-Forwarded-For": f"203.0.113.{i}"})
+        assert r.status_code == 200
+    # Every spoofed value landed in ONE bucket keyed by the peer, not in
+    # one bucket per header value.
+    assert len(service._rate_limit_store) == 1, service._rate_limit_store
 
 
 def test_rate_limit_store_is_bounded():

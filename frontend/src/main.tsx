@@ -73,7 +73,14 @@ async function drainOfflineQueue(): Promise<void> {
         }
       } catch (e) {
         // Abort = may have committed server-side: drop, do not duplicate.
-        if (e instanceof DOMException && e.name === 'AbortError') return 'drop';
+        // AbortSignal.timeout rejects with name 'TimeoutError' (the legacy
+        // AbortController path rejects with 'AbortError') - only the legacy
+        // name was mapped, so a TIMED-OUT queued query was kept and re-sent
+        // after the server had already committed the answer: double answer,
+        // double NIM run, double speech.
+        if (e instanceof DOMException && (e.name === 'AbortError' || e.name === 'TimeoutError')) {
+          return 'drop';
+        }
         return 'retry';
       } finally {
         if (timer) clearTimeout(timer);

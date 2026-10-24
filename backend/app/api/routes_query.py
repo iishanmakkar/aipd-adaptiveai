@@ -33,7 +33,7 @@ from app.services.policy_engine import adjust_response, count_clarifying_questio
 
 router = APIRouter(prefix="/api", tags=["query"])
 
-URL_RE = re.compile(r"https?://[^\s)]+|data:[^\s]+", re.IGNORECASE)
+URL_RE = re.compile(r"https?://[^\s]+|data:[^\s]+", re.IGNORECASE)
 LIVE_MARKER_RE = re.compile(r"live page:[^(]*\((https?://[^)\s]+)\)", re.IGNORECASE)
 CONFIRM_WORDS = ("yes", "submit", "confirm", "book it", "do it", "go ahead",
                  "proceed", "ok", "okay", "confirm submit",
@@ -102,6 +102,18 @@ def _effective_screen_context(request) -> str | None:
     return fused
 
 
+def _strip_url_punctuation(url: str) -> str:
+    """Sentence punctuation after a pasted URL is not part of it - but a
+    closing paren that BALANCES one inside the URL is: Wikipedia's
+    .../Python_(programming_language) ends in a paren that belongs, and the
+    old character-class fix (excluding ')' from the match) truncated every
+    such URL at the first '(' and opened the wrong page silently."""
+    url = url.rstrip(".,!?:;\"'")
+    while url.endswith(")") and url.count(")") > url.count("("):
+        url = url[:-1].rstrip(".,!?:;\"'")
+    return url
+
+
 def _extract_url(text: str, screen_context: str | None) -> str | None:
     """The ONLY way a live page gets opened: a URL the user actually typed
     (message first, then the page-context marker). Never from RAG output,
@@ -110,7 +122,7 @@ def _extract_url(text: str, screen_context: str | None) -> str | None:
         found = URL_RE.search(text)
         if found:
             # data: URLs from chat paste-ups can trail punctuation; strip it.
-            return found.group(0).rstrip(").,.!?:;\"'")
+            return _strip_url_punctuation(found.group(0))
     if screen_context:
         found = LIVE_MARKER_RE.search(screen_context)
         if found:
@@ -206,7 +218,11 @@ async def _handle_browser_intent(db, session, current_user, session_uuid, reques
                                  message_count) -> QueryResponse | None:
     """Route a browser_* intent at the chat session's live page. The page is
     guaranteed present here (URL was extracted or a session already open)."""
-    chat_id = request.session_id
+    # State keys use the CANONICAL uuid spelling: identity (the ownership
+    # check) is the parsed UUID, and pending-proposal buckets keyed by the raw
+    # string would split into two disjoint states when one session id arrives
+    # in two spellings (uppercase, braces).
+    chat_id = str(session_uuid) if session_uuid is not None else request.session_id
     url = _extract_url(request.input_text, request.screen_context)
     if url is not None and _live_pages.get(chat_id) != url:
         try:
@@ -528,7 +544,7 @@ async def _maybe_browser_turn(db, session, current_user, session_uuid, request,
                               request_id, message_count) -> QueryResponse | None:
     """Handle live-browser turns. Returns a response when the turn is fully
     handled here, else None to continue down the normal intent->agent path."""
-    chat_id = request.session_id
+    chat_id = str(session_uuid) if session_uuid is not None else request.session_id
     text = (request.input_text or "").strip()
 
     # 0. Round 9 monitor voice commands - before anything else so "stop
@@ -1230,7 +1246,7 @@ async def process_query(
     intent_result, demoted = _demote_browser_intent(
         intent_result,
         page_present=(
-            _live_pages.get(request.session_id) is not None
+            _live_pages.get(str(session_uuid)) is not None
             or _extract_url(request.input_text, request.screen_context) is not None
         ),
     )
@@ -1372,9 +1388,15 @@ async def process_query_demo(http_request: Request, request: QueryRequest):
     # demotes to the informational equivalent. The demo never opens pages
     # (no _maybe_browser_turn), so page_present is the stored live page only -
     # otherwise browser_agent goes straight to the agents registry and 502s.
+    # Same canonical key spelling the authenticated route writes, so a demo
+    # turn agrees with the state the main path wrote for the same session id.
+    try:
+        demo_key = str(parse_session_uuid(request.session_id))
+    except HTTPException:
+        demo_key = request.session_id
     intent_result, demoted = _demote_browser_intent(
         intent_result,
-        page_present=_live_pages.get(request.session_id) is not None,
+        page_present=_live_pages.get(demo_key) is not None,
     )
     if demoted:
         return QueryResponse(
