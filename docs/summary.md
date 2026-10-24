@@ -48,9 +48,16 @@ code review alone.
 - **Really adaptive**: same question answered step-by-step (blind+concise,
   818 chars) vs technical (detailed, 1088 chars); observed replays/skips reshape
   subsequent answers unless the user stated otherwise (852→346 proven).
-- **439 automated tests + 1 skipped** (offline, no API cost; see README §5 for
-  the per-service breakdown) + **15 against real Postgres**
+- **694 automated tests** (2026-10-24: backend 253, agents 103, intent-engine
+  135, browser-agent 63, extension 140 in real Chromium; offline, no API cost;
+  see README §5 for the breakdown) + **15 against real Postgres**
   + CI on every push + a fail-closed nightly live-accuracy gate.
+- **The browser extension works in a real installed browser**: a spoken or typed
+  goal is planned, acted on with a readback, verified, and spoken; the spending
+  gate asks before money and a spoken yes/no answers it; site recipes fill the
+  parts they know and label their provenance. Proven by
+  `scripts/real_browser_smoke.py`; perception was measured on RailYatri's live
+  homepage (`docs/proofs/2026-10-24-railyatri`).
 - **Resilience**: DB down → 503 (not 500); upstream down → 502 naming the
   cause; rate limiter sheds load (429) instead of collapsing; backend killed
   mid-load → clean failures, no hangs; Postgres backup→destroy→restore returns
@@ -67,15 +74,22 @@ code review alone.
 
 ## Honest gaps (each has a runbook; none faked)
 
-1. **Human screen-reader pass.** Checklist refreshed for the current UI (Test 7:
-   sources, adaptive controls, replay) — `docs/screen-reader-test-script.md`.
+1. **Human screen-reader pass.** NVDA 2026.2 is installed and running on the
+   host, but capturing what it *says* needs a human ear; checklist for the
+   current UI (Test 7: sources, adaptive controls, replay) —
+   `docs/screen-reader-test-script.md`.
 2. **Human-speech STT accuracy.** Measured on synthesized speech (0–2.8% WER);
    5-minute phone runbook ready — `docs/real-speech-stt-runbook.md`.
 3. **Public-cloud deploy** and **paid-tier capacity** — WSL2 Ubuntu deploy is
    done (`DEPLOY.md` §6); cloud + paid-tier retest need credentials
    (`DEPLOY.md` §6b/§9). The 10–20 concurrent ceiling is a *free-tier*
    number, not the system's inherent limit.
-4. **This host fights back**: thermal hibernates under sustained build load,
+4. **No vendor booking has been completed.** RailYatri's homepage was read by
+   the extension (perception + gate identification), and the whole loop runs on
+   this repo's own demo form; IRCTC/BookMyShow/Swiggy/Zomato block or refuse
+   automated browsers and were recorded as inconclusive, not as passes
+   (`docs/proofs/README.md`).
+5. **This host fights back**: thermal hibernates under sustained build load,
    WSL2 self-stops when idle, and Windows→guest TCP is blocked here — all
    documented in `DEPLOY.md` §6c with workarounds. A cooler, unlocked machine
    (or real cloud) removes all three.

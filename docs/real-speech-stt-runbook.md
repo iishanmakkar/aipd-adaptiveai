@@ -73,7 +73,7 @@ is missing.
 
 ## Report honestly
 
-Fill this in with the real numbers and paste into README §11 (move the item from
+Fill this in with the real numbers and paste into README §6 (move the item from
 "not verified" to "proven" once done):
 
 | clip | category | WER | notes |

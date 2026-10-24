@@ -1,5 +1,9 @@
 # AdaptiveAI — Rounds 1–6: production hardening, tests, security, docs
 
+> **Historical artifact.** This PR body describes Rounds 1–6 (2026-09); its
+> counts (190 tests) and "still open" list describe that tree, not the current
+> one. Current numbers: README §5 / `docs/verification-baseline.md`.
+
 ## What this branch is
 Six rounds of taking AdaptiveAI from "demo that quietly didn't work" to a system
 whose every claim is backed by a command and its real output — **including its

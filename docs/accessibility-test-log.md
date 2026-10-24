@@ -2,11 +2,14 @@
 
 **Method and honest scope.** This log records the automated keyboard + accessibility-tree
 pass (`frontend/a11y_audit.py`, Playwright + headless Chromium). It is **not** a
-human screen-reader session. NVDA is not installed on this machine and VoiceOver is
-macOS-only; installing assistive technology is the owner's decision, not an agent's.
-The audit verifies the exact contract a screen reader consumes (roles, names, focus,
-live regions) — the strongest evidence obtainable without driving real AT. The human
-NVDA pass remains an open item in README §11.
+human screen-reader session. At the time of this Round 4 log NVDA was not installed;
+it has since been installed (NVDA 2026.2, confirmed running), but capturing what it
+actually says still needs a human ear — OS-level keystroke automation would land on
+whatever window has focus (`AUTOMATION_SAFETY.md`). The audit verifies the exact
+contract a screen reader consumes (roles, names, focus, live regions) — the
+strongest evidence obtainable without driving real AT. The human NVDA pass remains
+an open item in README §6, with the procedure in
+`docs/screen-reader-test-script.md`.
 
 Run against the deployed stack at `http://localhost:5173`.
 

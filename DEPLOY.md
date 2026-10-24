@@ -89,7 +89,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend ale
 ```
 
 Remote proof (all inside the WSL2 host; Windows cannot open TCP to the guest on
-this machine - host firewall fact, §6c): 6/6 healthy under the prod overlay,
+this machine - host firewall fact, §6c). The tree at that commit had **six**
+services - redis joined later, which is why this 2026-09-19 run says 6/6 and §1
+lists seven: 6/6 healthy under the prod overlay,
 register 201 → login 200 → session 201 → **query 200 in 26.1s** (local: 10.9s -
 the delta is cold NIM + slower WSL2 CPU), `form_agent`, grounded;
 `POST /api/form-fill` on the ticket demo **9/9 via remote Chromium**;
@@ -179,7 +181,7 @@ free tier costs $0 but caps concurrency as measured above.
 ## 8. What is NOT yet done for a real launch
 
 - Human screen-reader (NVDA/JAWS/VoiceOver) validation — automated ARIA/keyboard
-  contract passes and NVDA 2026.2 is confirmed installable + running on Windows,
+  contract passes and NVDA 2026.2 is installed + running on this Windows host,
   but verbatim speech capture needs a human ear. Runbook:
   `docs/screen-reader-test-script.md`.
 - Human-speech STT WER — measured only on synthesized speech. Runbook + tool:

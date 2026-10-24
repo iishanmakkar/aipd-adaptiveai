@@ -16,6 +16,7 @@ already asserted and exited non-zero; they were left alone.
 | `r9_any_site_fill_proof.py` | guided slot-fill generalises across two different layouts | yes (5 assertions, added 2026-10-21) |
 | `tts_proof.py` (frontend/) | muted speech enqueues nothing; audible speech reaches `speechSynthesis` | yes (both directions required) |
 | `extension_live_site_proof.py` | the loaded extension sees and classifies real production pages, and the gate fires on real booking controls | yes (exit 3 = nothing proven, kept distinct from a failure) |
+| `real_browser_smoke.py` | the unpacked extension in the machine's **installed** browser: options -> vault, typed goal -> task loop, recipe fill, gate asked and answered with the popup's Yes, Listen -> goal field | yes (exit 1 on any failed check; proof JSON written under `docs/proofs/<date>-real-chrome-smoke/`) |
 | `stt_local_proof.py` | the OS voice speaks a sentence, `/api/transcribe` decodes it locally and the words come back | yes (exit 3 when this machine has no TTS voice or no local model) |
 | `extension_step_live_proof.py` | a real model returns a step the device could act on, obeying the ref/value/password rules | yes (exit 3 when no NIM key is configured - which is the case on this host) |
 
@@ -102,7 +103,13 @@ structure. It now detects challenge/error pages and reports them inconclusive
 
 ```bash
 python scripts/extension_live_site_proof.py            # exit 0 verified / 1 failed / 3 nothing proven
+python scripts/real_browser_smoke.py                   # installed browser, 0 failed checks = exit 0
 ```
+
+`real_browser_smoke.py` needs no NIM key (the step planner is a local stub) and
+no running compose stack. Branded Chrome 137+ ignores `--load-extension`, so it
+tries installed Chrome first and falls back to installed Edge — the same
+Chromium engine — when the content script never appears.
 
 ## Running them
 

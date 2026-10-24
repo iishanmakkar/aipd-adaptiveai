@@ -1,6 +1,28 @@
 # Verification baseline
 
-## Current: this host, no Docker
+## Current: this host, no Docker — 2026-10-24 (after the full-tree bug sweep)
+
+Measured on the working tree at `4d9f8e5`, with
+
+```bash
+bash scripts/verify-host.sh        # all five suites, non-zero on any failure
+```
+
+| Suite | Result |
+|---|---|
+| backend | **253 passed** |
+| agents | **103 passed**, 1 deselected |
+| intent-engine | **135 passed**, 2 deselected |
+| browser-agent | **63 passed** |
+| extension (real Chromium) | **140 passed** |
+| **Python total** | **694 passed**, 3 deselected |
+
+Frontend `npm run build` (tsc strict + Vite) is clean on the same tree. Every
+number above was produced by running the suites on this host, each exiting 0;
+the totals in earlier versions of this file came from a different tree and are
+kept below for history.
+
+### Previous: 2026-10-21 (kept for history)
 
 Measured **2026-10-21** on the working tree at `1fc6aba` + the voice path, with
 
@@ -143,7 +165,7 @@ why an unverifiable test command is itself a defect.
 ## Reproducing either run
 
 ```bash
-bash scripts/verify-host.sh          # this machine, no Docker, 606 passed
+bash scripts/verify-host.sh          # this machine, no Docker, 694 passed (2026-10-24)
 bash scripts/verify.sh               # compose stack: docker compose up -d first
 bash scripts/verify.sh backend       # one service
 ```

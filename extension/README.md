@@ -94,7 +94,7 @@ globally, and tested against NVDA rather than assumed.
 python -m pytest extension/test -p no:warnings
 ```
 
-All suites drive a **real Chromium** (122 tests): `test_ax.py` name/role/state
+All suites drive a **real Chromium** (140 tests, measured 2026-10-24): `test_ax.py` name/role/state
 computation, `test_actor.py` actions and their readbacks, `test_gate.py` what gets
 stopped (and what must not be), `test_watch.py` change verification,
 `test_vault_privacy.py` profile storage and redaction, `test_options.py` the setup
@@ -109,7 +109,11 @@ loaded extension produces a verified DOM change, a refusal it cannot talk itself
 out of, and a narration the speech engine reported back.
 `test_ax.py` includes a differential test that compares every accessible name this
 module produces against Chrome's own accessibility tree via CDP — Chrome is the
-engine NVDA reads, so where the two disagree, this module is wrong.
+engine NVDA reads, so where the two disagree, this module is wrong. `test_recipes.py`
+covers site knowledge as data (roles + accessible-name words only; no selectors,
+no values), the stop line, the ambiguous-match refusal, the verified-only trace
+memory, and a provenance e2e that labels every wire history step `model` or
+`recipe`.
 
 Two things a future reader will otherwise rediscover the hard way:
 

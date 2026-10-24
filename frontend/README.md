@@ -15,6 +15,10 @@ React + Vite frontend for the AdaptiveAI system — an accessible chat interface
 - **Offline mode**: service worker shell cache + IndexedDB queue for preferences, behavior events and chat queries; queued answers arrive (and are spoken) when connectivity returns
 - **Adaptive behavior**: answers rewritten per disability profile, verbosity and observed replay/skip behavior; unsure intents get one clarifying question
 - **No mock layer**: the Express mock server and `mockApi.ts` were deleted; every request goes to the real backend
+- **Companion browser extension** (`extension/`): operates the user's own
+  logged-in browser (perception -> plan -> act -> verify -> speak), with a
+  spending gate and site recipes; proven in an installed browser by
+  `scripts/real_browser_smoke.py`
 
 ## Quick Start
 
@@ -46,13 +50,18 @@ frontend/
 │   │   ├── FormFillDialog.tsx     # Real form-fill + replay/heal
 │   │   └── Header.tsx             # App header with session info
 │   ├── hooks/            # Custom React hooks
-│   │   ├── useVoiceRecording.ts   # MediaRecorder wrapper
+│   │   ├── useVoiceRecording.ts   # MediaRecorder + draft recovery
 │   │   ├── useSpeechToText.ts     # Calls backend /transcribe
 │   │   ├── useTextToSpeech.ts     # Web Speech API wrapper
-│   │   ├── useVisionModel.ts      # Calls NVIDIA NIM VLM
+│   │   ├── useVisionModel.ts      # Calls the backend VLM proxy
 │   │   ├── useApiQuery.ts         # Calls backend /api/query
 │   │   ├── useSession.ts          # Session management
-│   │   └── useAccessibility.ts    # Accessibility preferences
+│   │   ├── useAccessibility.ts    # Accessibility preferences
+│   │   ├── useBehaviorTracking.ts # Replay/skip/listen signals
+│   │   ├── useDialogFocus.ts      # Modal focus trap + restore
+│   │   ├── useInTabRAG.ts         # Local page index ("Ask this page")
+│   │   ├── useScreenMonitor.ts    # Round 9 change narration
+│   │   └── useVoiceCommands.ts    # Spoken navigation commands
 │   ├── services/         # API services
 │   │   └── api.ts                 # Axios client (only client; no mock exists)
 │   ├── types/            # TypeScript interfaces
@@ -94,7 +103,9 @@ No `VITE_USE_MOCK` exists: the mock server and `mockApi.ts` were deleted, every 
   "response_text": "string",
   "agent_used": "string",
   "suggested_action": "string",
-  "confidence": "number"
+  "confidence": 0.9,
+  "confidence_source": "llm",
+  "sources_used": ["form_aadhaar_number"]
 }
 ```
 
@@ -123,9 +134,12 @@ No `VITE_USE_MOCK` exists: the mock server and `mockApi.ts` were deleted, every 
 
 ## Accessibility Features
 
-- **WCAG 2.1 AA** compliant contrast ratios
+- **WCAG 2.1 AA** contrast ratios
 - **Full keyboard navigation**: Tab, Enter, Escape, Space
-- **Screen reader tested**: NVDA, JAWS compatible
+- **Screen-reader contract verified by automation**, not by a human ear yet:
+  `frontend/a11y_audit.py` proves roles, accessible names, focus order and live
+  regions; the verbatim NVDA pass is the one remaining human step
+  (`docs/screen-reader-test-script.md`). Do not read this as "screen-reader tested".
 - **ARIA live regions** for dynamic content
 - **High contrast mode** (forced-colors media query support)
 - **Reduced motion** support (prefers-reduced-motion)
@@ -158,9 +172,10 @@ any `VITE_*` var bakes into the public JS bundle.
 | Command | Description |
 |---------|-------------|
 | `npm run dev` | Start Vite dev server |
-| `npm run build` | Production build |
-| `npm run preview` | Preview production build |
-| `npm run lint` | Run ESLint |
+| `npm run build` | Production build (tsc strict + vite) |
+| `npm run preview` | Preview the production build |
+
+There is no `lint` script: type checking happens inside `build` (`tsc` strict).
 
 ## Demo Checklist
 

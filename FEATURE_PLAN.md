@@ -195,7 +195,7 @@ class SessionMemory:
 | No Redis for multi-instance | Docker compose | Add Redis service |
 | Single NIM key (vision only) | README R3 | Document limitation; add OpenAI/Anthropic fallback |
 | No load test in CI | CI only runs offline | Add `backend/loadtest.py` to CI (small scale) |
-| Frontend bundle size | 230KB JS | Code-split agents, lazy-load Transformers.js |
+| Frontend bundle size | 285KB JS (measured 2026-10-24) | Code-split large panels; the in-tab RAG is a local chunk index, no bundled model |
 
 ---
 

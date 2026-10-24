@@ -102,20 +102,21 @@ when Tests 1–6 were written.
 | 7.6 | While an answer is being spoken, Tab to the stop-speaking control, Enter | speech stops immediately; this is logged as a skip (answers get shorter when skipped repeatedly — backend Rule 5) |
 | 7.7 | Stop the backend (`docker compose stop backend`), send a message | error bubble is spoken ("Sorry, I encountered an error…"), not silence |
 
-**Form-fill honesty note (for the examiner):** autonomous form filling has NO chat
-UI trigger — it is `POST /api/form-fill` plus the runnable demo page
-`demo/book-tickets.html` (open it directly in Edge/Chrome: full keyboard flow,
-real confirmation region with `role=status`). Do NOT mark "form-fill initiation"
-as a UI pass; verify the demo page reads correctly instead (labels, required
-announcement, confirmation text).
+**Form-fill honesty note (for the examiner):** form filling runs from the chat
+**Fill this form** dialog (`FormFillDialog`) and from `POST /api/form-fill`, and
+the demo page `demo/book-tickets.html` is the target a demo should use (open it
+directly in Edge/Chrome: full keyboard flow, real confirmation region with
+`role=status`). Also worth a pass: the companion **browser extension** loads
+unpacked and is driven by a key command (see `extension/README.md`); it is not
+part of this web UI, so do not mark its features as UI passes here.
 
 ## Record results
 
 For each numbered step, log: **Pass / Fail + what NVDA actually said.** Anything
 that is silent, mislabeled, or requires the mouse is a defect. Send the log to be
-triaged — the fixes go in the same place as Rounds 1–4 (README §10 fix log), and
-the automated `frontend/a11y_audit.py` should be extended to cover any new
-finding so it cannot regress.
+triaged — fixes are recorded in the commit history and the honest-gaps section
+(README §6), and the automated `frontend/a11y_audit.py` should be extended to
+cover any new finding so it cannot regress.
 
 ## What this script checks that the automated audit cannot
 

@@ -24,7 +24,7 @@ regardless). Those are fixed and locked by tests - see
 `docs/superpowers/specs/2026-10-21-adaptiveai-real-user-extension-design.md` §8 and
 `docs/proofs/README.md`. The suite baseline is measured, not asserted:
 `docs/verification-baseline.md`. The suite baseline is measured, not asserted:
-**697 passed** as of 2026-10-24 (after the full-tree bug sweep), produced on this machine by
+**694 passed** as of 2026-10-24 (after the full-tree bug sweep), produced on this machine by
 `bash scripts/verify-host.sh` — backend 253 + agents 103 + intent-engine 135 +
 browser-agent 63 + extension 140, every suite exit 0 (472 in the containers,
 against the pinned dependency set, by `bash scripts/verify.sh`, last measured
@@ -64,6 +64,11 @@ food ordering is the browser extension's scope, with its limits stated in §7 of
                                     │  └────────────────────┘
 ```
 
+The legacy browser routes are asymmetric on purpose: `/browse` and `/fill` act on a page
+they open, `/agent/browse` only reads - commit-class intents there are refused with a
+reason, because that route has none of the consent/CAPTCHA/robots/budget gates the
+session API enforces.
+
 Request flow: voice/text → Whisper STT → intent classifier (form/doc/web/edu/general)
 → RAG-grounded agent → **adaptive policy engine** (rewrites per stored disability
 profile + verbosity) → TTS back. Screenshots are described by NIM vision and used
@@ -71,8 +76,9 @@ as context. Form filling runs a separate real pipeline: **Discover → Cache →
 Replay → Heal** in live Chromium (`POST /api/form-fill`).
 
 Current tree adds: `POST /agent/orchestrate` (natural-language goal → LLM route
-with keyword fallback → 1 of 9 specialists: 5 base + ui_adjuster,
-content_explainer, profile_updater, navigation); `unified_context` fuses
+with keyword fallback → 1 of 11 agents: 5 base + ui_adjuster,
+content_explainer, profile_updater, navigation, scheduler, translator);
+`unified_context` fuses
 screen_text + DOM + VLM + intent into `screen_ctx` once (`routes_query.py`);
 Redis (`:6379`) backs TTL stores with in-memory fallback; `POST /api/share`
 gives caregivers a read-only transcript + annotations.
@@ -165,7 +171,8 @@ login **200** → session **201** → query **200 in 30.3s** (`form_agent`, conf
 create/watch/annotate **200/200/200** → braille **200** → SSRF **422/422** →
 monitor open/start/events/stop/close **200** ×5 on real Chromium (21 polls,
 0 narrations on static page, 0 NIM calls) → metrics **0 5xx**. `/agents`
-lists **11 live** (scheduler + translator included). Suites: 439 + 1 (§5).
+lists **11 live** (scheduler + translator included). Suites at that commit: 439 + 1
+(today's totals are in §5).
 
 One fix found by running: `agents/requirements.txt` never declared
 `pytest-asyncio` although `pytest.ini` sets `asyncio_mode = auto`, so 9 async
@@ -232,7 +239,7 @@ Then edit the `.env` files:
 # Make sure Docker Desktop is running first (daemon must be up)
 docker compose up -d --build
 docker compose exec backend alembic upgrade head   # first time / fresh DB only
-docker compose ps   # all 6 services should show (healthy)
+docker compose ps   # all 7 services should show (healthy)
 ```
 
 First build takes 2–5 min (torch + Chromium layers); later starts take ~1 min.
@@ -329,20 +336,20 @@ real browser and reports each action.
 # .venv with --system-site-packages, so these runs use the host's newer fastapi/
 # pydantic/faiss - see docs/verification-baseline.md for what that does and does
 # not prove, and for the pinned-set run inside the containers):
-bash scripts/verify-host.sh backend         # 250 passed (re-measured 2026-10-24) - policy (Rules 1-5), clients,
+bash scripts/verify-host.sh backend         # 253 passed (re-measured 2026-10-24) - policy (Rules 1-5), clients,
                                        #   auth, degrade, behavior + form-fill + SSRF contracts,
                                        #   hardening, clarify-on-unsure, UnifiedContext/SharedDict/
                                        #   braille/share/orchestrate, millisecond shared-store TTLs,
                                        #   production boot refusals, the /api/extension/step contract
                                        #   with step provenance (recipe vs model)
-bash scripts/verify-host.sh agents          # 102 passed, 1 deselected - RAG seed reconciliation,
+bash scripts/verify-host.sh agents          # 103 passed, 1 deselected - RAG seed reconciliation,
                                        #   registry (11 agents), orchestrate, API, prompt contracts,
                                        #   vector store (faiss, or the numpy exact-IP fallback when
                                        #   Smart App Control blocks the faiss DLL)
-bash scripts/verify-host.sh intent-engine   # 134 passed, 2 deselected - keyword + HTTP
+bash scripts/verify-host.sh intent-engine   # 135 passed, 2 deselected - keyword + HTTP
                                        #   contract + rate-limit bound + 13-intent routing +
                                        #   confidence provenance
-bash scripts/verify-host.sh browser-agent   # 62 passed - sessions, monitor gating/ceiling/consent,
+bash scripts/verify-host.sh browser-agent   # 63 passed - sessions, monitor gating/ceiling/consent,
                                        #   driver guards
 bash scripts/verify-host.sh extension       # 140 passed (re-measured 2026-10-24) - every suite drives a real
                                        #   Chromium, incl. the typed-goal loop end to end, the recipe
@@ -353,7 +360,7 @@ python frontend/a11y_audit.py http://localhost:5173   # keyboard + ARIA contract
 docker compose config --quiet          # 7 services parse (6 + redis shared store)
 ```
 
-Total: **697 passed** on 2026-10-24, every suite re-run on this host with exit 0
+Total: **694 passed** on 2026-10-24, every suite re-run on this host with exit 0
 (backend 253 + agents 103 + intent-engine 135 + browser-agent 63 + extension
 140). Both runners exit non-zero
 when a suite fails *or collects zero tests* — the previous host-only instructions
@@ -436,7 +443,7 @@ Live proofs: §2 table + §2C (each row is a command
   **2026-10-24** all five Python suites plus the frontend build were re-run on
   this host and all exited 0 (after the bug sweep): backend 253, agents 103,
   intent-engine 135, browser-agent 63, extension 140, `npm run build` clean —
-  697 tests. The
+  694 tests. The
   container-runner number (`bash scripts/verify.sh`, last measured 472) has not
   been re-established since that Docker Desktop session; treat it as the in-image
   figure, and the 2026-10-24 host run as the current one.
@@ -513,7 +520,13 @@ frontend/               React chat, voice, VLM upload, a11y toolbar, in-tab RAG,
                         Fill-this-form dialog, braille panel (Ishika, :5173)
 demo/book-tickets.html  this repo's OWN demo booking form (not a vendor) that the
                         pipeline really fills; confirmation text labels itself a demo
-docs/                   summary, backup-restore, screen-reader script, STT runbook, a11y log
+extension/              MV3 extension: accessible-name perception, verified actor,
+                        spending gate, recipes as data, voice in/out (140 tests in
+                        real Chromium; real-browser smoke proof included)
+scripts/                live/proof harnesses (each exits non-zero when it fails),
+                        verify-host.sh + verify.sh suite runners
+docs/                   summary, verification baseline, backup-restore, screen-reader
+                        script, STT runbook, proofs/ + round9 monitoring log, a11y log
 DEPLOY.md               production topology, capacity (measured), cost (~$5/10k queries paid tier)
 FEATURE_PLAN.md         phased enhancements: Phases 1-4 DONE (see §6 for live-proof caveats)
 AUTOMATION_SAFETY.md    isolated-browser-only automation rule

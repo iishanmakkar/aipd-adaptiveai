@@ -1,8 +1,14 @@
 # AdaptiveAI — GitHub Workflow & Team Roles
 
 > **Repo:** `https://github.com/iishanmakkar/aipd-adaptiveai.git`  
-> **Default branch:** `main` @ `37bf6fc`  
-> **Created branches:** `ishan`, `kakul`, `kartik`, `ishika` (all from `main`, pushed to origin)
+> **Default branch:** `main`  
+> **Created branches:** `ishan`, `kakul`, `kartik`, `ishika` (all from `main`, pushed to origin;
+> `round4-hardening` also exists locally)
+>
+> **This document is a snapshot of the team workflow as first written** (when
+> `main` was at `37bf6fc`). The branch names and the commands below are still
+> valid; the commit id and the line-number references are not — treat
+> `git log`/`git status` as the source of truth, as the note under §1 says.
 
 ---
 

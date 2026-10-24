@@ -17,7 +17,9 @@ User Input + Screen Context + History
 Session Memory (in-memory, last 5 turns)
 ```
 
-## Intent Categories → Agents
+## Intent Categories -> Agents
+
+Thirteen intents (the pattern is pinned in `app/schemas.py`, 2026-10-24):
 
 | Intent | Target Agent | Description |
 |--------|--------------|-------------|
@@ -26,6 +28,17 @@ Session Memory (in-memory, last 5 turns)
 | `web_navigation_help` | `web_agent` | Website navigation, UI explanation |
 | `education_help` | `education_agent` | Educational concept explanations |
 | `general_query` | `general_agent` | Greetings, unclear queries |
+| `browser_inspect` | `browser_agent` | Ask about the open live page (read-only) |
+| `browser_act` | `browser_agent` | Act on the open live page (gated) |
+| `ui_help` | `ui_adjuster_agent` | Contrast/font/layout/focus changes |
+| `content_explain` | `content_explainer_agent` | Explain the current screen simply |
+| `profile_update` | `profile_updater_agent` | Store/change disability preferences |
+| `navigation_help` | `navigation_agent` | Find a place or next step |
+| `scheduler_help` | `scheduler_agent` | Reminders and time-shaped requests |
+| `translation_help` | `translator_agent` | Translate/explain in another language |
+
+`browser_*` routing is gated on the backend's own `Live page:` marker (anchored
+to a line start) - page text cannot mint it.
 
 ## API
 
@@ -47,15 +60,25 @@ Session Memory (in-memory, last 5 turns)
   "intent": "form_help",
   "target_agent": "form_agent",
   "extracted_entity": "Permanent Address field",
-  "reasoning": "User asking about specific form field, screen context shows form"
+  "reasoning": "User asking about specific form field, screen context shows form",
+  "confidence": 0.9,
+  "confidence_source": "llm",
+  "ambiguous": false
 }
 ```
+
+`confidence_source` says who produced the number (`llm` or `keyword`); it is
+never a constant. `ambiguous` is true when a keyword no-match (0.3) needs one
+clarifying question instead of a guess.
 
 ### GET /intent/session/{session_id}/history
 Get conversation history for a session.
 
 ### DELETE /intent/session/{session_id}
 Clear session history.
+
+### GET /health
+Liveness probe (`{"status": "ok", "service": "intent-engine"}`).
 
 ## Quick Start
 
@@ -81,12 +104,21 @@ docker run -p 8001:8001 --env-file .env adaptiveai-intent
 ## Testing
 
 ```bash
-# Run accuracy test (requires service running on port 8001)
-cd tests
-python test_classifier.py
+# 135 tests as of 2026-10-24 - offline, no API key
+python -m pytest
+
+# Live accuracy against the running service + real NIM (spends quota):
+python -m pytest tests -m live
 ```
 
-Expected output: 80%+ accuracy on 20+ test cases.
+The 28 shared classification cases live in `tests/cases.py`, used by both the
+offline keyword tests and the live runner. The old `tests/test_classifier.py`
+(which collected zero tests) was deleted; pytest is the entry point.
+
+Rate limit: 60 requests/minute per client IP (429 above it). `X-Forwarded-For`
+is honoured only when `TRUST_PROXY_HEADERS=1` says a trusted proxy overwrites
+it; the default key is the socket peer, because the first XFF hop is
+client-supplied.
 
 ## Integration
 
@@ -100,6 +132,7 @@ No code changes needed in backend when this service is ready - just update the U
 
 1. **LLM-based classification** using NVIDIA NIM (OpenAI-compatible)
 2. **Keyword fallback** - never fails, always returns a classification
-3. **Session context memory** - last 5 turns per session_id for follow-up resolution
+3. **Session context memory** - last 5 turns per session_id, TTL/LRU bounded,
+   with a per-session turn lock so concurrent turns cannot drop each other
 4. **Screen context awareness** - uses VLM description from frontend
 5. **Configurable** via environment variables
