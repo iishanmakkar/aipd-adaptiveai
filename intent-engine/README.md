@@ -111,7 +111,8 @@ python -m pytest
 python -m pytest tests -m live
 ```
 
-The 28 shared classification cases live in `tests/cases.py`, used by both the
+The 48 shared classification cases (34 plain, 8 context, 6 browser) live in
+`tests/cases.py`, used by both the
 offline keyword tests and the live runner. The old `tests/test_classifier.py`
 (which collected zero tests) was deleted; pytest is the entry point.
 

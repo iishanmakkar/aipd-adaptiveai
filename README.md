@@ -1,5 +1,11 @@
 # AdaptiveAI — truth-passed build (live 2026-09-19, re-verified 2026-10-21; see the status block below)
 
+> **New developer? Start with [`CONTRIBUTING.md`](CONTRIBUTING.md)** — prerequisites,
+> the exact start commands (Docker and host-only), every test command with the
+> measured totals, where to change what, the non-negotiable rules, and what is
+> still open. Everything in this README is the project story; that file is the
+> runbook.
+
 > **Release:** `v1.1-dev` (post-`v1.0` @ `e1c9117`; adds Round 8 chat-driven live
 > sessions + Round 9 real-time monitoring + any-site guided fill — see
 > `docs/round9-monitoring.md`; everything below corresponds to this working tree).
@@ -23,8 +29,7 @@ effects no code performed, and three proof scripts that printed expectations and
 regardless). Those are fixed and locked by tests - see
 `docs/superpowers/specs/2026-10-21-adaptiveai-real-user-extension-design.md` §8 and
 `docs/proofs/README.md`. The suite baseline is measured, not asserted:
-`docs/verification-baseline.md`. The suite baseline is measured, not asserted:
-**694 passed** as of 2026-10-24 (after the full-tree bug sweep), produced on this machine by
+`docs/verification-baseline.md` — **694 passed** as of 2026-10-24 (after the full-tree bug sweep), produced on this machine by
 `bash scripts/verify-host.sh` — backend 253 + agents 103 + intent-engine 135 +
 browser-agent 63 + extension 140, every suite exit 0 (472 in the containers,
 against the pinned dependency set, by `bash scripts/verify.sh`, last measured
@@ -527,6 +532,7 @@ scripts/                live/proof harnesses (each exits non-zero when it fails)
                         verify-host.sh + verify.sh suite runners
 docs/                   summary, verification baseline, backup-restore, screen-reader
                         script, STT runbook, proofs/ + round9 monitoring log, a11y log
+CONTRIBUTING.md         new-developer guide: start commands, tests, rules, change map
 DEPLOY.md               production topology, capacity (measured), cost (~$5/10k queries paid tier)
 FEATURE_PLAN.md         phased enhancements: Phases 1-4 DONE (see §6 for live-proof caveats)
 AUTOMATION_SAFETY.md    isolated-browser-only automation rule
