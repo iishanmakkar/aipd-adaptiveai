@@ -24,9 +24,9 @@ regardless). Those are fixed and locked by tests - see
 `docs/superpowers/specs/2026-10-21-adaptiveai-real-user-extension-design.md` §8 and
 `docs/proofs/README.md`. The suite baseline is measured, not asserted:
 `docs/verification-baseline.md`. The suite baseline is measured, not asserted:
-**688 passed** as of 2026-10-24, produced on this machine by
-`bash scripts/verify-host.sh` — backend 250 + agents 102 + intent-engine 134 +
-browser-agent 62 + extension 140, every suite exit 0 (472 in the containers,
+**697 passed** as of 2026-10-24 (after the full-tree bug sweep), produced on this machine by
+`bash scripts/verify-host.sh` — backend 253 + agents 103 + intent-engine 135 +
+browser-agent 63 + extension 140, every suite exit 0 (472 in the containers,
 against the pinned dependency set, by `bash scripts/verify.sh`, last measured
 2026-10-21).
 
@@ -353,8 +353,8 @@ python frontend/a11y_audit.py http://localhost:5173   # keyboard + ARIA contract
 docker compose config --quiet          # 7 services parse (6 + redis shared store)
 ```
 
-Total: **688 passed** on 2026-10-24, every suite re-run on this host with exit 0
-(backend 250 + agents 102 + intent-engine 134 + browser-agent 62 + extension
+Total: **697 passed** on 2026-10-24, every suite re-run on this host with exit 0
+(backend 253 + agents 103 + intent-engine 135 + browser-agent 63 + extension
 140). Both runners exit non-zero
 when a suite fails *or collects zero tests* — the previous host-only instructions
 could not tell those two apart, and both the missing `pytest.ini` mount and the
@@ -434,8 +434,9 @@ Live proofs: §2 table + §2C (each row is a command
 - **Verification totals by surface.** `docs/verification-baseline.md` records 472
   passing tests measured on 2026-10-21 at Task 1 of the truth pass. On
   **2026-10-24** all five Python suites plus the frontend build were re-run on
-  this host and all exited 0: backend 250, agents 102, intent-engine 134,
-  browser-agent 62, extension 140, `npm run build` clean — 688 tests. The
+  this host and all exited 0 (after the bug sweep): backend 253, agents 103,
+  intent-engine 135, browser-agent 63, extension 140, `npm run build` clean —
+  697 tests. The
   container-runner number (`bash scripts/verify.sh`, last measured 472) has not
   been re-established since that Docker Desktop session; treat it as the in-image
   figure, and the 2026-10-24 host run as the current one.
