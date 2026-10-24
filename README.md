@@ -24,9 +24,11 @@ regardless). Those are fixed and locked by tests - see
 `docs/superpowers/specs/2026-10-21-adaptiveai-real-user-extension-design.md` §8 and
 `docs/proofs/README.md`. The suite baseline is measured, not asserted:
 `docs/verification-baseline.md`. The suite baseline is measured, not asserted:
-**668 passed / 1 skipped / 3 deselected** as of 2026-10-21, produced on this
-machine by `bash scripts/verify-host.sh` (and 472 in the containers, against the
-pinned dependency set, by `bash scripts/verify.sh`).
+**688 passed** as of 2026-10-24, produced on this machine by
+`bash scripts/verify-host.sh` — backend 250 + agents 102 + intent-engine 134 +
+browser-agent 62 + extension 140, every suite exit 0 (472 in the containers,
+against the pinned dependency set, by `bash scripts/verify.sh`, last measured
+2026-10-21).
 
 What has always been real stays real: Playwright Chromium, faster-whisper STT with VAD,
 RAG over a FAISS (or numpy exact-IP) index, and NIM-backed generation. Where something
