@@ -1,5 +1,9 @@
 # AdaptiveAI — GitHub Workflow & Team Roles
 
+> **Starting fresh?** [`CONTRIBUTING.md`](CONTRIBUTING.md) is the runbook:
+> prerequisites, start commands, every test command, where to change what, and
+> the rules. This file records the historical four-person branch workflow.
+
 > **Repo:** `https://github.com/iishanmakkar/aipd-adaptiveai.git`  
 > **Default branch:** `main`  
 > **Created branches:** `ishan`, `kakul`, `kartik`, `ishika` (all from `main`, pushed to origin;
