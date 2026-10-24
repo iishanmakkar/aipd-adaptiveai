@@ -86,6 +86,7 @@
   ],
   "verifiedOn": [],
   "notVerifiedOn": [
-    "in.bookmyshow.com - never run; the automated browser was blocked (see docs/proofs/README.md)"
+    "in.bookmyshow.com - blocked by a challenge page, reported inconclusive, not a pass (2026-10-24)",
+    "pvrplexais.in - never run"
   ]
 }

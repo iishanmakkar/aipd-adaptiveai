@@ -87,10 +87,10 @@
     "proceed to payment"
   ],
   "verifiedOn": [
-    "demo/book-tickets.html (this repository's own page)"
+    "demo/book-tickets.html (this repository's own page)",
+    "railyatri.in - PERCEPTION ONLY, 2026-10-24: the live homepage was read by the loaded extension (207 elements, snapshot 16 ms, 91% of names agree with Chrome's own AX tree, gate flagged 'Book Train Tickets'/'Book Bus Tickets'). Read-only proof (docs/proofs/2026-10-24-railyatri); no field was filled and no booking was completed."
   ],
   "notVerifiedOn": [
-    "railyatri.in",
-    "irctc.co.in - never run; the automated browser cannot reach either"
+    "irctc.co.in - never reached; the server refuses automated browsers (ERR_HTTP2_PROTOCOL_ERROR, 2026-10-24) and evading that is refused by design"
   ]
 }

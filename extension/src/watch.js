@@ -99,9 +99,34 @@
           ? { matched: true, evidence: 'the page said: ' + JSON.stringify(nowLive.join(' | ').slice(0, 200)) }
           : null;
       case 'node_appears':
-        return nodePresent(doc, expect, AX)
-          ? { matched: true, evidence: 'found ' + (expect.role || 'node') + ' ' + JSON.stringify(expect.name) }
-          : null;
+        if (expect.name || expect.role) {
+          return nodePresent(doc, expect, AX)
+            ? { matched: true, evidence: 'found ' + (expect.role || 'node') + ' ' + JSON.stringify(expect.name) }
+            : null;
+        }
+        // A bare node_appears: the planner predicted the page would react but
+        // the wire contract carries no name to wait for. Requiring a name that
+        // was never sent meant the prediction could never be met - the click
+        // visibly worked ("Payment accepted" appeared) and was still reported
+        // as a failure. So the page actually producing anything new - an
+        // announcement, or the snapshot changing size - is honest evidence it
+        // reacted; silence is not.
+        if (newAnnouncement) {
+          return { matched: true,
+                   evidence: 'the page said: ' + JSON.stringify(nowLive.join(' | ').slice(0, 200)) };
+        }
+        if (baseline.nodeCount != null && AX) {
+          try {
+            var afterNodes = AX.computeSnapshot(doc).nodes.length;
+            if (afterNodes !== baseline.nodeCount) {
+              return { matched: true,
+                       evidence: afterNodes > baseline.nodeCount
+                         ? (afterNodes - baseline.nodeCount) + ' element(s) appeared'
+                         : (baseline.nodeCount - afterNodes) + ' element(s) disappeared' };
+            }
+          } catch (e) { /* snapshot failed: keep waiting */ }
+        }
+        return null;
       case 'state_flipped': {
         if (!baseline.states) return null;
         if (!expect.selector) return null;

@@ -49,6 +49,7 @@ DEFAULT_SITES = [
     ("bookmyshow", "https://in.bookmyshow.com/"),
     ("irctc", "https://www.irctc.co.in/nget/train-search"),
     ("swiggy", "https://www.swiggy.com/"),
+    ("zomato", "https://www.zomato.com/"),
     # Complex, real, unblocked markup - what proves the perception layer itself.
     ("mdn", "https://developer.mozilla.org/en-US/"),
     ("mdn-aria", "https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA"),

@@ -1,0 +1,20 @@
+{
+  "site": "bookmyshow",
+  "url": "https://in.bookmyshow.com/",
+  "loaded_extension": true,
+  "ms_to_first_snapshot": 4197,
+  "final_url": "https://in.bookmyshow.com/",
+  "snapshot_ms": 2,
+  "dom_elements": 47,
+  "stats": {
+    "total": 6,
+    "interactive": 2,
+    "unnamedControls": 0,
+    "missingAlt": 0,
+    "hiddenSkipped": 0
+  },
+  "title": "Attention Required! | Cloudflare",
+  "nodes_total": 6,
+  "gate_would_stop": [],
+  "blocked": "challenge/block marker in title or url"
+}

@@ -30,10 +30,23 @@ PAGE = b"""<!doctype html><html lang="en"><head><title>Voice target</title></hea
 <body><main><h1>Book tickets</h1>
 <label for="q">From</label><input id="q" name="q">
 <button id="go">Search</button>
+<button id="pay">Pay \xe2\x82\xb9640</button>
+<div id="slot"></div>
+<script>
+  window.__paid = 0;
+  document.getElementById('pay').addEventListener('click', function () {
+    window.__paid++;
+    var d = document.createElement('div');
+    d.setAttribute('role', 'alert');
+    d.textContent = 'Payment accepted';
+    document.getElementById('slot').appendChild(d);
+  });
+</script>
 </main></body></html>"""
 
 STATE = {"uploads": [], "reply": {"transcript": "book two tickets", "language": "en",
-                                  "duration": 1.4}, "status": 200}
+                                  "duration": 1.4}, "status": 200,
+         "step_replies": []}
 LOCK = threading.Lock()
 
 
@@ -64,6 +77,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._send(STATE["status"],
                        json.dumps(STATE["reply"]).encode("utf-8"),
                        "application/json")
+            return
+        if self.path == "/api/extension/step":
+            with LOCK:
+                reply = STATE["step_replies"].pop(0) if STATE["step_replies"] else {
+                    "status": "done", "narration": "Nothing more to do."}
+            self._send(200, json.dumps(reply).encode("utf-8"), "application/json")
             return
         self._send(200, b'{"status":"done","narration":"Nothing more to do."}',
                    "application/json")
@@ -233,7 +252,108 @@ def test_the_worker_never_logs_the_transcript_of_a_privacy_field(voice):
     something said near a password box must not end up in a log line either."""
     source = open(os.path.join(EXT_DIR, "src", "background.js"), encoding="utf-8").read()
     transcribe_block = source[source.index("async function transcribe"):
-                            source.index("chrome.runtime.onMessage.addListener",
-                                         source.index("async function transcribe"))]
+                              source.index("chrome.runtime.onMessage.addListener",
+                                           source.index("async function transcribe"))]
     assert "logger" not in transcribe_block and "console" not in transcribe_block, \
         "the transcribe path must not log what it heard"
+
+
+# ---- the spoken answer at the spending gate --------------------------------
+#
+# The gate's narration says "Say yes to go ahead, or no to stop". These tests
+# drive that sentence with the same fixture the microphone tests use - a real
+# (synthetic) capture device, real MediaRecorder bytes, a real multipart upload
+# - while a task loop is genuinely waiting on ANSWER.
+
+def _pay_ref(sw):
+    return sw.evaluate("""async () => {
+        const ts = await chrome.tabs.query({active: true, currentWindow: true});
+        const r = await snapshotOf(ts[0].id);
+        const node = r.snapshot.nodes.find(n => n.name && n.name.startsWith('Pay'));
+        if (!node) throw new Error('fixture page has no Pay control');
+        return node.ref;
+    }""")
+
+
+def _gate_fixture(voice, transcript, replies):
+    sw = voice["sw"]
+    with LOCK:
+        STATE["uploads"].clear()
+        STATE["reply"] = {"transcript": transcript, "language": "en"}
+        STATE["step_replies"] = replies
+    return sw
+
+
+def _start_run(sw, goal):
+    sw.evaluate("""(g) => {
+        globalThis.__run = null;
+        runTask(g).then(r => { globalThis.__run = r; });
+        return true;
+    }""", goal)
+
+
+def _wait_for(predicate_sw, expression, timeout_s=40):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if predicate_sw.evaluate(expression):
+            return True
+        time.sleep(0.3)
+    return False
+
+
+def test_a_spoken_yes_releases_the_gate(voice):
+    """The full hands-free booking moment: the loop asks about money, the user
+    SAYS yes into the microphone, real audio is captured and transcribed, and
+    only then is the click dispatched - verified by the page's own alert."""
+    sw = _gate_fixture(voice, "yes", [
+        {"status": "act", "action": "click", "ref": _pay_ref(voice["sw"]),
+         "expect": "node_appears", "narration": "Paying 640 rupees now."}])
+    _start_run(sw, "pay for my ticket")
+    assert _wait_for(sw, "() => !!ANSWER"), "the gate never asked"
+    heard = sw.evaluate("() => handleCommand('listen')")
+    assert heard["ok"] is True and heard["answer"] == "yes", heard
+    assert _wait_for(sw, "() => !!globalThis.__run"), "the run never finished"
+    result = sw.evaluate("() => globalThis.__run")
+    assert result["ok"] is True and result["result"]["status"] == "completed", result
+    assert voice["page"].evaluate("() => window.__paid") == 1, result
+    said = [a["text"] for a in sw.evaluate("() => speechLog()")["attempts"]]
+    assert any("Going ahead" in t for t in said), said
+
+
+def test_a_spoken_no_cancels_and_nothing_is_pressed(voice):
+    sw = _gate_fixture(voice, "no thanks, stop", [
+        {"status": "act", "action": "click", "ref": _pay_ref(voice["sw"]),
+         "expect": "node_appears", "narration": "Paying 640 rupees now."}])
+    _start_run(sw, "pay for my ticket")
+    assert _wait_for(sw, "() => !!ANSWER"), "the gate never asked"
+    heard = sw.evaluate("() => handleCommand('listen')")
+    assert heard["ok"] is True and heard["answer"] == "no", heard
+    assert _wait_for(sw, "() => !!globalThis.__run"), "the run never finished"
+    result = sw.evaluate("() => globalThis.__run")
+    assert result["result"]["status"] == "cancelled", result
+    assert voice["page"].evaluate("() => window.__paid") == 0, \
+        "a spoken no still spent money"
+
+
+def test_a_misheard_answer_is_asked_again_not_guessed(voice):
+    """"Maybe later" is neither yes nor no. The failure direction matters: the
+    answer must fall toward ask-again, never toward spending."""
+    sw = _gate_fixture(voice, "maybe later", [
+        {"status": "act", "action": "click", "ref": _pay_ref(voice["sw"]),
+         "expect": "node_appears", "narration": "Paying 640 rupees now."}])
+    _start_run(sw, "pay for my ticket")
+    assert _wait_for(sw, "() => !!ANSWER"), "the gate never asked"
+    first = sw.evaluate("() => handleCommand('listen')")
+    assert first["ok"] is False and "yes or no" in first["reason"], first
+    # The question is still pending - the loop did not guess - so a clear
+    # answer on the second take is still heard.
+    with LOCK:
+        STATE["reply"] = {"transcript": "yes", "language": "en"}
+    second = sw.evaluate("() => handleCommand('listen')")
+    assert second["ok"] is True and second["answer"] == "yes", second
+    assert _wait_for(sw, "() => !!globalThis.__run"), "the run never finished"
+    result = sw.evaluate("() => globalThis.__run")
+    assert result["result"]["status"] == "completed", result
+    assert voice["page"].evaluate("() => window.__paid") == 1, result
+    said = [a["text"] for a in sw.evaluate("() => speechLog()")["attempts"]]
+    assert any("I need yes or no" in t for t in said), said

@@ -55,6 +55,22 @@ see. Nothing is clicked, filled or logged in to; artifacts are the **redacted**
 snapshot (structure, never values) plus a screenshot, under
 `docs/proofs/<date>-<site>/`.
 
+Re-measured 2026-10-24 (vendor sites only, after the recipes feature landed):
+
+| Site | Result | Nodes | Snapshot | Names agreeing with Chrome's own AX tree | Gate would stop |
+|---|---|---|---|---|---|
+| **railyatri.in** (Indian train booking) | read | 207 | 15 ms | 136/150 (91%) | **2** — "Book Train Tickets", "Book Bus Tickets" — same as 2026-10-21, reproduced |
+| in.bookmyshow.com | **blocked** (challenge page) | — | — | — | — |
+| irctc.co.in | **never loaded** (`ERR_HTTP2_PROTOCOL_ERROR`) | — | — | — | — |
+| swiggy.com | **never loaded** (`ERR_HTTP_RESPONSE_CODE_FAILURE`) | — | — | — | — |
+| zomato.com | **never loaded** (`ERR_HTTP2_PROTOCOL_ERROR`) | — | — | — | — |
+
+The RailYatri result is now in `extension/recipes/train-booking.json`'s
+`verifiedOn` - as *perception only*: the snapshot mechanism, the name computation
+and the gate's booking-control identification were measured on the vendor's real
+production markup. No field was filled and no booking was made; the recipe's
+step sequence remains verified only against `demo/book-tickets.html`.
+
 Measured 2026-10-21:
 
 | Site | Result | Nodes | Snapshot | Names agreeing with Chrome's own AX tree | Gate would stop |
