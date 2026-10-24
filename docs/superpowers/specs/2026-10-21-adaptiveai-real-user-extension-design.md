@@ -4,6 +4,13 @@
 **Status:** Design agreed in chat, pending user review of this document
 **Supersedes nothing.** Adds a subsystem (extension), a protocol (action/verification), and a corrective pass over claims in `README.md`.
 
+> **Status 2026-10-24: implemented, kept as the design record.** The extension,
+> the action protocol and the truth pass described here shipped; current state and
+> measured evidence are in `README.md` (honest gaps), `extension/README.md` and
+> `docs/proofs/README.md`. The "pending user review" line below is the original
+> 2026-10-21 status and is not current.
+
+
 ---
 
 ## 1. Why this design exists

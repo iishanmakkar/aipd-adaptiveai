@@ -1,5 +1,10 @@
 # Plan B — AdaptiveAI Browser Extension Implementation Plan
 
+> **Status 2026-10-24: archived, not a to-do list.** Every task this plan
+> specifies shipped; the checkboxes below are the original working state. Run
+> `python -m pytest extension/test` (140 tests) for the current proof, and see
+> `extension/README.md` for what is and is not verified.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (inline) or superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Ship an MV3 Chrome/Edge extension that lets a blind NVDA user speak a goal and have AdaptiveAI carry it out in the user's own logged-in browser, with every action verified by readback and every irreversible action gated behind a spoken confirmation.

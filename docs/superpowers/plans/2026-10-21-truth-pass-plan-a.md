@@ -1,5 +1,9 @@
 # Truth Pass (Plan A) Implementation Plan
 
+> **Status 2026-10-24: archived, complete.** The truth pass landed; its fixes are
+> locked by tests, and the current totals are in `README.md` §5 and
+> `docs/verification-baseline.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove every path in AdaptiveAI that reports success without having caused it, and make the project's verification claims reproducible by a stranger.
