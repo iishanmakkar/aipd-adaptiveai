@@ -13,7 +13,7 @@
 // 'src/vault.js' asks for src/src/vault.js, the import throws, and the worker
 // silently never activates.
 importScripts('vault.js');
-importScripts('privacy.js', 'planner.js', 'runner.js', 'speech.js');
+importScripts('privacy.js', 'recipes.js', 'planner.js', 'runner.js', 'speech.js');
 
 chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
   if (!message) return false;
@@ -178,8 +178,21 @@ async function runTask(goal) {
           try {
             chrome.tabs.sendMessage(tab.id, message, function (outcome) {
               if (chrome.runtime.lastError) {
+                var why = chrome.runtime.lastError.message || '';
+                // A click whose expectation is a navigation can succeed and
+                // still lose its readback: the page tears the content script
+                // down mid-await, and the port closes. The click WAS
+                // dispatched, so "pressed" with the lost readback stated
+                // plainly is the honest ceiling - reporting it as a failure
+                // would tell a blind user that a step which worked did not.
+                if (message.action === 'click' && message.expect &&
+                    /port closed|receiving end|message channel closed/i.test(why)) {
+                  resolve({ status: 'pressed', ref: message.ref,
+                            reason: 'the page navigated before the readback could report' });
+                  return;
+                }
                 resolve({ status: 'failed',
-                          reason: chrome.runtime.lastError.message.slice(0, 140) });
+                          reason: why.slice(0, 140) });
                 return;
               }
               resolve(outcome || { status: 'failed', reason: 'no outcome returned' });
@@ -346,12 +359,51 @@ chrome.runtime.onMessage.addListener(function (message, _sender, sendResponse) {
 // key-release event, so "hold to speak" cannot be implemented, and shipping a
 // name that promises it is a lie in the keyboard-shortcuts page. The take ends
 // after its ceiling or when silence is captured, whichever comes first.
+// Spoken answers to the spending question. The gate's own narration says "Say
+// yes to go ahead, or no to stop" - so a voice answer must be hearable while a
+// run is active, which is exactly when the plain `listen` command refuses.
+// Words that merely contain yes/no ("yes" inside "yesterday") do not count:
+// the match is anchored to the first word, because a misheard sentence must
+// fail toward "ask again", not toward spending money.
+var YES_ANSWER = /^(yes|yeah|yep|yup|sure|ok(ay)?|go ahead|confirm|haan)\b/i;
+var NO_ANSWER = /^(no|nope|nay|nahi|stop|cancel|ruko)\b/i;
+
+async function answerQuestionByVoice() {
+  var pending = ANSWER;
+  var heard = await transcribe(8000);
+  if (!heard.ok) {
+    await AdaptiveAISpeech.speak('I still need your answer. ' + heard.reason);
+    return heard;
+  }
+  var said = heard.text.trim();
+  if (pending && YES_ANSWER.test(said)) {
+    pending('yes');
+    await AdaptiveAISpeech.speak('Going ahead.');
+    return { ok: true, answer: 'yes', text: said };
+  }
+  if (pending && NO_ANSWER.test(said)) {
+    pending('no');
+    await AdaptiveAISpeech.speak('Stopped. Nothing was pressed.');
+    return { ok: true, answer: 'no', text: said };
+  }
+  // The question may have timed out while the take was running; that is a
+  // different situation from a misheard answer and gets its own words.
+  if (!pending) {
+    await AdaptiveAISpeech.speak('There is no question waiting any more.');
+    return { ok: false, reason: 'the question is no longer pending' };
+  }
+  await AdaptiveAISpeech.speak('I heard: ' + said + '. I need yes or no.');
+  return { ok: false, reason: 'the answer to a spending question must be yes or no',
+           text: said };
+}
+
 async function handleCommand(name) {
   if (name === 'stop-talking') {
     AdaptiveAISpeech.stopListening();
     return AdaptiveAISpeech.stop();
   }
   if (name !== 'listen') return { ok: false, reason: 'unknown command ' + name };
+  if (ACTIVE && ANSWER) return answerQuestionByVoice();
   if (ACTIVE) return { ok: false, reason: 'I am already working on: ' + ACTIVE };
   var heard = await transcribe(8000);
   if (!heard.ok) {

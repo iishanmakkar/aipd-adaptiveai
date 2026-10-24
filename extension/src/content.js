@@ -89,7 +89,12 @@
         return { status: 'refused', ref: node.ref,
                  reason: 'the spending gate is unavailable on this page, so nothing is clicked' };
       }
-      var verdict = GATE.classify(node, gateContext());
+      // The ceiling travels with every action message; without it the gate could
+      // never report `exceedsCeiling` and the second, stronger confirmation for
+      // an amount above the user's own limit could never fire.
+      var verdict = GATE.classify(node, Object.assign(gateContext(), {
+        spendCeiling: message.spendCeiling === undefined ? null : message.spendCeiling,
+      }));
       if (verdict.gated) {
         if (message.confirm !== true) {
           return { status: 'gated', ref: node.ref, name: node.name, gate: verdict,

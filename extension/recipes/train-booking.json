@@ -1,0 +1,96 @@
+{
+  "id": "train-booking",
+  "name": "Train ticket search",
+  "hosts": [
+    "railyatri.in",
+    "irctc.co.in",
+    "127.0.0.1",
+    "localhost"
+  ],
+  "matchGoal": [
+    "train",
+    "ticket",
+    "berth",
+    "irctc",
+    "railyatri"
+  ],
+  "steps": [
+    {
+      "intent": "origin",
+      "role": "textbox",
+      "names": [
+        "from",
+        "origin",
+        "source",
+        "departure",
+        "boarding"
+      ]
+    },
+    {
+      "intent": "destination",
+      "role": "textbox",
+      "names": [
+        "to",
+        "destination",
+        "arrival"
+      ]
+    },
+    {
+      "intent": "journey date",
+      "role": "textbox",
+      "names": [
+        "date",
+        "journey date",
+        "travel date",
+        "departure date"
+      ],
+      "kinds": [
+        "date",
+        "text"
+      ]
+    },
+    {
+      "intent": "class",
+      "role": "combobox",
+      "names": [
+        "class",
+        "coach",
+        "berth class",
+        "travel class"
+      ]
+    },
+    {
+      "intent": "passengers",
+      "role": "textbox",
+      "names": [
+        "passenger name",
+        "full name",
+        "name"
+      ],
+      "value": "profile:full name"
+    },
+    {
+      "intent": "search",
+      "role": "button",
+      "names": [
+        "search",
+        "find trains",
+        "show trains"
+      ]
+    }
+  ],
+  "stopAt": [
+    "book",
+    "pay",
+    "purchase",
+    "add ticket",
+    "proceed to payment"
+  ],
+  "verifiedOn": [
+    "demo/book-tickets.html (this repository's own page)"
+  ],
+  "notVerifiedOn": [
+    "railyatri.in",
+    "irctc.co.in - never run; the automated browser cannot reach either"
+  ]
+}

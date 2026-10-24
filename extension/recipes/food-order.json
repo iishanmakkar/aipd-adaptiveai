@@ -1,0 +1,21 @@
+{
+  "id": "food-order",
+  "name": "Food order",
+  "hosts": ["swiggy.com", "zomato.com", "dominos.in", "127.0.0.1", "localhost"],
+  "matchGoal": ["food", "order", "deliver", "restaurant", "pizza", "biryani"],
+  "steps": [
+    { "intent": "delivery address", "role": "textbox",
+      "names": ["address", "delivery address", "your address"] },
+    { "intent": "dish search", "role": "textbox",
+      "names": ["search for dishes", "search", "find food"] },
+    { "intent": "add to order", "role": "button",
+      "names": ["add", "add item", "customise", "add to cart"] },
+    { "intent": "view cart", "role": "button",
+      "names": ["view cart", "cart", "go to cart"] },
+    { "intent": "contact phone", "role": "textbox",
+      "names": ["phone", "mobile", "contact number"], "kinds": ["phone", "text"] }
+  ],
+  "stopAt": ["place order", "pay", "checkout", "confirm order"],
+  "verifiedOn": [],
+  "notVerifiedOn": ["swiggy.com", "zomato.com - never run; the automated browser could not load them"]
+}

@@ -129,6 +129,10 @@
         record.readback = approved ? approved.readback : record.readback;
         record.reason = approved ? approved.reason : record.reason;
         record.confirmedByUser = true;
+        // The outcome the planner will be shown is the one the page actually
+        // returned, not the pre-approval "gated": recorded as gated, the next
+        // history line told the model the press never happened when it did.
+        lastOutcome = approved || outcome;
         if (record.status !== 'verified' && record.status !== 'pressed') {
           status = 'failed';
           say('I did that and it did not work: ' + (record.reason || 'no reason given'));

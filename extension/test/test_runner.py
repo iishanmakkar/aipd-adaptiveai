@@ -52,10 +52,14 @@ async ([plan, confirmBehaviour, maxSteps]) => {
     const steps = plan.map(s => ({ ...s, ref: s.label ? refFor(s.label) : s.ref }));
     let i = 0;
     const questions = [];
+    const lastOutcomes = [];
     const result = await AdaptiveAIRunner.run({
         goal: 'book a ticket',
         maxSteps: maxSteps,
-        nextStep: async () => (i < steps.length ? steps[i++] : null),
+        nextStep: async (context) => {
+            lastOutcomes.push(context.lastOutcome ? context.lastOutcome.status : null);
+            return i < steps.length ? steps[i++] : null;
+        },
         send: async (spec) => await window.__adaptiveai.act(spec),
         snapshot: () => window.__adaptiveai.snapshot(true),
         availableLabels: async () => ['full name'],
@@ -66,7 +70,7 @@ async ([plan, confirmBehaviour, maxSteps]) => {
             return confirmBehaviour === 'yes';
         },
     });
-    return { result, questions };
+    return { result, questions, lastOutcomes };
 }
 """
 
@@ -192,6 +196,18 @@ def test_budget_is_reported_as_a_budget(page):
     assert result["status"] == "budget", result
     assert len(result["steps"]) == 2, result
     assert any("limit of 2 steps" in s for s in result["narration"]), result
+
+
+def test_after_an_approval_the_planner_sees_the_real_outcome(page):
+    """The outcome handed back to the planner after a gated step must be the
+    approved result, not the pre-approval 'gated': recorded as gated, the next
+    history line told the model the press never happened when the user had just
+    approved it - and the model would reasonably try the same step again."""
+    plan = PAY_STEP + [{"action": "focus", "label": "Passenger Name",
+                        "description": "focus the name field"}]
+    out = run(page, plan, confirm_behaviour="yes")
+    assert out["result"]["status"] == "completed", out["result"]
+    assert out["lastOutcomes"][1] == "pressed", out["lastOutcomes"]
 
 
 def test_a_benign_run_never_asks_for_confirmation(page):

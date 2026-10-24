@@ -268,7 +268,7 @@ SW_FIND_AND_ACT_ON_GHOST = """async (siteUrl) => {
     return { status: 'error', reason: 'no fixture tab found' };
 }"""
 
-SW_GATE_CLICK = """async ({siteUrl, confirm}) => {
+SW_GATE_CLICK = """async ({siteUrl, confirm, spendCeiling, confirmStrong}) => {
     const tabs = await chrome.tabs.query({});
     for (const tab of tabs) {
         let snap;
@@ -281,8 +281,9 @@ SW_GATE_CLICK = """async ({siteUrl, confirm}) => {
         if (!node) continue;
         const out = await chrome.tabs.sendMessage(tab.id,
             { type: 'adaptiveai:act', ref: node.ref, action: 'click',
-              confirm: confirm });
-        return { out: out, name: node.name };
+              confirm: confirm, spendCeiling: spendCeiling,
+              confirmStrong: confirmStrong });
+        return { out: out, name: node.name, gate: out.gate };
     }
     return { error: 'gate fixture tab not found' };
 }"""
@@ -426,6 +427,32 @@ def test_a_silent_page_reacts_are_reported_honestly_end_to_end(loaded_extension,
     assert bad["out"]["status"] == "failed", bad
     assert "url_changed" in bad["out"]["reason"], bad
     assert page.evaluate("() => window.__presses") >= 1
+    page.close()
+
+
+def test_an_amount_above_the_ceiling_needs_the_second_confirmation(loaded_extension, site):
+    """The spending ceiling is the user's own setting, and it is the content
+    script that must apply it: `exceedsCeiling` can only be true when the ceiling
+    actually reached the gate, so a yes to "go ahead" is not enough on its own -
+    a second, separate confirmation is required before a click above the limit."""
+    target = site + "?case=gate"
+    page = loaded_extension.new_page()
+    page.goto(target, wait_until="load")
+    page.wait_for_function(
+        "() => document.documentElement.hasAttribute('data-adaptiveai-nodes')", timeout=15000)
+    sw = _wait_service_worker(loaded_extension)
+
+    first = sw.evaluate(SW_GATE_CLICK, {"siteUrl": target, "confirm": True,
+                                        "spendCeiling": 100})
+    assert first["out"]["status"] == "gated", first
+    assert first["gate"]["exceedsCeiling"] is True, first
+    assert "second, separate" in first["out"]["reason"], first["out"]["reason"]
+    assert page.evaluate("() => window.__paid") == 0,         "one yes was enough for an amount above the ceiling"
+
+    both = sw.evaluate(SW_GATE_CLICK, {"siteUrl": target, "confirm": True,
+                                       "spendCeiling": 100, "confirmStrong": True})
+    assert both["out"]["status"] == "pressed", both
+    assert page.evaluate("() => window.__paid") == 1, both
     page.close()
 
 

@@ -55,6 +55,18 @@ def test_url_change_is_detected(page):
     assert "#step2" in res["evidence"]
 
 
+
+def test_a_bare_kind_from_the_planner_is_accepted(page):
+    """The planner and the recipes send an expectation as a bare kind -
+    "url_changed", not {"kind": "url_changed"}. Only the object shape being
+    understood meant every planner-chosen click with an expectation waited out
+    its whole timeout and then reported the page as unchanged."""
+    res = wait_for_change(page, '<button id="b">Next</button>',
+                          'setTimeout(() => { location.hash = "#step2"; }, 120);',
+                          "url_changed")
+    assert res["verified"] is True, res
+    assert "#step2" in res["evidence"]
+
 def test_a_handler_that_is_only_attached_is_not_a_change(page):
     """Wiring a listener and never firing it must NOT verify. Guards the fixture
     above against the mistake of attaching a handler and calling it a change."""

@@ -1,0 +1,91 @@
+{
+  "id": "movie-booking",
+  "name": "Cinema seat booking",
+  "hosts": [
+    "in.bookmyshow.com",
+    "bookmyshow.com",
+    "pvrplexais.in",
+    "127.0.0.1",
+    "localhost"
+  ],
+  "matchGoal": [
+    "movie",
+    "film",
+    "cinema",
+    "show",
+    "seats",
+    "bookmyshow"
+  ],
+  "steps": [
+    {
+      "intent": "city",
+      "role": "combobox",
+      "names": [
+        "city",
+        "location"
+      ]
+    },
+    {
+      "intent": "movie",
+      "role": "textbox",
+      "names": [
+        "search for a movie",
+        "movie",
+        "film"
+      ]
+    },
+    {
+      "intent": "showtime",
+      "role": "combobox",
+      "names": [
+        "showtime",
+        "show time",
+        "session",
+        "timing"
+      ]
+    },
+    {
+      "intent": "seat count",
+      "role": "spinbutton",
+      "names": [
+        "seats",
+        "number of seats",
+        "quantity"
+      ],
+      "kinds": [
+        "number"
+      ]
+    },
+    {
+      "intent": "viewer name",
+      "role": "textbox",
+      "names": [
+        "passenger name",
+        "viewer name",
+        "full name",
+        "name"
+      ],
+      "value": "profile:full name"
+    },
+    {
+      "intent": "continue",
+      "role": "button",
+      "names": [
+        "continue",
+        "next",
+        "proceed"
+      ]
+    }
+  ],
+  "stopAt": [
+    "pay",
+    "checkout",
+    "confirm booking",
+    "book now",
+    "add card"
+  ],
+  "verifiedOn": [],
+  "notVerifiedOn": [
+    "in.bookmyshow.com - never run; the automated browser was blocked (see docs/proofs/README.md)"
+  ]
+}

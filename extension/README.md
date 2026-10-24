@@ -11,10 +11,14 @@ offscreen document that owns the speech engine **and the microphone**, and a
 transcription path that turns recorded audio into the goal. All of it is driven
 end-to-end in real Chromium, including what went to the wire.
 
-What is not real yet: nobody has done this on a booking site. There are no
-`extension/recipes/*.json` and no verified-trace memory, so no platform is
-supported, and the human-with-NVDA acceptance pass has not happened (spec §12).
-Do not demonstrate this as "books tickets on BookMyShow". It has never done that.
+What is not real yet: nobody has done this on a real booking site. Site knowledge
+exists as data (`extension/recipes/*.json` for train, movie and food flows, plus a
+verified-trace memory that only records steps the page confirmed) — but the train
+recipe has only ever been run against this repository's own demo page; IRCTC,
+RailYatri, BookMyShow, Swiggy and Zomato are listed in each recipe's
+`notVerifiedOn` and have never been touched. The human-with-NVDA acceptance pass
+has not happened (spec §12). Do not demonstrate this as "books tickets on
+BookMyShow". It has never done that.
 
 | Piece | State |
 |---|---|
@@ -30,10 +34,10 @@ Do not demonstrate this as "books tickets on BookMyShow". It has never done that
 | `src/background.js` the loop itself | done — one run at a time, live snapshot per step, confirmation that treats silence as a no, run transcript readable afterwards |
 | `src/speech.js` + `offscreen.html` narration | done — the worker has no speech engine, so an offscreen document owns it; every announcement reports what the engine did, and a document that answers nothing is reported rather than assumed |
 | microphone in → transcript → goal | done — `getUserMedia` + `MediaRecorder` capture in the offscreen document, uploaded as a multipart `/api/transcribe` call, and the words land in the goal field. Verified in Chromium against a fake capture device (real encoded audio, 24 KB of opus for a 2.5 s take); **not** yet verified with a real microphone, a noisy room, or a spoken confirmation |
-| key commands | done — `listen` hears one utterance, says it back, and runs it; `stop-talking` cuts the announcement. **Shipped with no default key**, because a `Ctrl+Alt+*` default makes Chrome refuse to install the extension at all (measured, below): assign one at `chrome://extensions/shortcuts`. The name is `listen`, not `hold-listen` — MV3 delivers no key-release, so "hold to speak" would be a promise the platform cannot keep |
+| key commands | done — `listen` hears one utterance, says it back, and runs it; `stop-talking` cuts the announcement. While the spending gate is waiting, `listen` hears the answer instead: a spoken "yes" or "no" is routed to the pending question (anything else is repeated back and asked again). **Shipped with no default key**, because a `Ctrl+Alt+*` default makes Chrome refuse to install the extension at all (measured, below): assign one at `chrome://extensions/shortcuts`. The name is `listen`, not `hold-listen` — MV3 delivers no key-release, so "hold to speak" would be a promise the platform cannot keep |
 | `options.html` + `src/options.js` | done — the one place details are entered, batched into a single write, delete needs two deliberate presses |
 | `popup.html` typed goal + Listen + transcript + yes/no | done — labelled input, live regions, what happened listed per step |
-| `extension/recipes/*.json`, verified-trace memory | not written — no site knowledge exists yet, so no platform is supported |
+| `extension/recipes/*.json`, verified-trace memory | written as data — a recipe may name roles and accessible-name words, never selectors or values; it proposes, the actor still verifies, and only steps the page confirmed are remembered (as intent + role + name, never a ref). Verified only against `demo/book-tickets.html` and the local test pages; every real site is in `notVerifiedOn` |
 
 Plan: `docs/superpowers/plans/2026-10-21-plan-b-extension.md`. Design:
 `docs/superpowers/specs/2026-10-21-adaptiveai-real-user-extension-design.md`.

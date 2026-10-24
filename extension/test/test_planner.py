@@ -260,3 +260,60 @@ def test_history_records_the_outcome_of_the_previous_step(page):
     assert entry["status"] == "verified"
     assert entry["change"] == "url changed"
     assert entry["ref"] == cont
+
+
+RECIPE_STUB = """([ref, valueFrom]) => {
+    window.__recipePlanner = AdaptiveAIPlanner.create({ recipes: {
+        load: async () => [{ id: 't', hosts: ['*'], matchGoal: [],
+            steps: [{ intent: 'passenger', role: 'textbox',
+                      names: ['passenger name'], value: 'profile:full name' }] }],
+        matches: () => true,
+        propose: async () => ({ kind: 'step', intent: 'passenger', action: 'fill',
+            ref: ref, value_from: valueFrom, value_label: 'full name',
+            expect: 'none', description: 'passenger (Passenger name)',
+            via: 'names', recipe: 't' }),
+        record: async () => true,
+    }});
+}"""
+
+
+def recipe_step(page, reply=None):
+    return page.evaluate("""([reply]) => {
+        window.__sent = [];
+        if (reply) window.__reply = reply;
+        return window.__recipePlanner.nextStep({
+            goal: 'book a train', snapshot: window.__snap,
+            availableLabels: ['full name'], lastOutcome: null });
+    }""", [reply])
+
+
+def test_a_recipe_step_with_a_profile_value_skips_the_model(page):
+    """The recipe proposes, the vault supplies the value on the device, and no
+    request is built at all: the whole point of a recipe step is that the model
+    is not in the loop for the part the data file can do."""
+    name_node = page.evaluate(
+        "() => window.__snap.nodes.find(n => n.name === 'Passenger name').ref")
+    page.evaluate(RECIPE_STUB, [name_node, "profile"])
+    got = recipe_step(page)
+    assert got["action"] == "fill" and got["ref"] == name_node, got
+    assert got["value"] == "Asha Sharma", got
+    assert got["source"] == "recipe", got
+    assert page.evaluate("() => window.__sent.length") == 0, \
+        "the model was consulted for a step the recipe already knew"
+
+
+def test_a_recipe_write_without_a_value_is_handed_to_the_model(page):
+    """A recipe may not invent a value. Handing the actor `undefined` would
+    have written the literal word "undefined" into the field - and the
+    readback would have matched, reporting it as verified."""
+    name_node = page.evaluate(
+        "() => window.__snap.nodes.find(n => n.name === 'Passenger name').ref")
+    page.evaluate(RECIPE_STUB, [name_node, "none"])
+    got = recipe_step(page, {"status": "act", "action": "fill", "ref": name_node,
+                             "value_from": "literal",
+                             "value_literal": "Vikram Singh",
+                             "narration": "Entering the name."})
+    assert page.evaluate("() => window.__sent.length") == 1, \
+        "the model should have been asked for a step the recipe cannot complete"
+    assert got["action"] == "fill" and got["ref"] == name_node, got
+    assert got["value"] == "Vikram Singh", got

@@ -73,6 +73,11 @@
   }
 
   function evaluate(doc, baseline, expect, AX) {
+    // The planner and the recipes both speak of an expectation as a bare kind
+    // ("url_changed"); the tests pass an object. Accepting only one shape meant
+    // the other arrived as `kind: undefined`, matched nothing, and every click
+    // carrying an expectation failed after its full timeout.
+    if (typeof expect === 'string') expect = { kind: expect };
     var nowLive = liveRegions(doc);
     var urlChanged = doc.location.href !== baseline.url;
     var titleChanged = (doc.title || '') !== baseline.title;
@@ -155,6 +160,7 @@
   function waitFor(doc, baseline, expect, timeoutMs) {
     var AX = global.AdaptiveAIAX;
     var limit = timeoutMs || 8000;
+    if (typeof expect === 'string') expect = { kind: expect };
     return new Promise(function (resolve) {
       var finished = false, timer = null, observer = null;
 

@@ -46,7 +46,83 @@
       pending.error = (outcome && outcome.reason) || '';
       history.push(pending);
       if (history.length > 40) history.shift();
+      // A verified step is remembered, and so is a bare 'pressed': the click
+      // was already dispatched, and proposing it again within this run risks
+      // pressing it twice. Only the verified outcome becomes persistent
+      // memory, though - 'pressed' means the page has not reported back yet.
+      if (pending.intent && lastRedacted &&
+          (pending.status === 'verified' || pending.status === 'pressed')) {
+        recipeDone.push(pending.intent);
+        if (pending.status === 'verified' && Recipes && Recipes.record) {
+          Recipes.record(lastRedacted, activeRecipe && activeRecipe.id,
+                         pending.intent, pending.node, pending.status);
+        }
+      }
       pending = null;
+    }
+
+    var Recipes = opts.recipes || global.AdaptiveAIRecipes;
+    var recipeDone = [];
+    var activeRecipe = null;
+    var lastRedacted = null;
+
+    // When the recipe proposed a step but this device cannot complete it as
+    // proposed (no value, the control is gone, the field is protected), the
+    // model takes the step over - and the recipe must not propose the same
+    // intent again on the next turn, or it would stall the whole run at its
+    // first unfinished step while the model does all the work around it.
+    function decline(intent) {
+      if (intent && recipeDone.indexOf(intent) === -1) recipeDone.push(intent);
+      return null;
+    }
+
+    async function fromRecipe(redacted, nodes, goal) {
+      if (!Recipes || !Recipes.load) return null;
+      var list;
+      try {
+        list = await Recipes.load();
+      } catch (e) {
+        return null;   // a recipe store that cannot be read is not a reason to stall
+      }
+      activeRecipe = list.filter(function (r) {
+        return Recipes.matches(r, redacted.url, goal);
+      })[0] || null;
+      if (!activeRecipe) return null;
+      var proposal;
+      try {
+        proposal = await Recipes.propose(activeRecipe, redacted, goal, recipeDone);
+      } catch (e) { return null; }
+      if (!proposal || proposal.kind !== 'step') return null;
+      var node = nodes.filter(function (n) { return n.ref === proposal.ref; })[0];
+      if (!node || node.kind === 'password' || node.sensitive || node.disabled) {
+        return decline(proposal.intent);
+      }
+      var value;
+      if (proposal.value_from === 'profile') {
+        if (!vault) return decline(proposal.intent);
+        value = await vault.resolve(proposal.value_label);
+        if (value === null || value === undefined || value === '') {
+          // The model is better placed to ask the user for it.
+          return decline(proposal.intent);
+        }
+      }
+      if ((proposal.action === 'fill' || proposal.action === 'select') &&
+          (value === undefined || value === null || value === '')) {
+        // A write with nothing to write would have handed the actor `undefined`,
+        // which String()s into the literal word "undefined" - entered, verified
+        // by readback, and reported as done. A recipe may not invent the value,
+        // so the model takes the step: it can ask the user or use the goal's own
+        // words.
+        return decline(proposal.intent);
+      }
+      pending = { description: proposal.description, action: proposal.action,
+                  ref: proposal.ref, intent: proposal.intent, node: node,
+                  source: 'recipe' };
+      return {
+        action: proposal.action, ref: proposal.ref, value: value,
+        expect: proposal.expect, description: proposal.description,
+        source: 'recipe', say: null,
+      };
     }
 
     function control(kind, narration, why) {
@@ -62,6 +138,15 @@
 
       var redacted = privacy ? privacy.redactSnapshot(context.snapshot) : context.snapshot;
       var nodes = (redacted && redacted.nodes) || [];
+      lastRedacted = redacted;
+
+      // A recipe is tried before the network, but only ever *offers* a step: when
+      // it cannot find one, or finds two controls it cannot tell apart, the model
+      // is asked instead. A data file that runs out of ideas is not a reason to
+      // stop, and a run that only ever used the recipe still verifies every press.
+      var proposed = await fromRecipe(redacted, nodes, context.goal);
+      if (proposed) return proposed;
+
       // What the model is allowed to see: shape, never content.
       var wire = nodes.map(function (n) {
         var out = {
@@ -84,7 +169,17 @@
         title: (redacted && redacted.title) || '',
         nodes: wire,
         available_labels: context.availableLabels || [],
-        history: history,
+        // Mapped field by field on purpose: the internal history also holds the
+        // matched node and the intent, and posting those would put a whole page
+        // node (with anything the redactor kept) into a step record. `source` is
+        // the honest label of who chose each step: the recipe data or the model.
+        history: history.map(function (h) {
+          return {
+            description: h.description || '', action: h.action || '',
+            ref: h.ref || '', status: h.status || '', change: h.change || '',
+            error: h.error || '', source: h.source || 'model',
+          };
+        }),
         verbosity: (redacted && redacted.verbosity) || 'standard',
       });
 
