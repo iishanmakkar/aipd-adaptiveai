@@ -317,3 +317,44 @@ def test_a_recipe_write_without_a_value_is_handed_to_the_model(page):
         "the model should have been asked for a step the recipe cannot complete"
     assert got["action"] == "fill" and got["ref"] == name_node, got
     assert got["value"] == "Vikram Singh", got
+
+
+def test_a_recipe_stuck_on_a_missing_step_still_offers_later_ones(page):
+    """The demo form has no combobox, so the train recipe's 'class' step is
+    missing there. Proposing 'missing' forever meant every later step the
+    recipe CAN complete - the passenger name, from the vault - was never
+    offered, and the booking was filed with an empty required field. A step
+    the recipe cannot complete is declined; the recipe moves on."""
+    name_node = page.evaluate(
+        "() => window.__snap.nodes.find(n => n.name === 'Passenger name').ref")
+    page.evaluate("""(ref) => {
+        let calls = 0;
+        window.__recipePlanner = AdaptiveAIPlanner.create({ recipes: {
+            load: async () => [{ id: 't', hosts: ['*'], matchGoal: [],
+                steps: [
+                    { intent: 'class', role: 'combobox', names: ['class'] },
+                    { intent: 'passenger', role: 'textbox',
+                      names: ['passenger name'], value: 'profile:full name' } ] }],
+            matches: () => true,
+            propose: async (r, snap, goal, done) => {
+                calls++;
+                if (!done.includes('class')) {
+                    return { kind: 'missing', intent: 'class' };
+                }
+                return { kind: 'step', intent: 'passenger', action: 'fill',
+                    ref: ref, value_from: 'profile', value_label: 'full name',
+                    expect: 'none', description: 'passenger (Passenger name)',
+                    via: 'names', recipe: 't' };
+            },
+            record: async () => true,
+        }});
+    }""", name_node)
+    # First turn: the recipe cannot see 'class', so the model takes the step.
+    first = recipe_step(page, {"status": "act", "action": "fill", "ref": name_node,
+                               "value_from": "literal", "value_literal": "x",
+                               "narration": "Model handled it."})
+    assert page.evaluate("() => window.__sent.length") == 1, first
+    # Second turn: the recipe must now offer the passenger step it CAN do.
+    second = recipe_step(page)
+    assert second.get("source") == "recipe", second
+    assert second["value"] == "Asha Sharma", second

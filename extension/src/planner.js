@@ -92,7 +92,16 @@
       try {
         proposal = await Recipes.propose(activeRecipe, redacted, goal, recipeDone);
       } catch (e) { return null; }
-      if (!proposal || proposal.kind !== 'step') return null;
+      if (!proposal) return null;
+      if (proposal.kind !== 'step') {
+        // A step the recipe cannot see on this page (missing), cannot tell
+        // apart (ask), or must not press (stop) is handed to the model - and
+        // must not stall the recipe there forever: a form with no visible
+        // combobox would otherwise stop the passenger name, five steps later
+        // in the recipe, from ever being proposed. Declined, the model owns
+        // this step and the recipe continues past it.
+        return decline(proposal.intent);
+      }
       var node = nodes.filter(function (n) { return n.ref === proposal.ref; })[0];
       if (!node || node.kind === 'password' || node.sensitive || node.disabled) {
         return decline(proposal.intent);

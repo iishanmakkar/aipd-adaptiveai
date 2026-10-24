@@ -1,0 +1,84 @@
+{
+  "date": "2026-10-24",
+  "browser": "installed msedge (stable channel), unpacked extension",
+  "note": "branded Google Chrome 137+ ignores --load-extension, so the smoke runs in the machine's installed Edge (same Chromium engine) when Chrome will not load it",
+  "checks_failed": [],
+  "run": {
+    "ok": true,
+    "result": {
+      "goal": "book a train from new delhi to chandigarh on 2026-12-15 for asha sharma",
+      "status": "completed",
+      "steps": [
+        {
+          "description": "From New Delhi.",
+          "action": "fill",
+          "status": "verified",
+          "readback": "New Delhi",
+          "reason": null
+        },
+        {
+          "description": "To Chandigarh.",
+          "action": "fill",
+          "status": "verified",
+          "readback": "Chandigarh",
+          "reason": null
+        },
+        {
+          "description": "Travelling on 15 December.",
+          "action": "fill",
+          "status": "verified",
+          "readback": "2026-12-15",
+          "reason": null
+        },
+        {
+          "description": "Two seats.",
+          "action": "select",
+          "status": "verified",
+          "readback": "2",
+          "reason": null
+        },
+        {
+          "description": "passengers (Passenger name (required))",
+          "action": "fill",
+          "status": "verified",
+          "readback": "Asha Sharma",
+          "reason": null
+        },
+        {
+          "description": "Booking now.",
+          "action": "click",
+          "status": "verified",
+          "readback": "the page said: \"DEMO PAGE - no real ticket was booked and this reference is a hash of the name, not a PNR. Booked 2 seat(s), New Delhi to Chandigarh on 2026-12-15 for Asha Sharma. Reference PNR101017.\"",
+          "reason": null,
+          "confirmedByUser": true
+        },
+        {
+          "description": "Booked.",
+          "action": null,
+          "status": "planner_done",
+          "reason": null
+        }
+      ],
+      "narration": [
+        "About to Booking now.. This it reserves and usually charges. Say yes to go ahead, or no to stop.",
+        "Booked."
+      ],
+      "stepsVerified": 6,
+      "elapsedMs": 1244,
+      "historyLength": 6
+    }
+  },
+  "field_values": {
+    "from": "New Delhi",
+    "to": "Chandigarh",
+    "date": "2026-12-15",
+    "seats": "2",
+    "pname": "Asha Sharma",
+    "pemail": "",
+    "confirmation": "DEMO PAGE - no real ticket was booked and this reference is a hash of the name, not a PNR. Booked 2 seat(s), New Delhi to Chandigarh on 2026-12-15 for Asha Sharma. Reference PNR101017."
+  },
+  "narration_sample": [
+    "About to Booking now.. This it reserves and usually charges. Say yes to go ahead, or no to stop."
+  ],
+  "elapsed_s": 13
+}
