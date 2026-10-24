@@ -151,6 +151,7 @@ def build_messages(goal: str, page: Dict[str, Any], nodes: List[Dict[str, Any]],
         for h in history[-12:]:
             lines.append(f"  {h.get('action') or '?'} {h.get('ref') or '?'} -> "
                          f"{h.get('status') or '?'}"
+                         + (f" [{h['source']}]" if h.get("source") else "")
                          + (f" ({h['change']})" if h.get("change") else "")
                          + (f" error={h['error']}" if h.get("error") else ""))
     return [{"role": "system", "content": SYSTEM_PROMPT},

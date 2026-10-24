@@ -304,6 +304,38 @@ def test_rate_limit_covers_the_task_loop(client, monkeypatch):
     assert codes[40] == 429
 
 
+def test_history_says_who_chose_each_step(client, monkeypatch):
+    """The device acts from recipe data as well as from the model, and the model
+    has to know which is which: 'you already pressed Continue' and 'a JSON file
+    pressed Continue' lead to different next steps."""
+    seen = {}
+
+    async def _capture(messages):
+        seen["text"] = "\n".join(m["content"] for m in messages)
+        return json.dumps(act("a1"))
+
+    monkeypatch.setattr(planner, "complete", _capture)
+    history = [{"description": "Passenger name", "action": "fill", "ref": "a2",
+                "status": "verified", "change": "", "error": "", "source": "recipe"},
+               {"description": "Continuing", "action": "click", "ref": "a1",
+                "status": "verified", "change": "url changed", "error": "",
+                "source": "model"}]
+    assert client.post("/api/extension/step",
+                       json=body(history=history)).json()["status"] == "act"
+    assert "[recipe] a2" in seen["text"] or "fill a2 -> verified [recipe]" in seen["text"], seen["text"]
+    assert "[model]" in seen["text"]
+    bad = client.post("/api/extension/step", json=body(history=[
+        {"action": "fill", "ref": "a2", "status": "verified", "source": "human"}]))
+    assert bad.status_code == 422
+
+
+def test_history_is_bounded(client):
+    long_history = [{"action": "click", "ref": "a1", "status": "verified"}
+                    for _ in range(61)]
+    assert client.post("/api/extension/step",
+                       json=body(history=long_history)).status_code == 422
+
+
 def test_prompt_sees_structure_and_labels_not_values(client, monkeypatch):
     """What the model is actually shown - the privacy boundary is only real if
     somebody reads it out."""

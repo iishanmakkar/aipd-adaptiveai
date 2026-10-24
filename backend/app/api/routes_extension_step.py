@@ -131,6 +131,10 @@ class HistoryStep(StructureOnly):
     status: str = Field(default="", max_length=32)
     change: str = Field(default="", max_length=300)
     error: str = Field(default="", max_length=200)
+    # Who chose that step: the site recipe data or the model. The device labels its
+    # own provenance rather than leaving the model to infer that a list of presses
+    # it did not make was made by a JSON file.
+    source: Literal["model", "recipe"] = "model"
 
     @field_validator("description", "change")
     @classmethod
