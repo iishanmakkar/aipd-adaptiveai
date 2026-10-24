@@ -23,6 +23,7 @@ Usage:
 """
 import json
 import os
+import re
 import sys
 import time
 from datetime import date
@@ -32,6 +33,14 @@ from playwright.sync_api import sync_playwright
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXT_DIR = os.path.join(REPO, "extension")
 OUT_ROOT = os.path.join(REPO, "docs", "proofs")
+
+
+def safe_dir_name(name: str) -> str:
+    """Output directories are named after site labels; keep them to plain
+    identifier characters so a label can never place a write outside
+    docs/proofs, wherever the label came from."""
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-")
+    return cleaned or "site"
 
 DEFAULT_SITES = [
     # The three the design promises to reach. Expect these to be inconclusive from
@@ -194,7 +203,7 @@ def probe(context, name, url):
         print(f"  INCONCLUSIVE: {name} - {blocked}")
         BLOCKED.append(name)
         day = date.today().isoformat()
-        out_dir = os.path.join(OUT_ROOT, f"{day}-{name}")
+        out_dir = os.path.join(OUT_ROOT, f"{day}-{safe_dir_name(name)}")
         os.makedirs(out_dir, exist_ok=True)
         with open(os.path.join(out_dir, "snapshot-redacted.json"), "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False)
@@ -229,7 +238,7 @@ def probe(context, name, url):
         print(f"  info: AX comparison unavailable ({type(e).__name__})")
 
     day = date.today().isoformat()
-    out_dir = os.path.join(OUT_ROOT, f"{day}-{name}")
+    out_dir = os.path.join(OUT_ROOT, f"{day}-{safe_dir_name(name)}")
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "snapshot-redacted.json"), "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)

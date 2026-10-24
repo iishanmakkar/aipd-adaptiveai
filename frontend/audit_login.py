@@ -8,7 +8,11 @@ throwaway account through the same form - no back door, no seeded fixture.
 import secrets
 
 
-def sign_up_and_in(page, password="audit-pass-123", email=None):
+def sign_up_and_in(page, password=None, email=None):
+    # A throwaway account, so the password is random per run: a constant here
+    # would be a real credential sitting in the repository for an account any
+    # backend still holds.
+    password = password or secrets.token_urlsafe(12)
     email = email or f"audit-{secrets.token_hex(4)}@example.com"
     page.get_by_role("button", name="Create account", exact=True).click()
     page.get_by_label("Email address").fill(email)

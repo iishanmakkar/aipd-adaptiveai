@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import time
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +29,19 @@ DEMO_FILE = os.path.join(HERE, os.pardir, "demo", "book-tickets.html")
 BACKEND = os.environ.get("ADAPTIVEAI_BACKEND_URL", "http://localhost:8000").rstrip("/")
 DEMO_URL = os.environ.get("ADAPTIVEAI_DEMO_URL",
                           "http://demo-forms:8080/book-tickets.html")
+
+
+def guard() -> None:
+    """This proof talks to this repo's own demo page and writes only to the
+    demo file inside the repository - enforced, not assumed. DEMO_URL comes
+    from the environment; pointed anywhere else, the backend would fetch a
+    stranger's page with our form values in it."""
+    host = (urllib.parse.urlparse(DEMO_URL).hostname or "").lower()
+    assert host in ("127.0.0.1", "localhost", "::1", "demo-forms"), \
+        f"proof targets the compose demo service only, got {host!r}"
+    repo = os.path.realpath(os.path.join(HERE, os.pardir))
+    assert os.path.realpath(DEMO_FILE).startswith(repo + os.sep), \
+        "the demo file must stay inside the repository"
 
 VALUES = {
     "Passenger name (required)": "Asha Sharma",
@@ -95,6 +109,7 @@ def show(label: str, result: dict) -> None:
 
 
 def main() -> int:
+    guard()
     # Bytes, not text: a Windows text-mode round trip would rewrite every
     # newline and leave the repository dirty after a "read-only" proof.
     with open(DEMO_FILE, "rb") as handle:
