@@ -217,7 +217,7 @@ class RobotsCache:
         # 172.16.x, or a cloud metadata address.
         from app.tools.url_guard import validate_browse_url
         try:
-            await validate_browse_url(f"{scheme}://{host}/robots.txt")
+            validate_browse_url(f"{scheme}://{host}/robots.txt")
         except ValueError:
             return None
         try:
