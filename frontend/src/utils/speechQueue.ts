@@ -20,6 +20,14 @@ let current: SpeechSynthesisUtterance | null = null;
 // (and every queued item) - dropping them left every `await speak()`
 // hanging forever, which in turn wedged the monitor poll loop.
 let currentResolve: (() => void) | null = null;
+// Watchdog timers for the in-flight utterance (see pump): cancelSpeech must
+// clear them too, or the resume interval keeps firing for a dead utterance.
+let currentWatchdog: number | null = null;
+let currentHardStop: number | null = null;
+function clearWatchdogs() {
+  if (currentWatchdog !== null) { clearInterval(currentWatchdog); currentWatchdog = null; }
+  if (currentHardStop !== null) { clearTimeout(currentHardStop); currentHardStop = null; }
+}
 const listeners = new Set<() => void>();
 
 function notify() {
@@ -59,10 +67,26 @@ function pump(): void {
     current = null;
     currentResolve = null;
     pumping = false;
+    clearWatchdogs();
     notify();
     next.resolve();
     pump();
   };
+  // Chromium pause bug (crbug 41222409 et al.): speechSynthesis pauses long
+  // utterances (~15s) and onend never fires until resume() is called, so
+  // `await speak(answer)` hung forever and submitInFlightRef latched — every
+  // later submit returned silently and the session was wedged until reload.
+  // The interval pokes resume() (a no-op while actually speaking); the hard
+  // stop force-settles even if the engine is truly gone. Cleared in done().
+  const estimate = Math.ceil((next.text.length * 80) / Math.max(next.rate, 0.1)) + 30000;
+  currentWatchdog = window.setInterval(() => {
+    try { speechSynthesis.resume(); } catch { /* engine gone; hard stop settles */ }
+  }, 10000);
+  currentHardStop = window.setTimeout(() => {
+    if (current !== utterance) return;
+    try { speechSynthesis.cancel(); } catch { /* nothing playing */ }
+    done();
+  }, estimate);
   utterance.onend = done;
   utterance.onerror = done;
   notify();
@@ -114,6 +138,7 @@ export function cancelSpeech(): void {
   }
   const resolveCurrent = currentResolve;
   currentResolve = null;
+  clearWatchdogs();
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   // The cancelled utterance's onend/onerror fires async and re-pumps an
   // empty queue harmlessly; clear synchronously so state is exact now.

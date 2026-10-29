@@ -181,7 +181,7 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
   // recordReplay fires from the per-answer Replay button; recordSkip from the
   // user-initiated stop-speaking control (an interruption, not a clean finish);
   // recordListen follows every fully-spoken chat answer with its duration.
-  const { recordReplay, recordSkip, recordListen } = useBehaviorTracking(sessionId);
+  const { recordReplay, recordSkip } = useBehaviorTracking(sessionId);
 
   // Round 9: continuous page monitoring. Consent is explicit (button / Alt+W /
   // "watch my screen" in chat); narrations arrive as special assistant
@@ -212,7 +212,7 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
       if (last) { stopSpeaking(); void speak(last.content); recordReplay(); }
       else void speak('Nothing to repeat yet.');
     },
-    'bigger-text': () => { setFontSize('large'); void speak('Larger text on.'); recordReplay(); },
+    'bigger-text': () => { setFontSize('large'); void speak('Larger text on.'); },
     'toggle-contrast': () => { toggleContrast(); void speak('Contrast changed.'); },
     'monitor-start': () => { if (!monitorActive) void toggleMonitor(); },
     'monitor-stop': () => { if (monitorActive) { void toggleMonitor(); void speak('Stopped watching.'); } },
@@ -290,68 +290,22 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
     const rawUrl = messageText.match(/https?:\/\/[^\s)]+/i)?.[0];
     const pageUrl = rawUrl?.replace(/[.,;:!?'"\])]+$/, '');
     let effectiveScreenContext = screenContext || '';
-    if (pageUrl) {
-      setLoadingPage(true);
-      void speak('Loading that page…');
-      try {
-        const page = await apiService.pageContext(pageUrl);
-        const fieldLines = page.fields
-          .map((f) => `- ${f.label} (${f.type}${f.required ? ', required' : ''})`)
-          .join('\n');
-        effectiveScreenContext =
-          `Live page: ${page.title} (${page.url}). ${page.description}\n` +
-          `Interactive fields:\n${fieldLines}`;
-        const canFill = page.fields.length > 0;
-        // A field-less (or failed) load must clear the previous form: keeping
-        // it armed the footer button and dialog at the OLD url.
-        setFormPage(canFill ? { url: page.url, fields: page.fields } : null);
-        const note: Message = {
-          id: uuidv4(), role: 'assistant',
-          content: canFill
-            ? `Loaded the live page: ${page.title} — ${page.field_count} interactive fields found. Press the Fill this form button to type a value for each field.`
-            : `Loaded the live page: ${page.title}. Ask me about anything on it.`,
-          timestamp: new Date(), is_loading: false,
-        };
-        addMessage(note);
-        // Blindfolded-critical: without this the page-load note is only a
-        // silent bubble — the user never learns the page loaded or that the
-        // Fill this form button is now available.
-        void speak(note.content);
-        if (canFill) {
-          // Move focus to the Fill button so keyboard/SR users land on it.
-          setTimeout(() => fillFormButtonRef.current?.focus(), 50);
-        }
-      } catch {
-        // One turn, one answer: a failed page load ends the turn here instead
-        // of falling through to a generic backend answer as a second bubble.
-        // It also clears any stale form from an earlier page.
-        setFormPage(null);
-        const fail: Message = {
-          id: uuidv4(), role: 'assistant',
-          content: 'I could not open that page (it may block automated browsing or need login). I can still help if you describe it or upload a screenshot.',
-          timestamp: new Date(), is_loading: false,
-        };
-        addMessage(fail);
-        await speak(fail.content);
-        return;
-      } finally {
-        setLoadingPage(false);
-      }
-    }
 
-    // Add user message
+    // ---- USER MESSAGE: LIVE FIRST, EVERY TIME -----------------------------------
+    // Never gate "your message appeared" behind anything: page loads (30–60 s),
+    // TTS, and backend NIM all happen AFTER the user's own bubble is visible.
     const userMessage: Message = {
       id: uuidv4(),
       role: 'user',
       content: messageText,
       timestamp: new Date(),
       input_source: source,
-      screen_context: effectiveScreenContext || undefined,
+      screen_context: undefined,    // filled below once (if) the page loads
     };
     addMessage(userMessage);
     setInputValue('');
 
-    // Add placeholder assistant message
+    // Assistant placeholder arrives in the same paint.
     const assistantId = uuidv4();
     const assistantMessage: Message = {
       id: assistantId,
@@ -361,28 +315,84 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
       is_loading: true,
     };
     addMessage(assistantMessage);
-
     setStatus('thinking');
 
-    // One request shape for both paths: sent now when online, queued whole
-    // when the network is down (the drain replays it verbatim).
-    const request: QueryRequest = {
-      session_id: sessionId,
-      input_text: messageText,
-      input_source: source,
-      screen_context: effectiveScreenContext,
-      autonomous,
-      // Phase 2.2: the fused context the backend folds into screen_ctx.
-      // Behavior travels separately via POST /api/behavior-event.
-      unified_context: {
-        screen_text: effectiveScreenContext,
-        dom_snapshot: '',
-        disability_profile: prefs.disabilityProfile,
-      },
-    };
+    // ---- PAGE LOAD: background, non-blocking ------------------------------------
+    // pageContext needs Chromium + VLM (30–90 s). It must not freeze the turn.
+    let pageLoaded = false;
+    if (pageUrl) {
+      void (async () => {
+        setLoadingPage(true);
+        try {
+          const page = await apiService.pageContext(pageUrl);
+          const fieldLines = page.fields
+            .map((f) => `- ${f.label} (${f.type}${f.required ? ', required' : ''})`)
+            .join('\n');
+          effectiveScreenContext =
+            `Live page: ${page.title} (${page.url}). ${page.description}\n` +
+            `Interactive fields:\n${fieldLines}`;
+          const canFill = page.fields.length > 0;
+          setFormPage(canFill ? { url: page.url, fields: page.fields } : null);
+          pageLoaded = true;
+          const note: Message = {
+            id: uuidv4(), role: 'assistant',
+            content: canFill
+              ? `Loaded the live page: ${page.title} — ${page.field_count} interactive fields found. Press the Fill this form button to type a value for each field.`
+              : `Loaded the live page: ${page.title}. Ask me about anything on it.`,
+            timestamp: new Date(), is_loading: false,
+          };
+          addMessage(note);
+          void speak(note.content);
+          if (canFill) {
+            setTimeout(() => fillFormButtonRef.current?.focus(), 50);
+          }
+        } catch {
+          // One turn, one answer: a failed page load ends the turn here instead
+          // of falling through to a generic backend answer.
+          setFormPage(null);
+          pageLoaded = true;
+          const fail: Message = {
+            id: uuidv4(), role: 'assistant',
+            content: 'I could not open that page (it may block automated browsing or need login). I can still help if you describe it or upload a screenshot.',
+            timestamp: new Date(), is_loading: false,
+          };
+          addMessage(fail);
+          await speak(fail.content);
+          return;
+        } finally {
+          setLoadingPage(false);
+        }
+      })();
+    } else {
+      pageLoaded = true;
+    }
+
+    // ---- SEND: as soon as we know the page context (or none) ------------------
+    const waitForPage = pageLoaded ? Promise.resolve() : new Promise<void>((resolve) => {
+      const t = window.setInterval(() => { if (pageLoaded) { clearInterval(t); resolve(); } }, 250);
+    });
 
     const forSession = sessionId;
     try {
+      await waitForPage;
+      if (sessionIdRef.current !== forSession) return;
+
+      // One request shape for both paths: sent now when online, queued whole
+      // when the network is down (the drain replays it verbatim).
+      const request: QueryRequest = {
+        session_id: sessionId,
+        input_text: messageText,
+        input_source: source,
+        screen_context: effectiveScreenContext || '',
+        autonomous,        // Phase 2.2: the fused context the backend folds into screen_ctx.
+        // Behavior travels separately via POST /api/behavior-event.
+        unified_context: {
+          screen_text: effectiveScreenContext,
+          dom_snapshot: '',
+          disability_profile: prefs.disabilityProfile,
+        },
+      };
+
       const response = await sendQuery(request);
 
       // The answer belongs to the session it was asked in. NIM latency runs
@@ -404,17 +414,11 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
       });
 
       setStatus('speaking');
-      const listenStart = Date.now();
-      const spoken = await speak(response.response_text);
-      // Fully heard answers are listen signals (duration in seconds); an
-      // interrupted answer records skip instead via handleStopSpeaking.
-      // 'silent' (muted, or no speechSynthesis) means NOTHING was heard -
-      // recording it would hand the adaptive policy a 0-second "listened"
-      // number for audio that never existed, and Rule 5 would shorten answers
-      // at a user who never heard one.
-      if (spoken === 'spoken') {
-        recordListen(Math.max(0, (Date.now() - listenStart) / 1000));
-      }
+      // TTS is fire-and-forget for latency: `await speak()` used to block the
+      // whole turn until the answer finished speaking (~15–90 s), so every
+      // subsequent submit said "Still working…" and looked dead. speak() still
+      // resolves internally (watchdog in speechQueue), but we do not wait.
+      void speak(response.response_text);
     } catch (err) {
       // Offline: the network never answered. Queue the whole query for the
       // online-drain in main.tsx instead of losing the user's question —
@@ -422,10 +426,17 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
       if (isOfflineError(err)) {
         try {
           const { enqueueMutation } = await import('../utils/offlineQueue');
-          await enqueueMutation({ url: '/api/query', method: 'POST', body: request });
+          await enqueueMutation({ url: '/api/query', method: 'POST', body: {
+            session_id: sessionId,
+            input_text: messageText,
+            input_source: source,
+            screen_context: effectiveScreenContext || '',
+            autonomous,
+            unified_context: { screen_text: effectiveScreenContext, dom_snapshot: '', disability_profile: prefs.disabilityProfile },
+          } });
           const queuedText = 'You seem to be offline. Your question is saved and will be sent automatically when the connection returns.';
           updateMessage(assistantId, { content: queuedText, is_loading: false });
-          await speak(queuedText);
+          void speak(queuedText);
           return;
         } catch {
           // IndexedDB unavailable: fall through to the normal error message.
@@ -437,7 +448,7 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
         content: errText,
         is_loading: false,
       });
-      await speak(errText);
+      void speak(errText);
     }
   }, [
     screenContext,
@@ -989,10 +1000,14 @@ export function ChatInterface({ initialScreenContext = '' }: ChatInterfaceProps)
             />
             Autonomous
           </label>
+          {/* Constant accessible name: the visible text below flips
+              ("Watch" / "Stop watching"), which combined with aria-pressed
+              announced the state backwards to screen readers. */}
           <button
             type="button"
             className={`monitor-toggle${monitorActive ? ' active' : ''}`}
             aria-pressed={monitorActive}
+            aria-label="Watch my screen (Alt+W)"
             onClick={() => void toggleMonitor()}
             disabled={!sessionReady || monitorStarting}
           >

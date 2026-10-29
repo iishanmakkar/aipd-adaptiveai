@@ -158,11 +158,21 @@ export function useSession() {
         .filter((m) => !known.has(m.id))
         // Own messages exist twice (local uuid + server row): suppress only a
         // near-simultaneous echo (3-min window), not every future repeat —
-        // saying "yes" twice must appear twice.
+        // saying "yes" twice must appear twice. Screen narrations are the
+        // exception that used to slip through: this tab renders them with a
+        // "Screen update: " prefix (ChatInterface.handleNarration) while the
+        // server row carries the bare text, so the content comparison never
+        // matched and every narration was appended a SECOND time ~15s later
+        // (double TTS + double live-region announcement + corrupted history).
+        // Compare with the prefix stripped.
         .filter((m) => {
-          return !prev.some((p) =>
-            p.role === m.role && p.content === m.content
-            && Math.abs(p.timestamp.getTime() - m.timestamp.getTime()) < 180000);
+          const stripped = m.content.replace(/^Screen update: /, '');
+          return !prev.some((p) => {
+            const local = p.content.replace(/^Screen update: /, '');
+            return p.role === m.role
+              && (local === stripped || p.content === m.content)
+              && Math.abs(p.timestamp.getTime() - m.timestamp.getTime()) < 180000;
+          });
         });
       if (added.length) {
         // Re-check inside the updater: a message may have landed between the

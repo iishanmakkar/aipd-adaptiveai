@@ -161,7 +161,7 @@ export function MicButton({
         onKeyUp={handleKeyUp}
         onClick={handleClick}
         disabled={disabled}
-        aria-label={isRecording ? 'Stop recording and send' : 'Record voice message'}
+        aria-label="Record voice message"
         aria-pressed={isRecording}
         aria-disabled={disabled}
         aria-describedby={error ? 'mic-usage-hint mic-error' : 'mic-usage-hint'}

@@ -40,10 +40,24 @@ export function FormFillDialog({ page, onClose, announce }: FormFillDialogProps)
   const [focusedIndex, setFocusedIndex] = useState(0);
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  const recordingRef = useRef(false);
   const stateRef = useRef({ values, focusedIndex, fields: page.fields });
   stateRef.current = { values, focusedIndex, fields: page.fields };
   const runRef = useRef<(replay: boolean) => Promise<void>>(async () => {});
-  const { isRecording, recordingTime, startRecording, stopRecording, cancelRecording, error: recError } = useVoiceRecording();
+  // The 30s recording cap auto-stops inside the hook: without a delivery
+  // path here the dictated value was dropped on the floor (the same bug
+  // ChatInterface already fixed for its mic — "a 30s hold lost everything").
+  // Release/mic-button stops still flow through handleDictateStop below.
+  const dictateStopRef = useRef<(blob: Blob) => void>(() => {});
+  const { isRecording, recordingTime, startRecording, stopRecording, cancelRecording, error: recError } =
+    useVoiceRecording({
+      onAutoStop: (blob) => dictateStopRef.current(blob),
+      // A dictation that dies with this dialog is a discarded form value:
+      // parking it handed it to the chat's draft-recovery pipeline, which
+      // transcribed it and submitted it as a chat message on the next load.
+      persistOnUnmount: false,
+    });
+  recordingRef.current = isRecording;
   const { transcribe, isTranscribing } = useSpeechToText();
 
   const dictateInto = (text: string) => {
@@ -78,8 +92,13 @@ export function FormFillDialog({ page, onClose, announce }: FormFillDialogProps)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Escape while filling would unmount mid-POST and lose the result;
-      // Close stays enabled too, symmetrically.
-      if (e.key === 'Escape' && !busy) onClose();
+      // Close stays enabled too, symmetrically. Escape while DICTATING must
+      // also stay put: MicButton's discard handler registers when recording
+      // starts — strictly AFTER this dialog's listener — so window listeners
+      // fire in registration order and this one ran FIRST, closing the
+      // dialog (and destroying every typed value) instead of discarding the
+      // recording. The dictation is discarded by MicButton; the dialog lives.
+      if (e.key === 'Escape' && !busy && !recordingRef.current) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -166,8 +185,8 @@ export function FormFillDialog({ page, onClose, announce }: FormFillDialogProps)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable listeners, refs for latest
   }, [page.url]);
 
-  const handleDictateStop = async () => {
-    const blob = await stopRecording();
+  const handleDictateStop = async (autoBlob?: Blob) => {
+    const blob = autoBlob ?? await stopRecording();
     if (!blob) return;
     try {
       const transcript = await transcribe(blob);
@@ -178,6 +197,7 @@ export function FormFillDialog({ page, onClose, announce }: FormFillDialogProps)
       void announce?.(msg);
     }
   };
+  dictateStopRef.current = (blob) => void handleDictateStop(blob);
 
   const repaired = result?.healed?.status === 'repaired';
 

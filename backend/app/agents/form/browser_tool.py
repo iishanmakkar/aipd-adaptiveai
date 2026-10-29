@@ -357,6 +357,8 @@ class BrowserTool:
                 ), timeout=30)
             except _aio.TimeoutError:
                 raise RuntimeError("VLM timed out")
+            except httpx.HTTPError as e:
+                raise RuntimeError(f"VLM unreachable: {type(e).__name__}")
             # A NIM refusal (401/429/5xx - the key rotation and quota spikes
             # this deployment actually hits) is a service-availability fact,
             # not a raw httpx exception: unwrapped, it escaped the route's

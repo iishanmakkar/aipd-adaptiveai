@@ -9,6 +9,12 @@ interface UseVoiceRecordingOptions {
    * Manual stops deliver through MicButton; without this the cap path
    * silently dropped the audio (found live: a 30s hold lost everything). */
   onAutoStop?: (blob: Blob) => void;
+  /** Park an interrupted recording in IndexedDB for the next load (default
+   * true). Only the CHAT surface offers recovery - FormFillDialog sets false:
+   * a dictation that dies with the dialog is a discarded form value, and
+   * parking it handed it to the chat's draft-recovery pipeline, which
+   * transcribed it and SUBMITTED IT AS A CHAT MESSAGE. */
+  persistOnUnmount?: boolean;
 }
 
 interface UseVoiceRecordingReturn {
@@ -31,6 +37,8 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
   // handler without re-registering on every render.
   const onAutoStopRef = useRef(options.onAutoStop);
   onAutoStopRef.current = options.onAutoStop;
+  const persistOnUnmountRef = useRef(options.persistOnUnmount ?? true);
+  persistOnUnmountRef.current = options.persistOnUnmount ?? true;
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -74,6 +82,11 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
       // component is gone, release the device immediately.
       if (unmountedRef.current) {
         stream.getTracks().forEach((track) => track.stop());
+        // Release the re-entrancy guard too: this path had already set
+        // isRecordingRef before awaiting getUserMedia, so bailing here left
+        // the guard latched and every later press returned at the top -
+        // a permanently dead mic button after one interrupted start.
+        isRecordingRef.current = false;
         return;
       }
       streamRef.current = stream;
@@ -235,7 +248,9 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
       timerRef.current = null;
     }
     isRecordingRef.current = false;
-    if (blob.size > 0) {
+    // The device is always released (a hot mic is never acceptable); only the
+    // DRAFT is surface-conditional - see persistOnUnmount in the options.
+    if (blob.size > 0 && persistOnUnmountRef.current) {
       void import('../utils/offlineQueue')
         .then(({ saveAudioDraft }) => saveAudioDraft(blob))
         .catch(() => { /* IndexedDB unavailable - the draft is lost, as before */ });
@@ -243,6 +258,17 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
   }, []);
 
   useEffect(() => {
+    // StrictMode (dev — and the Docker image runs the dev server) mounts,
+    // cleans up, then RE-mounts the same component instance: the cleanup
+    // below sets this flag, and without this reset it stayed true forever.
+    // Every later getUserMedia then saw "unmounted", stopped the stream and
+    // returned - the mic never started, with no error shown - and because
+    // startRecording had already set isRecordingRef, the re-entrancy guard
+    // blocked every retry too. The mic was silently dead. A genuine unmount
+    // sets the flag again in the cleanup below, so the original protection
+    // (a permission prompt outliving the component must not leave the
+    // microphone hot) still holds.
+    unmountedRef.current = false;
     const onPageHide = () => {
       if (isRecordingRef.current) persistDraft();
     };

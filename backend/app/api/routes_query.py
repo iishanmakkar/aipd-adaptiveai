@@ -34,7 +34,7 @@ from app.services.policy_engine import adjust_response, count_clarifying_questio
 router = APIRouter(prefix="/api", tags=["query"])
 
 URL_RE = re.compile(r"https?://[^\s]+|data:[^\s]+", re.IGNORECASE)
-LIVE_MARKER_RE = re.compile(r"live page:[^(]*\((https?://[^)\s]+)\)", re.IGNORECASE)
+LIVE_MARKER_RE = re.compile(r"live page:[^(]*\((https?://\S+)\)", re.IGNORECASE)
 CONFIRM_WORDS = ("yes", "submit", "confirm", "book it", "do it", "go ahead",
                  "proceed", "ok", "okay", "confirm submit",
                  # The held-navigate prompt tells the user to reply
@@ -126,7 +126,7 @@ def _extract_url(text: str, screen_context: str | None) -> str | None:
     if screen_context:
         found = LIVE_MARKER_RE.search(screen_context)
         if found:
-            return found.group(1)
+            return _strip_url_punctuation(found.group(1))
     return None
 
 
@@ -397,6 +397,12 @@ async def _hold_submit(db, session, current_user, session_uuid, chat_id,
             f"I found '{label}' but couldn't hold it for confirmation: {detail}. "
             "Nothing was submitted.",
             "browser_act", "submit hold failed", confidence, message_count)
+    if isinstance(held, dict) and held.get("status") == "completed":
+        _pending.pop(chat_id, None)
+        return await _browser_answer(
+            db, session, current_user, session_uuid,
+            f"Clicked '{label}'.",
+            "browser_act", "routine click executed", confidence, message_count)
     if not isinstance(held, dict) or held.get("status") != "needs_confirmation":
         _pending.pop(chat_id, None)
         return await _browser_answer(
@@ -666,6 +672,11 @@ async def _maybe_browser_turn(db, session, current_user, session_uuid, request,
         marker = f"Live page: {title or 'open page'} ({url})."
         request.screen_context = (marker + " "
                                   + (request.screen_context or ""))
+        # Re-cap after prepending the marker: the earlier _effective_screen_context
+        # cap ran before _maybe_browser_turn, so the marker could push us over
+        # the intent engine's 5000-char limit and cause a 400.
+        if len(request.screen_context) > INTENT_SCREEN_CONTEXT_LIMIT:
+            request.screen_context = request.screen_context[:INTENT_SCREEN_CONTEXT_LIMIT]
     return None
 
 
@@ -1006,14 +1017,21 @@ def _browser_error_detail(exc: Exception) -> tuple[int, str]:
 async def _ensure_live_session(chat_id: str, url: str,
                                request_id: str | None) -> dict:
     """Open the chat session's live page (idempotent server-side), or relay a
-    sensitive-domain confirmation proposal. Returns the browser-agent payload."""
+    sensitive-domain confirmation proposal. Returns the browser-agent payload.
+    The 'reused' branch MUST still call browser_open_session because the
+    browser-agent sweeps idle sessions at SESSION_TTL_SECONDS (600 s) while
+    this cache's TTL is 3600 s. If we short-circuit on a cached URL, the
+    recovery path in _with_reopen (which catches 404 from the browser-agent)
+    will call _ensure_live_session again — but the cache still has the URL,
+    so it returns 'reused' WITHOUT reopening, and the 404 persists for up to
+    an hour until the backend TTL expires."""
     known = _live_pages.get(chat_id)
     if known is not None and known != url:
         # New explicit URL supersedes the old page for this chat.
         result = await browser_open_session(chat_id, url, request_id)
-    elif known == url:
-        result = {"status": "reused"}
     else:
+        # known is None OR known == url — both need an actual open call because
+        # the browser-agent may have swept the session even though we cached it.
         result = await browser_open_session(chat_id, url, request_id)
     if isinstance(result, dict) and result.get("status") != "needs_confirmation":
         _live_pages[chat_id] = url
@@ -1183,7 +1201,7 @@ async def process_query(
     result = await db.execute(
         select(Message)
         .where(Message.session_id == session.id)
-        .order_by(Message.created_at.desc())
+        .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(10)
     )
     recent_messages = list(reversed(result.scalars().all()))

@@ -183,13 +183,17 @@ export function AccessibilityToolbar({
 
       <fieldset className="toolbar-group">
         <legend>Contrast</legend>
+        {/* Constant names on the toggle buttons below: an "Enable/Disable ..."
+            name FLIPS with state, so NVDA/JAWS announce "Disable high contrast
+            mode, pressed" when contrast is ON — the state reads backwards.
+            aria-pressed alone carries the state. */}
         <button
           type="button"
           className={`toolbar-button ${contrastMode === 'high' ? 'active' : ''}`}
           onClick={onContrastToggle}
 
           aria-pressed={contrastMode === 'high'}
-          aria-label={contrastMode === 'high' ? 'Disable high contrast mode' : 'Enable high contrast mode'}
+          aria-label="High contrast"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
             <circle cx="12" cy="12" r="10" />
@@ -251,7 +255,7 @@ export function AccessibilityToolbar({
           className={`toolbar-button ${boldText ? 'active' : ''}`}
           onClick={onBoldToggle}
           aria-pressed={boldText}
-          aria-label={boldText ? 'Disable bold text' : 'Enable bold text'}
+          aria-label="Bold text"
         >
           <span>Bold text</span>
         </button>
@@ -260,7 +264,7 @@ export function AccessibilityToolbar({
           className={`toolbar-button ${wideSpacing ? 'active' : ''}`}
           onClick={onSpacingToggle}
           aria-pressed={wideSpacing}
-          aria-label={wideSpacing ? 'Disable wide spacing' : 'Enable wide letter spacing'}
+          aria-label="Wide spacing"
         >
           <span>Wide spacing</span>
         </button>
@@ -273,7 +277,7 @@ export function AccessibilityToolbar({
           className={`toolbar-button ${darkMode ? 'active' : ''}`}
           onClick={onDarkToggle}
           aria-pressed={darkMode}
-          aria-label={darkMode ? 'Disable dark mode' : 'Enable dark mode'}
+          aria-label="Dark mode"
         >
           <span>Dark mode</span>
         </button>
@@ -282,7 +286,7 @@ export function AccessibilityToolbar({
           className={`toolbar-button ${readingFocus ? 'active' : ''}`}
           onClick={onReadingToggle}
           aria-pressed={readingFocus}
-          aria-label={readingFocus ? 'Disable reading focus' : 'Enable reading focus'}
+          aria-label="Reading focus"
           title="Dim every answer except the one under your cursor"
         >
           <span>Reading focus</span>
@@ -296,7 +300,7 @@ export function AccessibilityToolbar({
           className={`toolbar-button ${muted ? 'active' : ''}`}
           onClick={onMuteToggle}
           aria-pressed={muted}
-          aria-label={muted ? 'Unmute app voice' : 'Mute app voice'}
+          aria-label="App voice"
           title="Mute app voice (screen-reader-only mode keeps text announcements)"
         >
           <span>{muted ? 'Unmute voice' : 'Mute voice'}</span>

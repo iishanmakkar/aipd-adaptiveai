@@ -24,18 +24,23 @@ async def vlm_proxy(request: Request):
     if declared_len and declared_len.isdigit() and int(declared_len) > MAX_VLM_PAYLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Payload too large: screenshots are capped at 15MB including base64 encoding")
 
+    # Read the request stream in bounded chunks to enforce the limit BEFORE
+    # assembling the full body (chunked requests have no content-length, so the
+    # early guard above is skipped and the cap would only fire after the full
+    # body was already materialized in memory).
+    body_bytes = b""
+    async for chunk in request.stream():
+        body_bytes += chunk
+        if len(body_bytes) > MAX_VLM_PAYLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Payload too large: screenshots are capped at 15MB including base64 encoding")
+
     try:
-        body = await request.json()
+        body = json.loads(body_bytes)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     if not isinstance(body, dict):
-        # A JSON array/string body would TypeError on body["model"] below
-        # into a 500; it is a malformed request (422-class).
         raise HTTPException(status_code=422, detail="Request body must be a JSON object")
-
-    if len(json.dumps(body)) > MAX_VLM_PAYLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Payload too large: screenshots are capped at 15MB including base64 encoding")
 
     images = []
     valid_images = 0
@@ -44,7 +49,8 @@ async def vlm_proxy(request: Request):
             continue
         for part in message["content"]:
             if isinstance(part, dict) and part.get("type") == "image_url":
-                url = (part.get("image_url") or {}).get("url", "")
+                img = part.get("image_url")
+                url = img.get("url", "") if isinstance(img, dict) else (img if isinstance(img, str) else "")
                 images.append(url)
                 if url.startswith(ALLOWED_IMAGE_PREFIXES):
                     valid_images += 1

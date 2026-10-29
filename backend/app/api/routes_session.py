@@ -132,7 +132,7 @@ async def get_history(
     result = await db.execute(
         select(Message)
         .where(Message.session_id == session_uuid)
-        .order_by(Message.created_at)
+        .order_by(Message.created_at, Message.id)
         .offset(offset)
         .limit(page_size)
     )

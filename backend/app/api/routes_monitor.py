@@ -47,6 +47,14 @@ from app.services.policy_engine import adjust_response, count_clarifying_questio
 
 logger = logging.getLogger("adaptiveai.monitor")
 
+
+def _canon(sid: str) -> str:
+    """Canonicalize session_id for cross-component keying (cursor state,
+    browser-agent monitor calls). Both the button/API door and the voice
+    door must hit the same bucket; parse_session_uuid normalizes uppercase/
+    braced spellings to lowercase UUID string."""
+    return str(parse_session_uuid(sid))
+
 router = APIRouter(prefix="/api", tags=["monitor"])
 
 # Per-chat delivery cursor into browser-agent's narration event ids, plus
@@ -151,10 +159,11 @@ def _relay_error(exc: Exception, action: str) -> HTTPException:
 async def monitor_start(req: MonitorRequest,
                         current_user: User = Depends(get_current_user_optional),
                         db: AsyncSession = Depends(get_db)):
+    canon_sid = _canon(req.session_id)
     await _own_session(db, req.session_id, current_user)
-    request_id = f"monitor-start-{req.session_id[:8]}-{int(time.time())}"
+    request_id = f"monitor-start-{canon_sid[:8]}-{int(time.time())}"
     try:
-        result = await browser_monitor_start(req.session_id, "voice-or-control",
+        result = await browser_monitor_start(canon_sid, "voice-or-control",
                                              request_id)
     except Exception as e:
         # The most common first-click failure by far: nothing is open to watch.
@@ -167,7 +176,7 @@ async def monitor_start(req: MonitorRequest,
                         "website or form — paste its link in the chat — then "
                         "press Watch my screen."))
         raise _relay_error(e, "start")
-    _start_state = _cursor(req.session_id)
+    _start_state = _cursor(canon_sid)
     _start_state["active"] = True
     # Narration ids restart at 1 for every new browser-side monitor run (a new
     # PageMonitor per start). A cursor surviving from a previous run would
@@ -175,7 +184,7 @@ async def monitor_start(req: MonitorRequest,
     # silence. Reset to 0; already-persisted events are still skipped by the
     # stored-id dedup in /monitor/events.
     _start_state["since"] = 0
-    _save_cursor(req.session_id, _start_state)
+    _save_cursor(canon_sid, _start_state)
     logger.info("monitor_started session=%s user=%s", req.session_id,
                 current_user.id)
     return {"active": True, "status": result.get("status", "started"),
@@ -189,9 +198,10 @@ async def monitor_stop(req: MonitorRequest,
                        current_user: User = Depends(get_current_user_optional),
                        db: AsyncSession = Depends(get_db)):
     await _own_session(db, req.session_id, current_user)
-    request_id = f"monitor-stop-{req.session_id[:8]}-{int(time.time())}"
+    canon_sid = _canon(req.session_id)
+    request_id = f"monitor-stop-{canon_sid[:8]}-{int(time.time())}"
     try:
-        result = await browser_monitor_stop(req.session_id, request_id)
+        result = await browser_monitor_stop(canon_sid, request_id)
     except Exception as e:
         # 409 (nothing active) is fine for a kill switch: the requested
         # end-state - monitoring off - already holds. 404 (no live page
@@ -200,16 +210,16 @@ async def monitor_stop(req: MonitorRequest,
         # erroring while the UI still shows "watching".
         status = _browser_status(e)
         if status in (404, 409):
-            _stop_state = _cursor(req.session_id)
+            _stop_state = _cursor(canon_sid)
             _stop_state["active"] = False
-            _save_cursor(req.session_id, _stop_state)
+            _save_cursor(canon_sid, _stop_state)
             return {"active": False, "status": "already_stopped"}
         raise _relay_error(e, "stop")
-    _stopped_state = _cursor(req.session_id)
+    _stopped_state = _cursor(canon_sid)
     _stopped_state["active"] = False
-    _save_cursor(req.session_id, _stopped_state)
+    _save_cursor(canon_sid, _stopped_state)
     logger.info("monitor_stopped session=%s user=%s nim_calls=%s",
-                req.session_id, current_user.id,
+                canon_sid, current_user.id,
                 result.get("stats", {}).get("counters", {}).get("nim_calls"))
     return {"active": False, "status": "stopped",
             "stats": _translate_stats(result.get("stats"), False)}
@@ -220,8 +230,9 @@ async def monitor_status(session_id: str,
                          current_user: User = Depends(get_current_user_optional),
                          db: AsyncSession = Depends(get_db)):
     await _own_session(db, session_id, current_user)
+    canon_sid = _canon(session_id)
     try:
-        result = await browser_monitor_status(session_id)
+        result = await browser_monitor_status(canon_sid)
     except Exception as e:
         status = _browser_status(e)
         if status == 404:
@@ -241,33 +252,35 @@ async def monitor_events(session_id: str,
     one could rewind delivery and re-persist the same narration twice -
     found live: duplicate messages)."""
     session = await _own_session(db, session_id, current_user)
-    request_id = f"monitor-events-{session_id[:8]}-{int(time.time())}"
+    canon_sid = _canon(session_id)
+    request_id = f"monitor-events-{canon_sid[:8]}-{int(time.time())}"
     # Serialized per chat (see _monitor_lock): without this, two overlapping
     # polls read the same cursor, pull the same events, both pass dedup, and
     # both persist - duplicate narrations.
-    async with _monitor_lock(session_id):
+    async with _monitor_lock(canon_sid):
         return await _pull_and_persist_events(db, session, current_user,
                                               session_id, request_id)
 
 
 async def _pull_and_persist_events(db, session, current_user,
                                    session_id: str, request_id: str):
-    state = _cursor(session_id)
+    canon_sid = _canon(session_id)
+    state = _cursor(canon_sid)
     cursor = state["since"]
     try:
-        pull = await browser_monitor_narrations(session_id, cursor, request_id)
+        pull = await browser_monitor_narrations(canon_sid, cursor, request_id)
     except Exception as e:
         status = _browser_status(e)
         if status in (404, 409):
             state["active"] = False
-            _save_cursor(session_id, state)
+            _save_cursor(canon_sid, state)
             return {"active": False, "narrations": [], "cursor": cursor,
                     "stats": _translate_stats(None, False)}
         raise _relay_error(e, "narration pull")
 
     if not pull.get("active", False):
         state["active"] = False
-        _save_cursor(session_id, state)
+        _save_cursor(canon_sid, state)
 
     # Load user prefs + behavior once per poll (same inputs chat answers use).
     prefs_result = await db.execute(
@@ -354,7 +367,7 @@ async def _pull_and_persist_events(db, session, current_user,
         # stored, never re-delivered, never spoken).
         await db.commit()
     # ponytail: persist cursor whenever since advanced (dup-filtered ids too)
-    _save_cursor(session_id, state)
+    _save_cursor(canon_sid, state)
     return {"active": pull.get("active", False), "narrations": narrations,
             "cursor": state["since"],
             "stats": _translate_stats(pull.get("stats"), pull.get("active", False))}

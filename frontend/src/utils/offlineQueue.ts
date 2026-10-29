@@ -92,6 +92,21 @@ export async function drainQueue(sender: (e: { url: string; method: string; body
   let sent = 0;
   try {
     for (const { key, value } of items) {
+      // An entry marked delivered had its DELETE fail after a successful
+      // send: without this skip it was re-sent in full on the next drain —
+      // a duplicate /api/query, double-committed exactly what the repair
+      // marker was written to prevent. Drop it now.
+      if ((value as { deliveredTs?: number }).deliveredTs) {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(STORE, 'readwrite');
+            tx.objectStore(STORE).delete(key);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+          });
+        } catch { /* next drain retries the delete */ }
+        continue;
+      }
       // 'ok' and 'drop' (poison 4xx) both leave the queue; only 'retry'
       // (offline/5xx) stops the drain so nothing behind a dead network is lost.
       // A sender that throws (offline exception instead of returning 'retry')
