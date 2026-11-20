@@ -1,0 +1,310 @@
+apply plugin: "com.android.application"
+apply plugin: "org.jetbrains.kotlin.android"
+apply plugin: "com.facebook.react"
+
+def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
+
+// Release signing lives in android/keystore.properties, which is git-ignored.
+// Without it the release build falls back to the debug key so CI does not break.
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withInputStream { stream -> keystoreProperties.load(stream) }
+}
+def hasReleaseSigning = keystoreProperties.getProperty("storePassword") != null
+if (!hasReleaseSigning) {
+    // Loud, not fatal: CI and local iteration still need to build, but a silent fallback
+    // to the debug key committed to this repo means anyone can produce an indistinguishable
+    // "release" APK. Never ship an artifact built while this warning is on screen.
+    logger.warn("WARNING: android/keystore.properties is missing — assembleRelease is signing with the DEBUG keystore from this repo. Do not distribute that APK.")
+}
+
+static def versionToNumber(major, minor, patch) {
+  return patch * 100 + minor * 10000 + major * 1000000
+}
+
+def getRNVersion() {
+  def version = providers.exec {
+    workingDir(projectDir)
+    commandLine("node", "-e", "console.log(require('react-native/package.json').version);")
+  }.standardOutput.asText.get().trim()
+
+  def coreVersion = version.split("-")[0]
+  def (major, minor, patch) = coreVersion.tokenize('.').collect { it.toInteger() }
+
+  return versionToNumber(
+      major,
+      minor,
+      patch
+  )
+}
+def rnVersion = getRNVersion()
+
+ext.hermesEnabled = (findProperty('expo.jsEngine') ?: 'hermes') == 'hermes'
+
+/**
+ * This is the configuration block to customize your React Native Android app.
+ * By default you don't need to apply any configuration, just uncomment the lines you need.
+ */
+react {
+    entryFile = file(["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"].execute(null, rootDir).text.trim())
+    reactNativeDir = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
+    hermesCommand = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
+    codegenDir = new File(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
+
+    // Use Expo CLI to bundle the app, this ensures the Metro config
+    // works correctly with Expo projects.
+    cliFile = new File(["node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
+    bundleCommand = "export:embed"
+
+    /* Folders */
+    //   The root of your project, i.e. where "package.json" lives. Default is '..'
+    // root = file("../")
+    //   The folder where the react-native NPM package is. Default is ../node_modules/react-native
+    // reactNativeDir = file("../node_modules/react-native")
+    //   The folder where the react-native Codegen package is. Default is ../node_modules/@react-native/codegen
+    // codegenDir = file("../node_modules/@react-native/codegen")
+
+    /* Variants */
+    //   The list of variants to that are debuggable. For those we're going to
+    //   skip the bundling of the JS bundle and the assets. By default is just 'debug'.
+    //   If you add flavors like lite, prod, etc. you'll have to list your debuggableVariants.
+    // debuggableVariants = ["liteDebug", "prodDebug"]
+
+    /* Bundling */
+    //   A list containing the node command and its flags. Default is just 'node'.
+    // nodeExecutableAndArgs = ["node"]
+
+    //
+    //   The path to the CLI configuration file. Default is empty.
+    // bundleConfig = file(../rn-cli.config.js)
+    //
+    //   The name of the generated asset file containing your JS bundle
+    // bundleAssetName = "MyApplication.android.bundle"
+    //
+    //   The entry file for bundle generation. Default is 'index.android.js' or 'index.js'
+    // entryFile = file("../js/MyApplication.android.js")
+    //
+    //   A list of extra flags to pass to the 'bundle' commands.
+    //   See https://github.com/react-native-community/cli/blob/main/docs/commands.md#bundle
+    // extraPackagerArgs = []
+
+    /* Hermes Commands */
+    //   The hermes compiler command to run. By default it is 'hermesc'
+    // hermesCommand = "$rootDir/my-custom-hermesc/bin/hermesc"
+    //
+    //   The list of flags to pass to the Hermes compiler. By default is "-O", "-output-source-map"
+    // hermesFlags = ["-O", "-output-source-map"]
+
+    if (rnVersion >= versionToNumber(0, 75, 0)) {
+        /* Autolinking */
+        autolinkLibrariesWithApp()
+    }
+}
+
+/**
+ * Set this to true to Run Proguard on Release builds to minify the Java bytecode.
+ */
+def enableProguardInReleaseBuilds = (findProperty('android.enableProguardInReleaseBuilds') ?: false).toBoolean()
+
+/**
+ * The preferred build flavor of JavaScriptCore (JSC)
+ *
+ * For example, to use the international variant, you can use:
+ * `def jscFlavor = 'org.webkit:android-jsc-intl:+'`
+ *
+ * The international variant includes ICU i18n library and necessary data
+ * allowing to use e.g. `Date.toLocaleString` and `String.localeCompare` that
+ * give correct results when using with locales other than en-US. Note that
+ * this variant is about 6MiB larger per architecture than default.
+ */
+def jscFlavor = 'org.webkit:android-jsc:+'
+
+android {
+    ndkVersion rootProject.ext.ndkVersion
+
+    buildToolsVersion rootProject.ext.buildToolsVersion
+    compileSdk rootProject.ext.compileSdkVersion
+
+    namespace "com.adaptiveai.mobile"
+    defaultConfig {
+        // Must match app.json's expo.android.package — the accessibility service component
+        // string, the FileProvider authority (${applicationId}.fileprovider) and the docs
+        // all use this id. Was "com.adaptiveai", which silently mismatched app.json.
+        applicationId "com.adaptiveai.mobile"
+        minSdkVersion 24
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 3
+        versionName "1.0.2"
+    }
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(keystoreProperties.getProperty("storeFile"))
+                storePassword keystoreProperties.getProperty("storePassword")
+                keyAlias keystoreProperties.getProperty("keyAlias")
+                keyPassword keystoreProperties.getProperty("keyPassword")
+                v1SigningEnabled true
+                v2SigningEnabled true
+                enableV1Signing true
+                enableV2Signing true
+                enableV3Signing true
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+        release {
+            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
+            // R8 minify breaks with MediaPipe/ML Kit AutoValue on this stack; keep off.
+            shrinkResources false
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+            crunchPngs (findProperty('android.enablePngCrunchInReleaseBuilds')?.toBoolean() ?: true)
+        }
+    }
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging (findProperty('expo.useLegacyPackaging')?.toBoolean() ?: false)
+        }
+    }
+
+    // Specify supported ABIs - armeabi is deprecated in NDK r17+
+    defaultConfig {
+        ndk {
+            // Phones only (arm64 + 32-bit ARM). x86_64 is emulator-only and wastes ~40 MB
+            // on low-RAM devices like the Galaxy A01s (2 GB) — it made first-launch
+            // dex-opt slower than the 5s ANR timer.
+            // x86 emulators reject an ARM-only APK (INSTALL_FAILED_NO_MATCHING_ABIS), so
+            // emulator QA opts in with: gradlew assembleRelease -PincludeEmulatorAbis=true
+            if (findProperty('includeEmulatorAbis') == 'true') {
+                abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+            } else {
+                abiFilters 'arm64-v8a', 'armeabi-v7a'
+            }
+        }
+    }
+}
+
+// Apply static values from `gradle.properties` to the `android.packagingOptions`
+// Accepts values in comma delimited lists, example:
+// android.packagingOptions.pickFirsts=/LICENSE,**/picasa.ini
+["pickFirsts", "excludes", "merges", "doNotStrip"].each { prop ->
+    // Split option: 'foo,bar' -> ['foo', 'bar']
+    def options = (findProperty("android.packagingOptions.$prop") ?: "").split(",");
+    // Trim all elements in place.
+    for (i in 0..<options.size()) options[i] = options[i].trim();
+    // `[] - ""` is essentially `[""].filter(Boolean)` removing all empty strings.
+    options -= ""
+
+    if (options.length > 0) {
+        println "android.packagingOptions.$prop += $options ($options.length)"
+        // Ex: android.packagingOptions.pickFirsts += '**/SCCS/**'
+        options.each {
+            android.packagingOptions[prop] += it
+        }
+    }
+}
+
+dependencies {
+    // The version of react-native is set by the React Native Gradle Plugin
+    implementation("com.facebook.react:react-android")
+    // On-device OCR for custom-drawn screens (BookMyShow/Zepto etc.) — free, no API key,
+    // runs locally via Google ML Kit. Needs Google Play Services on the device.
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+    // MediaPipe Tasks Vision object detection — fully on-device, free, no key.
+    // Model: android/app/src/main/assets/efficientdet_lite0.tflite (~13 MB, bundled).
+    implementation("com.google.mediapipe:tasks-vision:0.10.14")
+
+    def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
+    def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
+    def isWebpAnimatedEnabled = (findProperty('expo.webp.animated') ?: "") == "true";
+
+    if (isGifEnabled) {
+        // For animated gif support
+        implementation("com.facebook.fresco:animated-gif:${reactAndroidLibs.versions.fresco.get()}")
+    }
+
+    if (isWebpEnabled) {
+        // For webp support
+        implementation("com.facebook.fresco:webpsupport:${reactAndroidLibs.versions.fresco.get()}")
+        if (isWebpAnimatedEnabled) {
+            // Animated webp support
+            implementation("com.facebook.fresco:animated-webp:${reactAndroidLibs.versions.fresco.get()}")
+        }
+    }
+
+    if (hermesEnabled.toBoolean()) {
+        implementation("com.facebook.react:hermes-android")
+    } else {
+        implementation jscFlavor
+    }
+}
+
+if (rnVersion < versionToNumber(0, 75, 0)) {
+    apply from: new File(["node", "--print", "require.resolve('@react-native-community/cli-platform-android/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim(), "../native_modules.gradle");
+    applyNativeModulesAppBuildGradle(project)
+}
+
+// ---------------------------------------------------------------------------
+// Android ≤ 13 crash fix (the Realme XT force-close).
+//
+// With compileSdk 36, Kotlin resolves `List.removeLast()` / `List.reversed()`
+// to the Java 21 default methods that only exist on Android 14+ (API 34). The
+// result is a NoSuchMethodError on the FIRST FRAME DRAW on Android 7–13:
+//     java.lang.NoSuchMethodError: No interface method removeLast() in
+//     class Ljava/util/List;
+//     at com.swmansion.rnscreens.ScreenStack.obtainDrawingOp(ScreenStack.kt:319)
+// A compileSdk 36 emulator never shows it because API 34+ has the method.
+//
+// We rewrite the two landmine call sites in node_modules to Kotlin-stdlib
+// forms that are byte-identical in behaviour but exist on every API level.
+// This must run BEFORE the libs are compiled, so it is wired to the app's
+// preBuild (a dependency of every compile/variant task in this module, and
+// the libs are built by the same Gradle invocation).
+// ---------------------------------------------------------------------------
+tasks.register('patchNodeModules') {
+    group = 'build'
+    description = 'Rewrite API-34-only List calls in react-native-screens/gesture-handler so the app runs on Android 7-13.'
+    doLast {
+        def scr = file("../../node_modules/react-native-screens/android/src/main/java/com/swmansion/rnscreens/ScreenStack.kt")
+        if (scr.exists()) {
+            def t = scr.getText('UTF-8')
+            def b = t
+            t = t.replace(
+                'drawingOpPool.removeLast()',
+                'drawingOpPool.removeAt(drawingOpPool.size - 1)')
+            if (t != b) {
+                scr.write(t, 'UTF-8')
+                println "[aipd-patch] ScreenStack.kt: removeLast() -> removeAt(size-1) (Android <= 13 crash fix)"
+            } else {
+                println "[aipd-patch] ScreenStack.kt: already patched"
+            }
+        } else {
+            println "[aipd-patch] WARN: ScreenStack.kt not found at $scr"
+        }
+        def gh = file("../../node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/GestureHandlerOrchestrator.kt")
+        if (gh.exists()) {
+            def t = gh.getText('UTF-8')
+            def b = t
+            t = t
+                .replace('awaitingHandlers.reversed()', 'awaitingHandlers.asReversed()')
+                .replace('gestureHandlers.reversed()', 'gestureHandlers.asReversed()')
+            if (t != b) {
+                gh.write(t, 'UTF-8')
+                println "[aipd-patch] GestureHandlerOrchestrator.kt: reversed() -> asReversed() (Android <= 13 crash fix)"
+            } else {
+                println "[aipd-patch] GestureHandlerOrchestrator.kt: already patched"
+            }
+        }
+    }
+}
+tasks.named('preBuild').configure { dependsOn tasks.named('patchNodeModules') }

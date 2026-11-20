@@ -1,0 +1,101 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+  <!-- Required by AssistForegroundService's partial wake lock. Missing here caused a
+       SecurityException that crashed the whole app process on every launch once a
+       background session was persisted. app.json also lists it, but android/ is checked
+       in and is not regenerated, so the manifest is the source of truth for local builds. -->
+  <uses-permission android:name="android.permission.WAKE_LOCK"/>
+  <uses-permission android:name="android.permission.CAMERA"/>
+  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+  <uses-permission android:name="android.permission.VIBRATE"/>
+  <uses-feature android:name="android.hardware.camera" android:required="false"/>
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+  <!-- QUERY_ALL_PACKAGES removed: it is a Play Protect red-flag for sideloaded apps
+       and breaks Play Store submission. Launcher apps are enumerated via the
+       <queries> block below instead (Android 11+ package visibility). -->
+  <queries>
+    <intent>
+      <action android:name="android.intent.action.MAIN" />
+      <category android:name="android.intent.category.LAUNCHER" />
+    </intent>
+    <intent>
+      <action android:name="android.intent.action.VIEW" />
+      <category android:name="android.intent.category.BROWSABLE" />
+      <data android:scheme="https" />
+    </intent>
+    <intent>
+      <action android:name="android.speech.RecognitionService" />
+    </intent>
+    <!-- Google app speech service (needed on Realme/ColorOS where default recognizer may not bind) -->
+    <package android:name="com.google.android.googlequicksearchbox" />
+    <package android:name="com.google.android.tts" />
+  </queries>
+
+  <!-- Native-lib packaging: android:extractNativeLibs="true" (below) makes the installer
+       unpack lib/*.so, which is what our prebuilt React Native / Hermes / MediaPipe libs
+       from Expo SDK 51 expect — they are 4 KB aligned, not 16 KB. gradle.properties sets
+       expo.useLegacyPackaging=true so the Gradle packaging option agrees with this
+       attribute instead of fighting it (the two disagreed, which AGP warns about).
+       NOTE: android:pageSizeCompat is intentionally NOT set — the attribute does not exist
+       in compileSdk 36's attrs and broke the build when tried. On Android 15+ devices with
+       a 16 KB kernel these libs run through the platform's own backcompat path. -->
+  <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="false" android:largeHeap="true" android:hardwareAccelerated="true" android:extractNativeLibs="true" android:theme="@style/AppTheme">
+    <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode|smallestScreenSize|density|fontScale" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:theme="@style/AppTheme" android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/>
+      </intent-filter>
+    </activity>
+    <activity android:name="com.facebook.react.devsupport.DevSettingsActivity" android:exported="false"/>
+
+    <service
+        android:name=".assist.AdaptiveAccessibilityService"
+        android:exported="true"
+        android:label="@string/app_name"
+        android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService"/>
+      </intent-filter>
+      <meta-data
+          android:name="android.accessibilityservice"
+          android:resource="@xml/accessibility_service_config"/>
+    </service>
+
+    <service
+        android:name=".assist.CaptureService"
+        android:exported="false"
+        android:foregroundServiceType="mediaProjection"/>
+
+    <service
+        android:name=".assist.AssistForegroundService"
+        android:exported="false"
+        android:foregroundServiceType="microphone"/>
+
+    <receiver
+        android:name=".assist.BootReceiver"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+      </intent-filter>
+    </receiver>
+
+    <provider
+        android:name="androidx.core.content.FileProvider"
+        android:authorities="${applicationId}.fileprovider"
+        android:exported="false"
+        android:grantUriPermissions="true">
+      <meta-data
+          android:name="android.support.FILE_PROVIDER_PATHS"
+          android:resource="@xml/file_paths"/>
+    </provider>
+  </application>
+</manifest>

@@ -321,9 +321,12 @@ def run_checks(ctx, p, base, channel):
         "narration_sample": said[:6],
         "elapsed_s": elapsed,
     }
-    out_dir = os.path.join(OUT_DIR, f"{date.today().isoformat()}-real-chrome-smoke")
+    base = os.path.realpath(OUT_DIR)
+    out_dir = os.path.realpath(os.path.join(base, f"{date.today().isoformat()}-real-chrome-smoke"))
+    assert out_dir == base or out_dir.startswith(base + os.sep), \
+        "proof output must stay inside docs/proofs"
     os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(out_dir, "result.json"), "w", encoding="utf-8") as handle:
+    with open(f"{out_dir}{os.sep}result.json", "w", encoding="utf-8") as handle:
         json.dump(out, handle, indent=2, ensure_ascii=False)
     print(f"proof written to {out_dir}")
     return 1 if FAILURES else 0

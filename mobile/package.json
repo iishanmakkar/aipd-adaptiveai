@@ -1,0 +1,47 @@
+{
+  "name": "adaptiveai-mobile",
+  "version": "1.0.0",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "build:android": "eas build --platform android",
+    "build:preview": "eas build --profile preview --platform android",
+    "build:production": "eas build --profile production --platform android",
+    "lint": "expo lint",
+    "typecheck": "tsc --noEmit",
+    "embed-key": "node scripts/embed-nim-key.js",
+    "embed-key:clear": "node scripts/embed-nim-key.js --clear"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "1.23.1",
+    "expo": "~51.0.0",
+    "expo-av": "~14.0.0",
+    "expo-build-properties": "~0.12.5",
+    "expo-constants": "~16.0.2",
+    "expo-haptics": "~13.0.1",
+    "expo-image-picker": "~15.1.0",
+    "expo-linking": "~6.3.0",
+    "expo-location": "~17.0.1",
+    "expo-router": "~3.5.0",
+    "expo-secure-store": "~13.0.0",
+    "expo-sharing": "~12.0.1",
+    "expo-status-bar": "~1.12.1",
+    "react": "18.2.0",
+    "react-native": "0.74.5",
+    "react-native-gesture-handler": "~2.16.0",
+    "react-native-reanimated": "~3.10.0",
+    "react-native-safe-area-context": "4.10.5",
+    "react-native-screens": "3.31.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@types/react": "~18.2.0",
+    "eslint": "^8.57.0",
+    "eslint-config-expo": "~7.1.2",
+    "typescript": "~5.3.0"
+  },
+  "private": true
+}

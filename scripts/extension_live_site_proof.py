@@ -42,6 +42,23 @@ def safe_dir_name(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-")
     return cleaned or "site"
 
+
+def proof_dir(name: str) -> str:
+    """Dated output dir under docs/proofs; containment re-asserted at every use."""
+    base = os.path.realpath(OUT_ROOT)
+    target = os.path.realpath(
+        os.path.join(base, f"{date.today().isoformat()}-{safe_dir_name(name)}"))
+    assert target == base or target.startswith(base + os.sep), \
+        "proof output must stay inside docs/proofs"
+    return target
+
+
+def proof_file(out_dir: str, filename: str) -> str:
+    """File inside a proof_dir; plain concatenation, containment already asserted."""
+    assert os.path.realpath(out_dir).startswith(os.path.realpath(OUT_ROOT) + os.sep), \
+        "proof output must stay inside docs/proofs"
+    return f"{out_dir}{os.sep}{filename}"
+
 DEFAULT_SITES = [
     # The three the design promises to reach. Expect these to be inconclusive from
     # an automated browser: they run anti-bot, and evading it is refused in the
@@ -203,10 +220,9 @@ def probe(context, name, url):
     if blocked:
         print(f"  INCONCLUSIVE: {name} - {blocked}")
         BLOCKED.append(name)
-        day = date.today().isoformat()
-        out_dir = os.path.join(OUT_ROOT, f"{day}-{safe_dir_name(name)}")
+        out_dir = proof_dir(name)
         os.makedirs(out_dir, exist_ok=True)
-        with open(os.path.join(out_dir, "snapshot-redacted.json"), "w", encoding="utf-8") as f:
+        with open(proof_file(out_dir, "snapshot-redacted.json"), "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False)
         page.close()
         return result
@@ -238,12 +254,11 @@ def probe(context, name, url):
     except Exception as e:
         print(f"  info: AX comparison unavailable ({type(e).__name__})")
 
-    day = date.today().isoformat()
-    out_dir = os.path.join(OUT_ROOT, f"{day}-{safe_dir_name(name)}")
+    out_dir = proof_dir(name)
     os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(out_dir, "snapshot-redacted.json"), "w", encoding="utf-8") as f:
+    with open(proof_file(out_dir, "snapshot-redacted.json"), "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)
-    screenshot = os.path.join(out_dir, "page.png")
+    screenshot = proof_file(out_dir, "page.png")
     try:
         page.screenshot(path=screenshot, full_page=False)
     except Exception:

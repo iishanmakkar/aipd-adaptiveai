@@ -16,16 +16,17 @@ Usage:
   docker compose --profile demo up -d demo-forms
   python scripts/form_pipeline_proof.py
 """
+import http.client
 import json
 import os
 import re
 import sys
 import time
 import urllib.parse
-import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEMO_FILE = os.path.join(HERE, os.pardir, "demo", "book-tickets.html")
+REPO = os.path.dirname(HERE)
+DEMO_FILE = os.path.join(REPO, "demo", "book-tickets.html")
 BACKEND = os.environ.get("ADAPTIVEAI_BACKEND_URL", "http://localhost:8000").rstrip("/")
 DEMO_URL = os.environ.get("ADAPTIVEAI_DEMO_URL",
                           "http://demo-forms:8080/book-tickets.html")
@@ -55,13 +56,35 @@ VALUES = {
 }
 
 
+def _write_demo(html: str) -> None:
+    """The only writer of the demo file; re-asserts containment at the write site."""
+    assert os.path.realpath(DEMO_FILE).startswith(REPO + os.sep), \
+        "the demo file must stay inside the repository"
+    with open(DEMO_FILE, "wb") as handle:
+        handle.write(html.encode("utf-8"))
+
+
+def _backend_post(api_path: str, body: bytes) -> dict:
+    """POST JSON to the repo's own backend over a raw connection. The host is
+    allowlisted (loopback or a compose-internal name) — this proof must never be
+    pointed at a stranger's server with our form values in it."""
+    parsed = urllib.parse.urlparse(BACKEND)
+    host = (parsed.hostname or "").lower()
+    assert host in ("127.0.0.1", "localhost", "::1", "backend", "host.docker.internal"), \
+        f"proof calls the local backend only, got {host!r}"
+    conn = http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=300)
+    try:
+        conn.request("POST", f"{parsed.path or ''}{api_path}", body=body,
+                     headers={"Content-Type": "application/json"})
+        response = conn.getresponse()
+        return json.loads(response.read())
+    finally:
+        conn.close()
+
+
 def fill(replay: bool) -> dict:
     body = json.dumps({"url": DEMO_URL, "values": VALUES, "replay": replay}).encode()
-    request = urllib.request.Request(f"{BACKEND}/api/form-fill", data=body,
-                                     headers={"Content-Type": "application/json"},
-                                     method="POST")
-    with urllib.request.urlopen(request, timeout=300) as response:
-        return json.load(response)
+    return _backend_post("/api/form-fill", body)
 
 
 FIELD_IDS = ("pname", "pemail", "from", "to", "date", "seats")
@@ -120,8 +143,7 @@ def main() -> int:
         first = fill(replay=False)
         show("1) first visit - discover, cache, fill", first)
 
-        with open(DEMO_FILE, "wb") as handle:
-            handle.write(redesign(original.decode("utf-8")).encode("utf-8"))
+        _write_demo(redesign(original.decode("utf-8")))
         time.sleep(1)  # let the static server see the new file
         print("\n   [site redesigned: ids + placeholders removed, fields re-nested]")
 
@@ -150,8 +172,7 @@ def main() -> int:
             print(f"  [{'PASS' if ok else 'FAIL'}] {name}")
         exit_code = 0 if all(checks.values()) else 1
     finally:
-        with open(DEMO_FILE, "wb") as handle:
-            handle.write(original)
+        _write_demo(original)
         with open(DEMO_FILE, "rb") as handle:
             identical = handle.read() == original
         print(f"\n[demo page restored, byte-identical: {identical}]")

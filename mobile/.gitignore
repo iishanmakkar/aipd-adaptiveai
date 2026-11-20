@@ -1,0 +1,83 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Expo
+.expo/
+.expo-shared/
+
+# Build outputs
+dist/
+build/
+*.apk
+*.aab
+*.ipa
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+
+# Misc
+*.pem
+.vercel
+.netlify
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# TypeScript
+*.tsbuildinfo
+
+# Metro
+.metro-health-check*
+
+# EAS
+.eas/
+credentials.json
+
+# Release signing — never commit
+android/app/release.keystore
+android/keystore.properties
+
+# Session/QA artifacts — regenerated, never committed
+.proof/
+qa-screens/
+expo-check/
+.tmpchk/
+.zcode/
+.mimosa/
+build-release.log
+*-release-*.png
+app-*.png
+home-*.png
+ui.xml
+scripts/agent-harness/.build/
+
+# CMake/Ninja build artifacts for the bundled llama.cpp build
+android/llm/build-*/
+
+# Build-local embedded Gemini key — never commit (embedded at build time only)
+src/services/embeddedGeminiKey.ts

@@ -1,0 +1,79 @@
+{
+  "expo": {
+    "name": "AdaptiveAI",
+    "slug": "adaptiveai-mobile",
+    "version": "1.0.2",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#f8f9fa"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.adaptiveai.mobile",
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": ["sms"],
+        "NSCameraUsageDescription": "AdaptiveAI uses the camera to identify products you photograph.",
+        "NSMicrophoneUsageDescription": "AdaptiveAI uses the microphone so you can give tasks by voice.",
+        "NSLocationWhenInUseUsageDescription": "AdaptiveAI attaches your location to emergency messages when you allow it."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#f8f9fa"
+      },
+      "package": "com.adaptiveai.mobile",
+      "versionCode": 3,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.INTERNET",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.WAKE_LOCK",
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-av",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "AdaptiveAI can save product photos you choose.",
+          "cameraPermission": "AdaptiveAI uses the camera to identify products you photograph."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "AdaptiveAI attaches your location to emergency messages when you allow it.",
+          "isIosBackgroundLocationEnabled": false
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36,
+            "minSdkVersion": 24
+          }
+        }
+      ]
+    ],
+    "experiments": {}
+  }
+}

@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">AdaptiveAI</string>
+    <string name="accessibility_service_description">Lets AdaptiveAI read what is on screen and act on it for you: filling forms, tapping buttons and navigating other apps when you ask by voice.</string>
+    <string name="accessibility_service_summary">Screen reading and task automation</string>
+    <string name="capture_channel_name">Screen capture</string>
+    <string name="capture_channel_desc">Active while AdaptiveAI is looking at your screen.</string>
+    <string name="capture_notification_title">AdaptiveAI is watching the screen</string>
+    <string name="capture_notification_text">Tap to stop screen capture.</string>
+    <string name="assist_channel_name">Assist session</string>
+    <string name="assist_channel_desc">Active while AdaptiveAI is listening for your voice.</string>
+    <string name="assist_notification_title">AdaptiveAI is listening</string>
+    <string name="assist_notification_text">Voice session active. Tap to open AdaptiveAI.</string>
+    <string name="assist_notification_stop">Stop listening</string>
+</resources>
